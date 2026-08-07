@@ -1,6 +1,7 @@
 package com.opsagent.admin.dto;
 
 import java.time.LocalDate;
+import java.util.List;
 
 public class DatasetDto {
 
@@ -10,6 +11,7 @@ public class DatasetDto {
             String description,
             String objectKey,
             String region,
+            List<String> regions,
             String source,
             String fileFormat,
             Long rowCount,
@@ -23,7 +25,7 @@ public class DatasetDto {
             String name,
             String description,
             String objectKey,
-            String region,
+            List<String> regions,
             String source,
             String fileFormat,
             Long rowCount,
@@ -34,7 +36,7 @@ public class DatasetDto {
     public record UpdateRequest(
             String name,
             String description,
-            String region,
+            List<String> regions,
             String source,
             String fileFormat,
             Long rowCount,

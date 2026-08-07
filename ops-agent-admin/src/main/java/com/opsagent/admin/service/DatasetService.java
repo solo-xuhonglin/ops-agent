@@ -3,23 +3,32 @@ package com.opsagent.admin.service;
 import com.opsagent.admin.common.ResourceNotFoundException;
 import com.opsagent.admin.dto.DatasetDto;
 import com.opsagent.admin.entity.Dataset;
+import com.opsagent.admin.entity.DatasetWeather;
 import com.opsagent.admin.entity.User;
 import com.opsagent.admin.repository.DatasetRepository;
+import com.opsagent.admin.repository.DatasetWeatherRepository;
 import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class DatasetService {
 
     private final DatasetRepository datasetRepository;
+    private final DatasetWeatherRepository weatherRepository;
     private final CurrentUser currentUser;
     private final UserRepository userRepository;
+    private final WeatherService weatherService;
 
     @Transactional(readOnly = true)
     public Page<DatasetDto.Response> list(Pageable pageable) {
@@ -37,15 +46,18 @@ public class DatasetService {
         d.setName(req.name());
         d.setDescription(req.description());
         d.setObjectKey(req.objectKey());
-        d.setRegion(req.region());
+        d.setRegions(req.regions() == null ? new ArrayList<>() : req.regions());
         d.setSource(req.source());
         d.setFileFormat(req.fileFormat());
         d.setRowCount(req.rowCount());
         d.setDateStart(req.dateStart());
         d.setDateEnd(req.dateEnd());
-        d.setStatus("READY");
+        d.setStatus("COLLECTING");
         d.setCreatedBy(currentUserId());
-        return toResponse(datasetRepository.save(d));
+        Dataset saved = datasetRepository.save(d);
+        collectWeather(saved);
+        saved.setStatus("READY");
+        return toResponse(datasetRepository.save(saved));
     }
 
     @Transactional
@@ -53,19 +65,34 @@ public class DatasetService {
         Dataset d = find(id);
         d.setName(req.name());
         d.setDescription(req.description());
-        d.setRegion(req.region());
+        d.setRegions(req.regions() == null ? new ArrayList<>() : req.regions());
         d.setSource(req.source());
         d.setFileFormat(req.fileFormat());
         d.setRowCount(req.rowCount());
         d.setDateStart(req.dateStart());
         d.setDateEnd(req.dateEnd());
         d.setStatus(req.status());
-        return toResponse(datasetRepository.save(d));
+        Dataset saved = datasetRepository.save(d);
+        collectWeather(saved);
+        return toResponse(saved);
     }
 
     @Transactional
     public void delete(Long id) {
         datasetRepository.delete(find(id));
+        weatherRepository.deleteByDatasetId(id);
+    }
+
+    private void collectWeather(Dataset d) {
+        if (d.getRegions() == null || d.getRegions().isEmpty()
+                || d.getDateStart() == null || d.getDateEnd() == null) {
+            return;
+        }
+        try {
+            weatherService.collect(d.getId(), d.getRegions(), d.getDateStart(), d.getDateEnd());
+        } catch (Exception e) {
+            log.warn("天气采集异常 datasetId={} error={}", d.getId(), e.getMessage());
+        }
     }
 
     private Dataset find(Long id) {
@@ -81,7 +108,7 @@ public class DatasetService {
 
     private DatasetDto.Response toResponse(Dataset d) {
         return new DatasetDto.Response(d.getId(), d.getName(), d.getDescription(), d.getObjectKey(),
-                d.getRegion(), d.getSource(), d.getFileFormat(), d.getRowCount(),
+                d.getRegion(), d.getRegions(), d.getSource(), d.getFileFormat(), d.getRowCount(),
                 d.getDateStart(), d.getDateEnd(), d.getStatus(), d.getCreatedBy());
     }
 }

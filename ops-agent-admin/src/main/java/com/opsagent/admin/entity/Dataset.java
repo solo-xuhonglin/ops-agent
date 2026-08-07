@@ -7,6 +7,8 @@ import lombok.Setter;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "datasets")
@@ -30,6 +32,11 @@ public class Dataset {
 
     @Column(length = 64)
     private String region;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "dataset_regions", joinColumns = @JoinColumn(name = "dataset_id"))
+    @Column(name = "region")
+    private List<String> regions = new ArrayList<>();
 
     @Column(length = 64)
     private String source;
