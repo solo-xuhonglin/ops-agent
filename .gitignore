@@ -1,0 +1,38 @@
+# ===== Build outputs =====
+target/
+**/target/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+
+# ===== IDE / editor =====
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# ===== Env / secrets =====
+.env
+.env.*
+*.local
+application-local.yml
+application-local.properties
+
+# ===== Logs =====
+*.log
+logs/
+**/logs/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Maven wrapper (we use system Maven) =====
+.mvn/
+
+# ===== WorkBuddy local data (project runtime, not source) =====
+.workbuddy/
