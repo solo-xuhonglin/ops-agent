@@ -5,11 +5,11 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "dataset_weather",
-        uniqueConstraints = @UniqueConstraint(columnNames = {"dataset_id", "region", "weather_date"}),
+        uniqueConstraints = @UniqueConstraint(columnNames = {"dataset_id", "region", "weather_time"}),
         indexes = @Index(columnList = "dataset_id"))
 @Getter
 @Setter
@@ -26,28 +26,20 @@ public class DatasetWeather {
     @Column(nullable = false, length = 64)
     private String region;
 
-    @Column(name = "weather_date", nullable = false)
-    private LocalDate date;
+    @Column(name = "weather_time", nullable = false)
+    private LocalDateTime time;
 
-    /** 最高气温 ℃ */
-    @Column(name = "t_max")
-    private Double tMax;
+    /** 该小时气温 ℃ */
+    @Column(name = "temperature")
+    private Double temperature;
 
-    /** 最低气温 ℃ */
-    @Column(name = "t_min")
-    private Double tMin;
-
-    /** 平均气温 ℃ */
-    @Column(name = "t_avg")
-    private Double tAvg;
-
-    /** 降水量 mm */
+    /** 该小时降水量 mm */
     @Column(name = "precip")
     private Double precip;
 
-    public DatasetWeather(Long datasetId, String region, LocalDate date) {
+    public DatasetWeather(Long datasetId, String region, LocalDateTime time) {
         this.datasetId = datasetId;
         this.region = region;
-        this.date = date;
+        this.time = time;
     }
 }

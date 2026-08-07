@@ -211,11 +211,9 @@ const chartItem = ref(null)
 const chartEl = ref(null)
 const chartLoading = ref(false)
 const hasData = ref(false)
-const metric = ref('tAvg')
+const metric = ref('temperature')
 const metricOptions = [
-  { label: '平均气温 (℃)', value: 'tAvg' },
-  { label: '最高气温 (℃)', value: 'tMax' },
-  { label: '最低气温 (℃)', value: 'tMin' },
+  { label: '气温 (℃)', value: 'temperature' },
   { label: '降水量 (mm)', value: 'precip' }
 ]
 let chartInstance = null
@@ -242,7 +240,7 @@ function renderChart(payload) {
   if (!chartEl.value) return
   if (!chartInstance) chartInstance = echarts.init(chartEl.value)
   const regions = payload.regions || []
-  const dates = payload.dates || []
+  const times = (payload.times || []).map(t => t.replace('T', ' '))
   const series = payload.series || {}
   const seriesData = regions.map((r, idx) => {
     const arr = (series[r] || []).map(p => p[metric.value])
@@ -252,18 +250,28 @@ function renderChart(payload) {
       type: 'line',
       smooth: true,
       showSymbol: false,
+      sampling: 'lttb',
       data: arr,
-      lineStyle: { width: 2 },
+      lineStyle: { width: 1 },
       itemStyle: { color }
     }
   })
+  const startPct = Math.max(0, 100 - Math.min(100, (times.length > 0 ? 240 : 0) / times.length * 100))
   chartInstance.setOption({
-    tooltip: { trigger: 'axis' },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
     legend: { data: regions, top: 0 },
-    grid: { left: 50, right: 20, top: 40, bottom: 60 },
-    xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { rotate: dates.length > 15 ? 45 : 0 } },
-    yAxis: { type: 'value', name: metricLabel() },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 10 }],
+    grid: { left: 55, right: 20, top: 40, bottom: 70 },
+    xAxis: {
+      type: 'category',
+      data: times,
+      boundaryGap: false,
+      axisLabel: { rotate: 45, hideOverlap: true }
+    },
+    yAxis: { type: 'value', name: metricLabel(), scale: true },
+    dataZoom: [
+      { type: 'inside' },
+      { type: 'slider', bottom: 10, start: startPct, end: 100 }
+    ],
     series: seriesData
   }, true)
 }

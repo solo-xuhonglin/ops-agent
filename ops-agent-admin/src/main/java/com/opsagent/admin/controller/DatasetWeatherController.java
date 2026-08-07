@@ -20,32 +20,30 @@ public class DatasetWeatherController {
     private final DatasetWeatherRepository weatherRepository;
 
     /**
-     * 返回某数据集的天气时间序列，按地区分组，供前端图表使用。
-     * 返回结构: { regions: [ "北京", ... ], dates: [ "2024-01-01", ... ], series: { "北京": [ {date, tMax, tMin, tAvg, precip}, ... ] } }
+     * 返回某数据集的天气时间序列（小时粒度），按地区分组，供前端图表使用。
+     * 返回结构: { regions: [ "北京", ... ], times: [ "2024-01-01T00:00", ... ], series: { "北京": [ {time, temperature, precip}, ... ] } }
      */
     @GetMapping("/{id}/weather")
     @PreAuthorize("hasAuthority('dataset:read')")
     public ApiResponse<?> weather(@PathVariable Long id) {
-        List<DatasetWeather> all = weatherRepository.findByDatasetIdOrderByRegionAscDateAsc(id);
+        List<DatasetWeather> all = weatherRepository.findByDatasetIdOrderByRegionAscTimeAsc(id);
         List<String> regions = new ArrayList<>();
-        List<String> dates = new ArrayList<>();
+        List<String> times = new ArrayList<>();
         Map<String, List<Map<String, Object>>> series = new LinkedHashMap<>();
         for (DatasetWeather w : all) {
             if (!regions.contains(w.getRegion())) regions.add(w.getRegion());
-            String d = w.getDate().toString();
-            if (!dates.contains(d)) dates.add(d);
+            String t = w.getTime().toString();
+            if (!times.contains(t)) times.add(t);
             series.computeIfAbsent(w.getRegion(), k -> new ArrayList<>())
                     .add(Map.of(
-                            "date", d,
-                            "tMax", w.getTMax(),
-                            "tMin", w.getTMin(),
-                            "tAvg", w.getTAvg(),
+                            "time", t,
+                            "temperature", w.getTemperature(),
                             "precip", w.getPrecip()
                     ));
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("regions", regions);
-        result.put("dates", dates);
+        result.put("times", times);
         result.put("series", series);
         return ApiResponse.ok(result);
     }

@@ -12,7 +12,7 @@ public interface DatasetWeatherRepository extends JpaRepository<DatasetWeather, 
 
     List<DatasetWeather> findByDatasetIdAndRegionOrderByDateAsc(Long datasetId, String region);
 
-    List<DatasetWeather> findByDatasetIdOrderByRegionAscDateAsc(Long datasetId);
+    List<DatasetWeather> findByDatasetIdOrderByRegionAscTimeAsc(Long datasetId);
 
     @Modifying
     @Query("DELETE FROM DatasetWeather w WHERE w.datasetId = :datasetId")

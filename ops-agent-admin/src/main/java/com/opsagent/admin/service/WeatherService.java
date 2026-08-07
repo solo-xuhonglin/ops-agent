@@ -1,7 +1,6 @@
 package com.opsagent.admin.service;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opsagent.admin.entity.DatasetWeather;
 import com.opsagent.admin.repository.DatasetWeatherRepository;
@@ -12,12 +11,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 通过 Open-Meteo 免费接口（无需 API Key）采集历史天气数据。
+ * 通过 Open-Meteo 免费接口（无需 API Key）采集历史天气数据，小时粒度。
  * 文档: https://open-meteo.com/
  */
 @Service
@@ -26,12 +26,13 @@ import java.util.List;
 public class WeatherService {
 
     private static final String BASE = "https://archive-api.open-meteo.com/v1/archive";
+    private static final DateTimeFormatter FMT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
     private final DatasetWeatherRepository weatherRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final RestTemplate restTemplate = new RestTemplate();
 
     /**
-     * 为某数据集采集指定地区、日期区间的每日天气并落库。
+     * 为某数据集采集指定地区、日期区间的每小时天气并落库。
      */
     public void collect(Long datasetId, List<String> regions, LocalDate start, LocalDate end) {
         if (regions == null || regions.isEmpty() || start == null || end == null) return;
@@ -45,7 +46,7 @@ public class WeatherService {
         double[] geo = CityGeo.get(region);
         String url = String.format(
                 "%s?latitude=%.4f&longitude=%.4f&start_date=%s&end_date=%s"
-                        + "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum"
+                        + "&hourly=temperature_2m,precipitation"
                         + "&timezone=Asia%%2FShanghai",
                 BASE, geo[0], geo[1],
                 start.format(DateTimeFormatter.ISO_DATE),
@@ -57,15 +58,14 @@ public class WeatherService {
                 return;
             }
             OpenMeteoResponse data = objectMapper.readValue(resp.getBody(), OpenMeteoResponse.class);
-            if (data == null || data.daily == null || data.daily.time == null) return;
-            int n = data.daily.time.length;
+            if (data == null || data.hourly == null || data.hourly.time == null) return;
+            int n = data.hourly.time.length;
             List<DatasetWeather> batch = new ArrayList<>(n);
             for (int i = 0; i < n; i++) {
-                DatasetWeather w = new DatasetWeather(datasetId, region, LocalDate.parse(data.daily.time[i]));
-                w.setTMax(safe(data.daily.temperature_2m_max, i));
-                w.setTMin(safe(data.daily.temperature_2m_min, i));
-                w.setTAvg(safe(data.daily.temperature_2m_mean, i));
-                w.setPrecip(safe(data.daily.precipitation_sum, i));
+                LocalDateTime t = LocalDateTime.parse(data.hourly.time[i], FMT);
+                DatasetWeather w = new DatasetWeather(datasetId, region, t);
+                w.setTemperature(safe(data.hourly.temperature_2m, i));
+                w.setPrecip(safe(data.hourly.precipitation, i));
                 batch.add(w);
             }
             weatherRepository.saveAll(batch);
@@ -82,15 +82,13 @@ public class WeatherService {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     private static class OpenMeteoResponse {
-        public Daily daily;
+        public Hourly hourly;
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    private static class Daily {
+    private static class Hourly {
         public String[] time;
-        public double[] temperature_2m_max;
-        public double[] temperature_2m_min;
-        public double[] temperature_2m_mean;
-        public double[] precipitation_sum;
+        public double[] temperature_2m;
+        public double[] precipitation;
     }
 }
