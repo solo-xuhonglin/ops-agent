@@ -52,10 +52,11 @@
 ## 三、部署（全程服务器内：拉取 → 编译 → 构建 → 启动）
 
 ```bash
-# 上传 repo 地址 / 目录 / 分支可用环境变量覆盖，或直接改 deploy.sh 顶部默认值
-export REPO_URL="你的git仓库地址"
-export PROJECT_DIR="/opt/ops-agent"
-export BRANCH="main"
+# REPO_URL 默认值已是 https://github.com/solo-xuhonglin/ops-agent.git，
+# 仅在需要换仓库/目录/分支时用环境变量覆盖：
+# export REPO_URL="https://github.com/solo-xuhonglin/ops-agent.git"
+# export PROJECT_DIR="/opt/ops-agent"
+# export BRANCH="main"
 
 # 首次运行会自动 git clone；之后运行会 git pull 更新
 chmod +x deploy.sh
