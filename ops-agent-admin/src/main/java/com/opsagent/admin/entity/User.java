@@ -38,6 +38,9 @@ public class User {
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
+    @Column(name = "created_by")
+    private Long createdBy;
+
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 

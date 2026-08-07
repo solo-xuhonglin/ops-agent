@@ -35,7 +35,8 @@ conversations ──< agent_memories (session_id)
 | display_name | VARCHAR(128) | | 展示名 |
 | email | VARCHAR(128) | | |
 | status | VARCHAR(16) | DEFAULT 'ACTIVE' | ACTIVE / DISABLED |
-| created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
+| created_at / updated_at | TIMESTAMPTAMPTZ | DEFAULT now() | |
+| created_by | BIGINT | FK→users, nullable | 创建者用户 ID（自引用，可空） |
 
 ### roles
 | 字段 | 类型 | 约束 | 说明 |
