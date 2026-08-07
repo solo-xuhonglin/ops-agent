@@ -31,10 +31,9 @@ if [ ! -f .env ]; then
 fi
 
 # ===== 3. 宿主机编译（依赖缓存于本地 node_modules / 项目内 .m2）=====
-# Maven 本地仓库与产物均放在项目目录下（已被 .gitignore 忽略，可缓存复用）
+# Maven 本地仓库放在项目目录下（已被 .gitignore 忽略，可缓存复用）；产物在 target/（标准位置）
 M2_REPO="$PROJECT_DIR/.m2"
 ADMIN_DIR="$PROJECT_DIR/ops-agent-admin"
-ADMIN_BUILD="$ADMIN_DIR/build"
 
 echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
 cd "$PROJECT_DIR/ops-agent-front"
@@ -49,11 +48,7 @@ echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物在 targ
 cd "$ADMIN_DIR"
 mvn -q -B clean package -DskipTests \
   -Dmaven.repo.local="$M2_REPO"
-
-# spring-boot repackage 会把 jar 写回 target/，需复制到 build/ 供 Dockerfile COPY
-mkdir -p "$ADMIN_BUILD"
-cp -v "$ADMIN_DIR"/target/*.jar "$ADMIN_BUILD"/
-if ! ls "$ADMIN_BUILD"/*.jar >/dev/null 2>&1; then
+if ! ls "$ADMIN_DIR"/target/*.jar >/dev/null 2>&1; then
   echo "ERROR: 未找到打包产物 $ADMIN_DIR/target/*.jar，后端构建失败" >&2
   exit 1
 fi

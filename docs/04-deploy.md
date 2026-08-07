@@ -1,8 +1,8 @@
 # ops-agent 部署指南
 
-> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(仅拷贝 `dist`) + `nginx.conf`；后端 `Dockerfile`(仅拷贝 `build/*.jar`)。
+> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(仅拷贝 `dist`) + `nginx.conf`；后端 `Dockerfile`(仅拷贝 `target/*.jar`)。
 >
-> **策略：服务器上拉取代码 → 宿主机编译 → Docker 仅拷贝 build 产物**。依赖安装与编译在宿主机命令行完成，可天然缓存：Maven 本地仓库固定为项目内 `$PROJECT_DIR/.m2`，产物输出到 `ops-agent-admin/build/`（均已被 `.gitignore` 忽略）；Docker 镜像只 `COPY` 成品，构建秒级，本地不上传任何包。
+> **策略：服务器上拉取代码 → 宿主机编译 → Docker 仅拷贝 build 产物**。依赖安装与编译在宿主机命令行完成，可天然缓存：Maven 本地仓库固定为项目内 `$PROJECT_DIR/.m2`，产物在 `target/*.jar`（标准位置，已被 `.gitignore` 忽略）；Docker 镜像只 `COPY` 成品，构建秒级，本地不上传任何包。
 
 ## 部署拓扑
 
@@ -67,7 +67,7 @@ chmod +x deploy.sh
 1. 检查 Docker / Compose；
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
-4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`），部署脚本再把 `target/*.jar` 复制到 `ops-agent-admin/build/` 供 Dockerfile `COPY build/*.jar`；
+4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`）；Dockerfile 直接 `COPY target/*.jar`；
 5. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ## 四、验证
