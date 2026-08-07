@@ -46,7 +46,7 @@ fi
 
 echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物在 target/）"
 cd "$ADMIN_DIR"
-mvn -q -B clean package -DskipTests \
+mvn -B clean package -DskipTests \
   -Dmaven.repo.local="$M2_REPO"
 if ! ls "$ADMIN_DIR"/target/*.jar >/dev/null 2>&1; then
   echo "ERROR: 未找到打包产物 $ADMIN_DIR/target/*.jar，后端构建失败" >&2
