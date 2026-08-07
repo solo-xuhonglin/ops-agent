@@ -4,7 +4,7 @@
 set -euo pipefail
 
 # ===== 可配置项 =====
-REPO_URL="${REPO_URL:-https://github.com/your-org/ops-agent.git}"
+REPO_URL="${REPO_URL:-https://github.com/solo-xuhonglin/ops-agent.git}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/ops-agent}"
 BRANCH="${BRANCH:-main}"
 
