@@ -7,6 +7,7 @@ import com.opsagent.admin.repository.PermissionRepository;
 import com.opsagent.admin.repository.RoleRepository;
 import com.opsagent.admin.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,10 @@ public class DataInitializer implements CommandLineRunner {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final DataSource dataSource;
+
+    /** 初始化开关，默认开启；设为 false 时不写入种子数据（权限/角色/用户） */
+    @Value("${app.init.enabled:true}")
+    private boolean initEnabled;
 
     /** 确保 pgvector 扩展存在（建表用到 vector 类型） */
     private void ensurePgVectorExtension() {
@@ -53,6 +58,10 @@ public class DataInitializer implements CommandLineRunner {
     @Transactional
     public void run(String... args) {
         ensurePgVectorExtension();
+        if (!initEnabled) {
+            // 开关关闭：不写入种子数据（权限/角色/用户）
+            return;
+        }
         if (permissionRepository.count() > 0) return; // 已初始化则跳过
 
         // 1. 权限
