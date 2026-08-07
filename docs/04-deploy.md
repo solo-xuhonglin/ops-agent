@@ -18,12 +18,23 @@
 
 ## 一、服务器前置要求
 
+> 目标系统：**TencentOS Server 4 for x86_64**（RHEL 9 系，yum/dnf 包管理）。
+> 所有镜像（`node:22`、`eclipse-temurin:17`、`nginx`、`pgvector/pgvector:pg17`）均为 `linux/amd64`，与 x86_64 匹配，无需指定平台。
+
 1. 已安装 Docker Engine 与 Docker Compose v2（`docker compose version` 可查）。
-   - 腾讯云 Ubuntu 可一键装：
+   - TencentOS Server 4（RHEL 系）安装方式：
      ```bash
-     curl -fsSL https://get.docker.com | sh
-     sudo systemctl enable --now docker
+     # 方式 A：腾讯云官方扩展源（推荐，自带 compose 插件）
+     dnf install -y docker docker-compose-plugin
+     systemctl enable --now docker
+
+     # 方式 B：Docker 官方 repo（若方式 A 无包）
+     dnf install -y yum-utils
+     yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+     dnf install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+     systemctl enable --now docker
      ```
+   - 注意：TencentOS 默认可能带 `podman`，与 docker 命令冲突时卸掉 podman 或改用 `docker` 命令即可。
 2. 安全组放行端口：`80`（前端）、`8080`（后端，按需）、`5432`（数据库，建议仅内网/VPC 放行，公网勿开）。
 3. 服务器需能访问 git 仓库（SSH key 或 HTTPS 凭证）与 Docker Hub（拉取基础镜像）。
 4. **无需本地上传任何包**：`dist/`、`target/` 均在服务器内由 Docker 多阶段构建生成。
