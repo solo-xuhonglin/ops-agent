@@ -95,5 +95,17 @@ public class DataInitializer implements CommandLineRunner {
             adminUser.setRoles(Set.of(admin));
             userRepository.save(adminUser);
         }
+
+        // 4. 演示普通用户
+        if (userRepository.findByUsername("user").isEmpty()) {
+            User demoUser = new User();
+            demoUser.setUsername("user");
+            demoUser.setPasswordHash(passwordEncoder.encode("user123"));
+            demoUser.setDisplayName("演示用户");
+            demoUser.setEmail("user@opsagent.local");
+            demoUser.setStatus("ACTIVE");
+            demoUser.setRoles(Set.of(user));
+            userRepository.save(demoUser);
+        }
     }
 }
