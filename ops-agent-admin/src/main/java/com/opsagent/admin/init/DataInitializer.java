@@ -62,36 +62,43 @@ public class DataInitializer implements CommandLineRunner {
             // 开关关闭：不写入种子数据（权限/角色/用户）
             return;
         }
-        if (permissionRepository.count() > 0) return; // 已初始化则跳过
 
-        // 1. 权限
+        // 1. 权限：逐条判断，缺失才插入（支持新增权限码补全）
         for (String code : PERMISSION_CODES) {
-            Permission p = new Permission();
-            p.setCode(code);
-            p.setDescription(code);
-            permissionRepository.save(p);
+            if (permissionRepository.findByCode(code).isEmpty()) {
+                Permission p = new Permission();
+                p.setCode(code);
+                p.setDescription(code);
+                permissionRepository.save(p);
+            }
         }
 
-        // 2. 角色
-        Role admin = new Role();
-        admin.setName("ADMIN");
-        admin.setDescription("超级管理员");
-        admin.setPermissions(Set.copyOf(permissionRepository.findAll()));
-        roleRepository.save(admin);
+        // 2. 角色：按名判断，缺失才插入；已存在则取出用于用户绑定
+        Role admin = roleRepository.findByName("ADMIN").orElseGet(() -> {
+            Role r = new Role();
+            r.setName("ADMIN");
+            r.setDescription("超级管理员");
+            r.setPermissions(Set.copyOf(permissionRepository.findAll()));
+            return roleRepository.save(r);
+        });
 
-        Role operator = new Role();
-        operator.setName("OPERATOR");
-        operator.setDescription("运营人员");
-        operator.setPermissions(Set.copyOf(permissionRepository.findAll()));
-        roleRepository.save(operator);
+        roleRepository.findByName("OPERATOR").orElseGet(() -> {
+            Role r = new Role();
+            r.setName("OPERATOR");
+            r.setDescription("运营人员");
+            r.setPermissions(Set.copyOf(permissionRepository.findAll()));
+            return roleRepository.save(r);
+        });
 
-        Role user = new Role();
-        user.setName("USER");
-        user.setDescription("普通用户（仅对话）");
-        user.setPermissions(Set.of(
-                permissionRepository.findByCode("dataset:read").orElseThrow(),
-                permissionRepository.findByCode("model:read").orElseThrow()));
-        roleRepository.save(user);
+        Role user = roleRepository.findByName("USER").orElseGet(() -> {
+            Role r = new Role();
+            r.setName("USER");
+            r.setDescription("普通用户（仅对话）");
+            r.setPermissions(Set.of(
+                    permissionRepository.findByCode("dataset:read").orElseThrow(),
+                    permissionRepository.findByCode("model:read").orElseThrow()));
+            return roleRepository.save(r);
+        });
 
         // 3. 初始管理员
         if (userRepository.findByUsername("admin").isEmpty()) {
