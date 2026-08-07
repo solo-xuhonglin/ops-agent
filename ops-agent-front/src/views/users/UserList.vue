@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6">用户管理</h2>
+      <h2 class="text-h6 list-title">用户管理</h2>
       <v-spacer />
       <v-text-field
         v-model="search"
@@ -16,7 +16,7 @@
       <v-btn v-if="canWrite" color="primary" class="ml-3" prepend-icon="mdi-plus" @click="openCreate">新建用户</v-btn>
     </div>
 
-    <v-card rounded="lg" elevation="2">
+    <v-card rounded="lg" class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"

@@ -1,0 +1,28 @@
+/* 全局列表页与通用样式（实用美化） */
+
+/* 列表页标题 */
+.list-title {
+  font-weight: 700;
+}
+
+/* 数据表卡片：用细边框替代强阴影 */
+.data-card {
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: none;
+}
+
+/* 表头加粗 */
+.data-card .v-table thead th {
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* 表格行 hover */
+.data-card .v-table tbody tr:hover {
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+
+/* 操作按钮 hover 更明确 */
+.v-btn.v-btn--icon:hover {
+  background: rgba(var(--v-theme-primary), 0.08);
+}

@@ -1,12 +1,12 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6">数据集管理</h2>
+      <h2 class="text-h6 list-title">数据集管理</h2>
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
     </div>
 
-    <v-card rounded="lg" elevation="2">
+    <v-card rounded="lg" class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"

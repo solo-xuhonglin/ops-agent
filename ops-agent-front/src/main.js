@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './plugins/router'
 import vuetify from './plugins/vuetify'
 import './plugins/axios'
+import './styles/global.css'
 
 const app = createApp(App)
 app.use(createPinia())

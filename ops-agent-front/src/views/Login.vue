@@ -1,17 +1,18 @@
 <template>
-  <v-main class="d-flex align-center justify-center" style="min-height: 100vh">
-    <v-card class="pa-6" width="400" elevation="8">
-      <div class="text-center mb-4">
-        <v-icon size="48" color="primary">mdi-weather-partly-cloudy</v-icon>
-        <h2 class="text-h5 mt-2">ops-agent 控制台</h2>
-        <p class="text-caption text-medium-emphasis">算法资产平台 · 登录</p>
+  <v-main class="login-bg d-flex align-center justify-center" style="min-height: 100vh">
+    <v-card class="login-card pa-8" width="420" elevation="12" rounded="xl">
+      <div class="text-center mb-6">
+        <v-avatar color="primary" variant="tonal" size="64" class="mb-4">
+          <v-icon size="36">mdi-weather-partly-cloudy</v-icon>
+        </v-avatar>
+        <h2 class="text-h5 font-weight-bold">ops-agent 控制台</h2>
+        <p class="text-body-2 text-medium-emphasis mt-1">算法资产平台 · 登录</p>
       </div>
       <v-form @submit.prevent="onSubmit" ref="form">
         <v-text-field
           v-model="username"
           label="用户名"
           prepend-inner-icon="mdi-account"
-          variant="outlined"
           :rules="[(v) => !!v || '请输入用户名']"
         />
         <v-text-field
@@ -19,11 +20,10 @@
           label="密码"
           type="password"
           prepend-inner-icon="mdi-lock"
-          variant="outlined"
           :rules="[(v) => !!v || '请输入密码']"
         />
-        <v-alert v-if="error" type="error" variant="tonal" class="mb-3">{{ error }}</v-alert>
-        <v-btn type="submit" color="primary" block :loading="loading">登录</v-btn>
+        <v-alert v-if="error" type="error" variant="tonal" class="mb-4" rounded="lg">{{ error }}</v-alert>
+        <v-btn type="submit" color="primary" block size="large" :loading="loading">登录</v-btn>
       </v-form>
     </v-card>
   </v-main>
@@ -57,3 +57,12 @@ async function onSubmit() {
   }
 }
 </script>
+
+<style scoped>
+.login-bg {
+  background: linear-gradient(135deg, #5B6EF0 0%, #8B5CF6 50%, #6B7280 100%);
+}
+.login-card {
+  backdrop-filter: blur(4px);
+}
+</style>

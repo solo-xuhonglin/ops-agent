@@ -5,17 +5,20 @@
       :rail="rail && mdAndUp"
       :temporary="!mdAndUp"
       :permanent="mdAndUp"
-      color="grey-lighten-5"
+      color="surface"
+      class="nav-drawer"
     >
-      <v-list>
-        <v-list-item
-          prepend-icon="mdi-brain"
-          title="ops-agent"
-          subtitle="算法资产平台"
-        />
-      </v-list>
+      <div class="brand pa-4 d-flex align-center">
+        <v-avatar color="primary" variant="tonal" size="36" class="mr-3">
+          <v-icon>mdi-brain</v-icon>
+        </v-avatar>
+        <div v-if="!(rail && mdAndUp)">
+          <div class="text-subtitle-1 font-weight-bold">ops-agent</div>
+          <div class="text-caption text-medium-emphasis">算法资产平台</div>
+        </div>
+      </div>
       <v-divider />
-      <v-list nav density="comfortable">
+      <v-list nav density="comfortable" class="nav-list">
         <v-list-item
           v-for="item in menus"
           :key="item.to"
@@ -23,6 +26,9 @@
           :prepend-icon="item.icon"
           :title="item.title"
           rounded="lg"
+          color="primary"
+          exact
+          class="nav-item"
         />
       </v-list>
       <template #append>
@@ -37,9 +43,9 @@
       </template>
     </v-navigation-drawer>
 
-    <v-app-bar flat border="b">
+    <v-app-bar flat border="b" color="surface">
       <v-app-bar-nav-icon v-if="!mdAndUp" @click="drawer = !drawer" />
-      <v-app-bar-title>{{ currentTitle }}</v-app-bar-title>
+      <v-app-bar-title class="font-weight-bold">{{ currentTitle }}</v-app-bar-title>
       <v-spacer />
       <v-menu>
         <template #activator="{ props }">
@@ -56,13 +62,32 @@
       </v-menu>
     </v-app-bar>
 
-    <v-main>
-      <v-container fluid>
+    <v-main class="main-area">
+      <v-container fluid class="pa-6">
         <router-view />
       </v-container>
     </v-main>
   </v-app>
 </template>
+
+<style scoped>
+.main-area {
+  background: rgb(var(--v-theme-background));
+}
+.nav-drawer {
+  border-right: 1px solid rgba(0, 0, 0, 0.06);
+}
+.nav-list :deep(.v-list-item--active) {
+  background: rgba(var(--v-theme-primary), 0.1);
+}
+.nav-list :deep(.v-list-item--active .v-list-item-title) {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 600;
+}
+.nav-list :deep(.nav-item) {
+  margin: 2px 8px;
+}
+</style>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
