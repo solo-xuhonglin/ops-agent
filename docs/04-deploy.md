@@ -1,8 +1,8 @@
 # ops-agent 部署指南
 
-> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(多阶段，镜像内 npm build) + `nginx.conf`；后端复用原有 `Dockerfile`(多阶段，镜像内 maven package)。
+> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(仅拷贝 `dist`) + `nginx.conf`；后端 `Dockerfile`(仅拷贝 `target/*.jar`)。
 >
-> **策略：全程在服务器上拉取 + 编译 + 构建**，本地不上传任何 `dist/` 或 `target/` 产物。前端 `node:22` 镜像内 `npm install && build`，后端 `maven` 镜像内 `package`，均不依赖本地构建。
+> **策略：服务器上拉取代码 → 宿主机编译 → Docker 仅拷贝 build 产物**。依赖安装（宿主机 `node_modules` / `~/.m2`）与编译在宿主机命令行完成，可天然缓存；Docker 镜像只 `COPY` 成品，构建秒级，本地不上传任何包。
 
 ## 部署拓扑
 
@@ -67,7 +67,8 @@ chmod +x deploy.sh
 1. 检查 Docker / Compose；
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
-4. `docker compose up -d --build` —— **前端在 `node:22` 镜像内 `npm install && build`，后端在 `maven` 镜像内 `package`**，全部在服务器完成，本地不上传任何包。
+4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package`（产物 `ops-agent-admin/target/*.jar`，依赖缓存于宿主机 `~/.m2`）；
+5. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ## 四、验证
 
@@ -84,8 +85,8 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 | 前端白屏 / 502 | `docker compose logs front` 看 nginx；确认 admin 已起 |
 | 后端连不上库 | `docker compose logs admin`；确认 postgres healthy、密码一致 |
 | CORS 报错 | 检查 `.env` 中 `CORS_ALLOWED_ORIGINS` 含浏览器实际访问地址 |
-| npm 安装慢/超时 | 服务器需能访问 npm registry；可在前端 Dockerfile 内加 `npm config set registry` 或更换镜像源 |
-| maven 依赖下载慢 | 服务器需能访问 Maven Central；可在后端 Dockerfile 内配置国内镜像源 |
+| npm 安装慢/超时 | 依赖在宿主机 `node_modules` 缓存，首次慢后续快；服务器需能访问 npm registry |
+| maven 依赖下载慢 | 依赖在宿主机 `~/.m2` 缓存，首次慢后续快；服务器需能访问 Maven Central |
 | 拉取 Docker 基础镜像慢 | 可给 Docker 配镜像加速：编辑 `/etc/docker/daemon.json` 加 `registry-mirrors` 后 `systemctl restart docker` |
 | pgvector 函数缺失 | 后端 `DataInitializer` 启动时会自动 `CREATE EXTENSION IF NOT EXISTS vector;`；若仍缺失，手动连库执行该语句（需超级用户） |
 
