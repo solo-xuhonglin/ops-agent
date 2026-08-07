@@ -1,8 +1,8 @@
 # ops-agent 部署指南
 
-> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(仅拷贝 `dist`) + `nginx.conf`；后端 `Dockerfile`(仅拷贝 `target/*.jar`)。
+> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(仅拷贝 `dist`) + `nginx.conf`；后端 `Dockerfile`(仅拷贝 `build/*.jar`)。
 >
-> **策略：服务器上拉取代码 → 宿主机编译 → Docker 仅拷贝 build 产物**。依赖安装（宿主机 `node_modules` / `~/.m2`）与编译在宿主机命令行完成，可天然缓存；Docker 镜像只 `COPY` 成品，构建秒级，本地不上传任何包。
+> **策略：服务器上拉取代码 → 宿主机编译 → Docker 仅拷贝 build 产物**。依赖安装与编译在宿主机命令行完成，可天然缓存：Maven 本地仓库固定为项目内 `$PROJECT_DIR/.m2`，产物输出到 `ops-agent-admin/build/`（均已被 `.gitignore` 忽略）；Docker 镜像只 `COPY` 成品，构建秒级，本地不上传任何包。
 
 ## 部署拓扑
 
@@ -67,7 +67,7 @@ chmod +x deploy.sh
 1. 检查 Docker / Compose；
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
-4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package`（产物 `ops-agent-admin/target/*.jar`，依赖缓存于宿主机 `~/.m2`）；
+4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2 -Dproject.build.directory=ops-agent-admin/build`（产物 `ops-agent-admin/build/*.jar`，依赖缓存于项目内 `.m2`）；
 5. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ## 四、验证
@@ -86,7 +86,7 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 | 后端连不上库 | `docker compose logs admin`；确认 postgres healthy、密码一致 |
 | CORS 报错 | 检查 `.env` 中 `CORS_ALLOWED_ORIGINS` 含浏览器实际访问地址 |
 | npm 安装慢/超时 | 依赖在宿主机 `node_modules` 缓存，首次慢后续快；服务器需能访问 npm registry |
-| maven 依赖下载慢 | 依赖在宿主机 `~/.m2` 缓存，首次慢后续快；服务器需能访问 Maven Central |
+| maven 依赖下载慢 | 依赖在项目内 `$PROJECT_DIR/.m2` 缓存，首次慢后续快；服务器需能访问 Maven Central |
 | 拉取 Docker 基础镜像慢 | 可给 Docker 配镜像加速：编辑 `/etc/docker/daemon.json` 加 `registry-mirrors` 后 `systemctl restart docker` |
 | pgvector 函数缺失 | 后端 `DataInitializer` 启动时会自动 `CREATE EXTENSION IF NOT EXISTS vector;`；若仍缺失，手动连库执行该语句（需超级用户） |
 

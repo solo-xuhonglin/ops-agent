@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ops-agent 一键部署脚本（全程在服务器上：拉取代码 → 宿主机编译 → 拷贝产物打包 → 启动）
-# 策略：依赖安装/编译在宿主机完成（node_modules、~/.m2 可缓存），Docker 仅拷贝 build 产物，镜像构建秒级
+# 策略：依赖安装/编译在宿主机完成（node_modules、项目内 .m2 可缓存），Docker 仅拷贝 build 产物，镜像构建秒级
 set -euo pipefail
 
 # ===== 可配置项 =====
@@ -30,15 +30,23 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
-# ===== 3. 宿主机编译（依赖缓存于本地 node_modules / ~/.m2）=====
+# ===== 3. 宿主机编译（依赖缓存于本地 node_modules / 项目内 .m2）=====
+# Maven 本地仓库与产物均放在项目目录下（已被 .gitignore 忽略，可缓存复用）
+M2_REPO="$PROJECT_DIR/.m2"
+ADMIN_DIR="$PROJECT_DIR/ops-agent-admin"
+ADMIN_BUILD="$ADMIN_DIR/build"
+
 echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
 cd "$PROJECT_DIR/ops-agent-front"
 npm install
 npm run build
 
-echo "==> 后端打包（mvn package，依赖缓存于 ~/.m2）"
-cd "$PROJECT_DIR/ops-agent-admin"
-mvn -q -B clean package -DskipTests
+echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物输出到 $ADMIN_BUILD）"
+cd "$ADMIN_DIR"
+mkdir -p "$ADMIN_BUILD"
+mvn -q -B clean package -DskipTests \
+  -Dmaven.repo.local="$M2_REPO" \
+  -Dproject.build.directory="$ADMIN_BUILD"
 
 cd "$PROJECT_DIR"
 
