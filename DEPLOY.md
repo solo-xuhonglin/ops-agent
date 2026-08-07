@@ -1,6 +1,8 @@
 # ops-agent 部署指南（腾讯云 118.195.145.247）
 
-> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env`、`.gitignore` 补充；前端 `ops-agent-front/Dockerfile` + `nginx.conf`；后端复用原有 `Dockerfile`。
+> 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(多阶段，镜像内 npm build) + `nginx.conf`；后端复用原有 `Dockerfile`(多阶段，镜像内 maven package)。
+>
+> **策略：全程在服务器上拉取 + 编译 + 构建**，本地不上传任何 `dist/` 或 `target/` 产物。前端 `node:22` 镜像内 `npm install && build`，后端 `maven` 镜像内 `package`，均不依赖本地构建。
 
 ## 部署拓扑
 
@@ -23,11 +25,8 @@
      sudo systemctl enable --now docker
      ```
 2. 安全组放行端口：`80`（前端）、`8080`（后端，按需）、`5432`（数据库，建议仅内网/VPC 放行，公网勿开）。
-3. 本机把仓库整体上传到服务器（含 `dist/` 目录与所有部署文件）：
-   ```bash
-   # 本地执行（示例，需你填写实际登录方式）
-   scp -r ./ops-agent root@118.195.145.247:/opt/ops-agent
-   ```
+3. 服务器需能访问 git 仓库（SSH key 或 HTTPS 凭证）与 Docker Hub（拉取基础镜像）。
+4. **无需本地上传任何包**：`dist/`、`target/` 均在服务器内由 Docker 多阶段构建生成。
 
 ## 二、修改密钥（上线前必做）
 
@@ -39,15 +38,24 @@
 
 > 默认账号 `admin / admin123` 由后端 `DataInitializer` 写入，上线后务必修改（见 `docs/01-architecture.md` 第 4 节）。
 
-## 三、部署
+## 三、部署（全程服务器内：拉取 → 编译 → 构建 → 启动）
 
 ```bash
-cd /opt/ops-agent
+# 上传 repo 地址 / 目录 / 分支可用环境变量覆盖，或直接改 deploy.sh 顶部默认值
+export REPO_URL="你的git仓库地址"
+export PROJECT_DIR="/opt/ops-agent"
+export BRANCH="main"
+
+# 首次运行会自动 git clone；之后运行会 git pull 更新
 chmod +x deploy.sh
 ./deploy.sh
 ```
 
-脚本会加载 `.env` 并 `docker compose up -d --build` 构建启动全部服务。
+脚本行为：
+1. 检查 Docker / Compose；
+2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
+3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
+4. `docker compose up -d --build` —— **前端在 `node:22` 镜像内 `npm install && build`，后端在 `maven` 镜像内 `package`**，全部在服务器完成，本地不上传任何包。
 
 ## 四、验证
 
@@ -64,6 +72,8 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 | 前端白屏 / 502 | `docker compose logs front` 看 nginx；确认 admin 已起 |
 | 后端连不上库 | `docker compose logs admin`；确认 postgres healthy、密码一致 |
 | CORS 报错 | 检查 `.env` 中 `CORS_ALLOWED_ORIGINS` 含浏览器实际访问地址 |
+| npm 安装慢/超时 | 服务器需能访问 npm registry；可在前端 Dockerfile 内加 `npm config set registry` 或更换镜像源 |
+| maven 依赖下载慢 | 服务器需能访问 Maven Central；可在后端 Dockerfile 内配置国内镜像源 |
 | pgvector 函数缺失 | 确认用的是 `pgvector/pgvector:pg17` 镜像；建表前需 `CREATE EXTENSION IF NOT EXISTS vector;` |
 
 ## 六、后续迭代
