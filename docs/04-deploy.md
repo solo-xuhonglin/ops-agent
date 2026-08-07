@@ -83,9 +83,10 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 | 前端白屏 / 502 | `docker compose logs front` 看 nginx；确认 admin 已起 |
 | 后端连不上库 | `docker compose logs admin`；确认 postgres healthy、密码一致 |
 | CORS 报错 | 检查 `.env` 中 `CORS_ALLOWED_ORIGINS` 含浏览器实际访问地址 |
-| npm 安装慢/超时 | 服务器需能访问 npm registry；可在前端 Dockerfile 内加 `npm config set registry` 或更换镜像源 |
-| maven 依赖下载慢 | 服务器需能访问 Maven Central；可在后端 Dockerfile 内配置国内镜像源 |
-| pgvector 函数缺失 | 确认用的是 `pgvector/pgvector:pg17` 镜像；建表前需 `CREATE EXTENSION IF NOT EXISTS vector;` |
+| npm 安装慢/超时 | 前端 Dockerfile 已配置 `registry.npmmirror.com`；仍慢可更换/注释该源 |
+| maven 依赖下载慢 | 后端 Dockerfile 已配置阿里云 Maven 镜像；仍慢可调整 `settings.xml` |
+| 拉取 Docker 基础镜像慢 | 给 Docker 配镜像加速：编辑 `/etc/docker/daemon.json` 加 `"registry-mirrors": ["https://mirror.ccs.tencentyun.com"]` 后 `systemctl restart docker`（腾讯云内网加速） |
+| pgvector 函数缺失 | 后端 `DataInitializer` 启动时会自动 `CREATE EXTENSION IF NOT EXISTS vector;`；若仍缺失，手动连库执行该语句（需超级用户） |
 
 ## 六、后续迭代
 

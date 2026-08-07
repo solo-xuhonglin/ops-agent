@@ -12,6 +12,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Set;
 
@@ -23,6 +26,19 @@ public class DataInitializer implements CommandLineRunner {
     private final RoleRepository roleRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final DataSource dataSource;
+
+    /** 确保 pgvector 扩展存在（建表用到 vector 类型） */
+    private void ensurePgVectorExtension() {
+        try (Connection conn = dataSource.getConnection();
+             Statement stmt = conn.createStatement()) {
+            stmt.execute("CREATE EXTENSION IF NOT EXISTS vector");
+        } catch (Exception e) {
+            // 扩展创建失败不应阻断启动（例如无超级权限时），记录后继续
+            System.err.println("pgvector extension init skipped: " + e.getMessage());
+        }
+    }
+
 
     private static final List<String> PERMISSION_CODES = List.of(
             "user:read", "user:write",
@@ -36,6 +52,7 @@ public class DataInitializer implements CommandLineRunner {
     @Override
     @Transactional
     public void run(String... args) {
+        ensurePgVectorExtension();
         if (permissionRepository.count() > 0) return; // 已初始化则跳过
 
         // 1. 权限
