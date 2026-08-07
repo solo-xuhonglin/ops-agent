@@ -10,8 +10,6 @@ import java.util.List;
 
 public interface DatasetWeatherRepository extends JpaRepository<DatasetWeather, Long> {
 
-    List<DatasetWeather> findByDatasetIdAndRegionOrderByDateAsc(Long datasetId, String region);
-
     List<DatasetWeather> findByDatasetIdOrderByRegionAscTimeAsc(Long datasetId);
 
     @Modifying
