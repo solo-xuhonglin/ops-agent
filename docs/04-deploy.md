@@ -1,4 +1,4 @@
-# ops-agent 部署指南（腾讯云 118.195.145.247）
+# ops-agent 部署指南
 
 > 配套部署文件已生成在仓库根目录：`docker-compose.yml`、`deploy.sh`、`.env.example`；前端 `ops-agent-front/Dockerfile`(多阶段，镜像内 npm build) + `nginx.conf`；后端复用原有 `Dockerfile`(多阶段，镜像内 maven package)。
 >
@@ -36,7 +36,7 @@
 - `JWT_SECRET` —— 至少 32 位随机串，可用 `openssl rand -base64 48` 生成
 - `SERVER_IP` / `CORS_ALLOWED_ORIGINS` —— 改成你的服务器公网 IP
 
-> 默认账号 `admin / admin123` 由后端 `DataInitializer` 写入，上线后务必修改（见 `docs/01-architecture.md` 第 4 节）。
+> 默认账号 `admin / admin123` 由后端 `DataInitializer` 写入，上线后务必修改（见 `./01-architecture.md` 第 4 节）。
 
 ## 三、部署（全程服务器内：拉取 → 编译 → 构建 → 启动）
 

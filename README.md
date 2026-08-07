@@ -33,6 +33,7 @@ ops-agent/
 - [项目架构](docs/01-architecture.md)
 - [表结构](docs/02-data-model.md)
 - [API 设计](docs/03-api.md)
+- [部署指南](docs/04-deploy.md)
 
 ## 状态
 
