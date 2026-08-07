@@ -40,13 +40,23 @@ echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
 cd "$PROJECT_DIR/ops-agent-front"
 npm install
 npm run build
+if [ ! -d "$PROJECT_DIR/ops-agent-front/dist" ] || [ -z "$(ls -A "$PROJECT_DIR/ops-agent-front/dist" 2>/dev/null)" ]; then
+  echo "ERROR: 前端构建产物 dist/ 缺失，前端构建失败" >&2
+  exit 1
+fi
 
-echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物输出到 $ADMIN_BUILD）"
+echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物在 target/）"
 cd "$ADMIN_DIR"
-mkdir -p "$ADMIN_BUILD"
 mvn -q -B clean package -DskipTests \
-  -Dmaven.repo.local="$M2_REPO" \
-  -Dproject.build.directory="$ADMIN_BUILD"
+  -Dmaven.repo.local="$M2_REPO"
+
+# spring-boot repackage 会把 jar 写回 target/，需复制到 build/ 供 Dockerfile COPY
+mkdir -p "$ADMIN_BUILD"
+cp -v "$ADMIN_DIR"/target/*.jar "$ADMIN_BUILD"/
+if ! ls "$ADMIN_BUILD"/*.jar >/dev/null 2>&1; then
+  echo "ERROR: 未找到打包产物 $ADMIN_DIR/target/*.jar，后端构建失败" >&2
+  exit 1
+fi
 
 cd "$PROJECT_DIR"
 

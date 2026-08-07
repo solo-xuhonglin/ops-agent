@@ -67,7 +67,7 @@ chmod +x deploy.sh
 1. 检查 Docker / Compose；
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
-4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2 -Dproject.build.directory=ops-agent-admin/build`（产物 `ops-agent-admin/build/*.jar`，依赖缓存于项目内 `.m2`）；
+4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`），部署脚本再把 `target/*.jar` 复制到 `ops-agent-admin/build/` 供 Dockerfile `COPY build/*.jar`；
 5. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ## 四、验证
