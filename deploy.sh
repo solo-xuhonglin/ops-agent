@@ -128,7 +128,11 @@ fi
 
 cd "$PROJECT_DIR"
 
-# ===== 4. 仅拷贝产物打包镜像并启动（秒级）=====
+# ===== 4. 预构建训练镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
+echo "==> 预构建训练镜像 ops-agent-train:latest"
+docker compose --env-file .env --profile tools build train
+
+# ===== 5. 仅拷贝产物打包镜像并启动（秒级）=====
 echo "==> 加载 .env，构建轻量镜像并启动"
 docker compose --env-file .env up -d --build
 

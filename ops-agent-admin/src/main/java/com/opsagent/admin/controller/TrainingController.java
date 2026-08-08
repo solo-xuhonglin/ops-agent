@@ -1,6 +1,7 @@
 package com.opsagent.admin.controller;
 
 import com.opsagent.admin.common.ApiResponse;
+import com.opsagent.admin.dto.TrainingRequest;
 import com.opsagent.admin.entity.TrainingJob;
 import com.opsagent.admin.service.TrainingJobService;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/training/jobs")
@@ -33,8 +36,16 @@ public class TrainingController {
 
     @PostMapping
     @PreAuthorize("hasAuthority('training:write')")
-    public ApiResponse<?> create(@RequestBody TrainingJob job) {
-        return ApiResponse.ok(trainingJobService.save(job));
+    public ApiResponse<?> create(@RequestBody TrainingRequest req) {
+        return ApiResponse.ok(trainingJobService.trigger(req));
+    }
+
+    @GetMapping("/{id}/logs")
+    @PreAuthorize("hasAuthority('training:read')")
+    public ApiResponse<?> logs(@PathVariable Long id,
+                              @RequestParam(defaultValue = "30") int expiryMinutes) {
+        String url = trainingJobService.logsUrl(id, expiryMinutes);
+        return ApiResponse.ok(Map.of("url", url));
     }
 
     @DeleteMapping("/{id}")

@@ -1,0 +1,123 @@
+<template>
+  <div>
+    <div class="d-flex align-center mb-4">
+      <h2 class="text-h6 list-title">训练任务</h2>
+      <v-spacer />
+      <v-chip v-if="hasActive" color="info" size="small" class="mr-2">
+        <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
+      </v-chip>
+      <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
+    </div>
+
+    <v-card rounded="lg" class="data-card" elevation="0">
+      <v-data-table-server
+        :headers="headers"
+        :items="items"
+        :loading="loading"
+        :items-length="total"
+        :items-per-page="pageSize"
+        @update:options="onOptions"
+      >
+        <template #item.status="{ item }">
+          <v-chip :color="statusColor(item.status)" size="small">{{ statusText(item.status) }}</v-chip>
+        </template>
+        <template #item.startedAt="{ item }">
+          {{ fmt(item.startedAt) }}
+        </template>
+        <template #item.finishedAt="{ item }">
+          {{ fmt(item.finishedAt) }}
+        </template>
+        <template #item.actions="{ item }">
+          <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
+                 title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
+        </template>
+      </v-data-table-server>
+    </v-card>
+
+    <v-dialog v-model="logDialog" max-width="900">
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center">
+          训练日志
+          <v-spacer />
+          <v-chip size="small" variant="tonal">{{ logItem?.id }}</v-chip>
+        </v-card-title>
+        <v-card-text style="height: 60vh">
+          <iframe v-if="logUrl" :src="logUrl" style="width: 100%; height: 100%; border: 0; background: #f5f5f5" />
+          <div v-else class="text-medium-emphasis text-center py-8">日志生成中，稍后重试</div>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="logDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import api from '../../plugins/axios'
+
+const headers = [
+  { title: 'ID', key: 'id', width: 70 },
+  { title: '数据集', key: 'datasetId', width: 110 },
+  { title: '模型版本', key: 'modelVersionId', width: 110 },
+  { title: '状态', key: 'status', width: 120 },
+  { title: '开始时间', key: 'startedAt', width: 170 },
+  { title: '结束时间', key: 'finishedAt', width: 170 },
+  { title: '操作', key: 'actions', sortable: false, width: 100 }
+]
+
+const items = ref([])
+const total = ref(0)
+const loading = ref(false)
+const pageSize = ref(20)
+const page = ref(0)
+
+const hasActive = computed(() => items.value.some(j => ['PENDING', 'RUNNING'].includes(j.status)))
+
+async function load() {
+  loading.value = true
+  try {
+    const { data } = await api.get('/training/jobs', { params: { page: page.value, size: pageSize.value } })
+    items.value = data.data.content
+    total.value = data.data.totalElements
+  } finally { loading.value = false }
+}
+function onOptions(o) { page.value = o.page - 1; pageSize.value = o.itemsPerPage; load() }
+
+function statusText(s) {
+  return { PENDING: '排队中', RUNNING: '运行中', SUCCEEDED: '成功', FAILED: '失败' }[s] || s || '未知'
+}
+function statusColor(s) {
+  return { PENDING: 'warning', RUNNING: 'info', SUCCEEDED: 'success', FAILED: 'error' }[s] || 'grey'
+}
+function fmt(d) {
+  if (!d) return '—'
+  return new Date(d).toLocaleString()
+}
+
+// 每 5s 轮询：仅在有活跃任务时拉取，避免无谓请求
+let timer = null
+function tick() {
+  if (hasActive.value) load()
+}
+
+const logDialog = ref(false)
+const logItem = ref(null)
+const logUrl = ref('')
+async function openLog(item) {
+  logItem.value = item
+  logUrl.value = ''
+  logDialog.value = true
+  try {
+    const { data } = await api.get(`/training/jobs/${item.id}/logs`)
+    logUrl.value = data.data.url
+  } catch (e) {
+    alert(e.response?.data?.message || '获取日志失败')
+  }
+}
+
+onMounted(() => { load(); timer = setInterval(tick, 5000) })
+onUnmounted(() => { if (timer) clearInterval(timer) })
+</script>

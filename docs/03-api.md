@@ -54,34 +54,46 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/models` | 列表（含 status） |
-| GET | `/api/models/{id}` | 详情（指标 / 超参） |
-| POST | `/api/models/{id}/register` | **训练容器回调**：注册版本为 TRAINED |
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/api/models` | `model:read` | 分页列表（`page`/`size`，按 id 倒序） |
+| GET | `/api/models/{id}` | `model:read` | 详情（指标 / 超参） |
+| POST | `/api/models` | `model:write` | 手动新增版本（实体 JSON） |
+| GET | `/api/models/{id}/download` | `model:read` | 返回 `models/<id>/model.pt` 的 MinIO 预签名 URL（`expiryMinutes` 默认 30） |
+| DELETE | `/api/models/{id}` | `model:write` | 删除 |
+
+模型状态流转：`TRAINING`（训练触发时创建）→ `READY`（容器退出码 0，指标已回填）/ `FAILED`。
 
 ```jsonc
 // GET /api/models/1
 { "id": 1, "name": "北京气温LSTM", "version": "v1",
   "datasetId": 1, "algorithm": "LSTM",
-  "hyperparameters": { "seqLen": 30, "hiddenSize": 64, "lr": 0.001, "epochs": 50 },
-  "metrics": { "mae": 1.82, "rmse": 2.41, "mape": 0.09 },
-  "status": "TRAINED", "artifactKey": "models/1/model.pt" }
+  "hyperparameters": "{\"seqLen\":30,\"hiddenSize\":64,\"lr\":0.001,\"epochs\":50}",
+  "metrics": "{\"mae\":1.82,\"rmse\":2.41,\"loss\":0.031,\"epochs\":50}",
+  "status": "READY", "artifactKey": "models/1/model.pt" }
+
+// GET /api/models/1/download → { "url": "http://minio:9000/models/1/model.pt?X-Amz-..." }
 ```
 
 ## 5. 训练 Training
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/training/jobs` | 创建任务 → admin 起 training 容器 |
-| GET | `/api/training/jobs` | 列表 |
-| GET | `/api/training/jobs/{id}` | 状态 + 日志 URL |
-| POST | `/api/training/jobs/{id}/stop` | 停止容器 |
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| POST | `/api/training/jobs` | `training:write` | 创建任务：建 ModelVersion + Job，随即起训练容器，立即返回 |
+| GET | `/api/training/jobs` | `training:read` | 分页列表 |
+| GET | `/api/training/jobs/{id}` | `training:read` | 任务详情（状态 / 容器 ID / 起止时间） |
+| GET | `/api/training/jobs/{id}/logs` | `training:read` | 返回 `artifacts/<jobId>/logs.txt` 预签名 URL（任务结束后才有） |
+| DELETE | `/api/training/jobs/{id}` | `training:write` | 删除任务记录 |
+
+任务状态流转：`PENDING` → `RUNNING`（容器已启动）→ `SUCCEEDED` / `FAILED`（由 admin `@Scheduled(5s)` 轮询容器退出码回填；超时会强杀置 FAILED）。
 
 ```jsonc
 // POST /api/training/jobs
-{ "datasetId": 1, "modelName": "北京气温LSTM", "version": "v1",
-  "hyperparameters": { "seqLen": 30, "hiddenSize": 64, "lr": 0.001, "epochs": 50 } }
-// → 201
-{ "id": 10, "status": "PENDING", "modelVersionId": 1 }
+{ "datasetId": 1, "name": "北京气温LSTM", "version": "v1", "algorithm": "LSTM",
+  "hyperparameters": { "seqLen": 30, "hiddenSize": 64, "epochs": 50, "batchSize": 32, "lr": 0.001 } }
+// → 200
+{ "id": 10, "status": "RUNNING", "modelVersionId": 1,
+  "containerId": "8f3c...", "startedAt": "2026-08-08T13:20:11Z" }
 ```
 
 ## 6. 部署 Serving
@@ -93,7 +105,7 @@
 | GET | `/api/serving/endpoints` | endpoint 列表（分页） |
 | GET | `/api/serving/tools` | 供 agent 使用的工具清单（仅返回 `status=DEPLOYED` 的端点，含 `name=lstm_predict`、`url`、`endpointId`） |
 
-> **当前实现状态（基础版）**：`/api/models`、`/api/training/jobs`、`/api/serving` 为接口桩，直接以实体 JSON 收发（便于后续接入 Docker 动态编排），尚未实现容器拉起逻辑。`/api/datasets` 为完整 CRUD。
+> **当前实现状态**：`/api/datasets`、`/api/models`、`/api/training/jobs` 均为完整实现（训练已接 Docker 动态编排 + 轮询回填）。`/api/serving` 仍为接口桩，直接以实体 JSON 收发，尚未实现推理容器拉起逻辑。
 
 ```jsonc
 // POST /api/serving/deploy

@@ -26,8 +26,13 @@
         <template #item.status="{ item }">
           <v-chip :color="statusColor(item.status)" size="small">{{ statusText(item.status) }}</v-chip>
         </template>
+        <template #item.rowCount="{ item }">
+          <span v-if="item.rowCount != null">{{ item.rowCount.toLocaleString() }}</span>
+          <span v-else class="text-medium-emphasis">—</span>
+        </template>
         <template #item.actions="{ item }">
           <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary" title="查看图表" @click="openChart(item)" />
+          <v-btn v-if="canTrain" icon="mdi-rocket-launch" size="small" variant="text" color="secondary" title="训练" @click="openTrain(item)" />
           <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
           <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
         </template>
@@ -100,11 +105,45 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <v-dialog v-model="trainDialog" max-width="620">
+      <v-card rounded="lg">
+        <v-card-title>发起训练</v-card-title>
+        <v-card-text>
+          <v-alert v-if="trainItem" type="info" variant="tonal" density="compact" class="mb-3">
+            数据集：{{ trainItem.name }}（数据条数 {{ trainItem.rowCount != null ? trainItem.rowCount.toLocaleString() : '—' }}）
+          </v-alert>
+          <v-text-field v-model="trainForm.name" label="模型名称" variant="outlined" :rules="[(v)=>!!v||'必填']" />
+          <v-row>
+            <v-col cols="6">
+              <v-text-field v-model="trainForm.version" label="版本号" variant="outlined" />
+            </v-col>
+            <v-col cols="6">
+              <v-select v-model="trainForm.algorithm" :items="['LSTM']" label="算法" variant="outlined" />
+            </v-col>
+          </v-row>
+          <div class="text-subtitle-2 mb-2">超参数</div>
+          <v-row>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.seqLen" label="seqLen" type="number" variant="outlined" density="compact" /></v-col>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.hiddenSize" label="hiddenSize" type="number" variant="outlined" density="compact" /></v-col>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.epochs" label="epochs" type="number" variant="outlined" density="compact" /></v-col>
+            <v-col cols="6"><v-text-field v-model.number="trainForm.batchSize" label="batchSize" type="number" variant="outlined" density="compact" /></v-col>
+            <v-col cols="6"><v-text-field v-model.number="trainForm.lr" label="lr" type="number" step="0.0001" variant="outlined" density="compact" /></v-col>
+          </v-row>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" @click="trainDialog = false">取消</v-btn>
+          <v-btn color="secondary" :loading="training" @click="submitTrain">提交训练</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted, computed, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
@@ -115,15 +154,18 @@ const CITY_OPTIONS = [
 ]
 
 const auth = useAuthStore()
+const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('dataset:write'))
+const canTrain = computed(() => auth.hasPerm('training:write'))
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
   { title: '名称', key: 'name' },
   { title: '地区', key: 'regions' },
   { title: '日期范围', key: 'dateRange' },
+  { title: '数据条数', key: 'rowCount', width: 110 },
   { title: '状态', key: 'status', width: 110 },
-  { title: '操作', key: 'actions', sortable: false, width: 140 }
+  { title: '操作', key: 'actions', sortable: false, width: 160 }
 ]
 
 const cityOptions = CITY_OPTIONS
@@ -136,6 +178,46 @@ const dialog = ref(false)
 const editId = ref(null)
 const saving = ref(false)
 const form = reactive({ name: '', description: '', regions: [], dateStart: null, dateEnd: null, status: 'READY' })
+
+// ---------- 训练 ----------
+const trainDialog = ref(false)
+const training = ref(false)
+const trainItem = ref(null)
+const trainForm = reactive({ name: '', version: 'v1', algorithm: 'LSTM', seqLen: 24, hiddenSize: 64, epochs: 50, batchSize: 32, lr: 0.001 })
+
+function openTrain(item) {
+  trainItem.value = item
+  trainForm.name = '模型-' + (item.name || item.id)
+  trainDialog.value = true
+}
+
+async function submitTrain() {
+  if (!trainItem.value) return
+  training.value = true
+  try {
+    await api.post('/training/jobs', {
+      datasetId: trainItem.value.id,
+      name: trainForm.name,
+      version: trainForm.version,
+      algorithm: trainForm.algorithm,
+      hyperparameters: {
+        seqLen: trainForm.seqLen,
+        hiddenSize: trainForm.hiddenSize,
+        epochs: trainForm.epochs,
+        batchSize: trainForm.batchSize,
+        lr: trainForm.lr
+      }
+    })
+    trainDialog.value = false
+    if (confirm('已提交训练任务，是否前往训练任务页查看进度？')) {
+      router.push('/training/jobs')
+    }
+  } catch (e) {
+    alert(e.response?.data?.message || '提交训练失败')
+  } finally {
+    training.value = false
+  }
+}
 
 async function load() {
   loading.value = true

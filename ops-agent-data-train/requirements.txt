@@ -1,0 +1,5 @@
+# 基础镜像 pytorch/pytorch:*-cpu 已自带 torch，无需在此安装
+pandas
+numpy
+boto3
+scikit-learn

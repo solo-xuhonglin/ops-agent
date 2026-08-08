@@ -67,10 +67,11 @@ public class DatasetController {
                 () -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                         "Object storage (MinIO) is not enabled in this environment"));
         try {
-            String objectKey = "datasets/" + id + "/" + file.getOriginalFilename();
+            String objectKey = id + "/" + file.getOriginalFilename();
             minio.upload(objectKey, file);
-            datasetService.updateObjectKey(id, objectKey);
-            return ApiResponse.ok(java.util.Map.of("objectKey", objectKey));
+            Long rows = datasetService.countRows(file);
+            datasetService.updateObjectKeyAndRowCount(id, objectKey, rows);
+            return ApiResponse.ok(java.util.Map.of("objectKey", objectKey, "rowCount", rows));
         } catch (ResourceNotFoundException e) {
             // dataset missing -> propagate as 404 (mapped by global handler)
             throw e;

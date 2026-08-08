@@ -55,6 +55,17 @@ public class MinioService {
         return objectKey;
     }
 
+    /** 从任意输入流上传对象（采集的 CSV、训练日志等不走 MultipartFile 的场景）。 */
+    public String upload(String objectKey, InputStream is, long size, String contentType) throws Exception {
+        minioClient.putObject(PutObjectArgs.builder()
+                .bucket(minioConfig.getBucket())
+                .object(objectKey)
+                .stream(is, size, -1)
+                .contentType(contentType)
+                .build());
+        return objectKey;
+    }
+
     public InputStream download(String objectKey) throws Exception {
         return minioClient.getObject(GetObjectArgs.builder()
                 .bucket(minioConfig.getBucket())

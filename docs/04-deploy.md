@@ -11,10 +11,14 @@
    │  http://<IP>           (80)
    ▼
 [ front: nginx ] ── /api/ 反向代理 ──► [ admin: Spring Boot ] (8080)
-                                          │  JDBC
+                                          │  JDBC          │  docker.sock（动态起容器）
+                                          ▼               ▼
+                                    [ postgres ]    [ train: ops-agent-train ]（按任务动态起）
+                                          │  S3
                                           ▼
-                                    [ postgres + pgvector ] (5432)
+                                    [ minio: datasets/models/artifacts ]
 ```
+> admin 挂载宿主 `/var/run/docker.sock`，点击训练时经 docker-java 拉起 `ops-agent-train` 容器，训练产物（模型 + 指标 + 日志）回传 MinIO，容器跑完即回收。
 
 ## 一、服务器前置要求
 
@@ -68,7 +72,8 @@ chmod +x deploy.sh
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
 4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`）；Dockerfile 直接 `COPY target/*.jar`；
-5. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
+5. `docker compose --profile tools build train` —— 预构建训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/` 下的 Dockerfile，PyTorch CPU 版），该服务 `profiles:["tools"]` 不随 `up` 启动，仅供 admin 经 docker-java 动态实例化；
+6. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ## 四、验证
 
@@ -92,5 +97,15 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 
 ## 六、后续迭代
 
-- 接入 MinIO、agent、training/serving 动态容器时，取消 `docker-compose.yml` 中 `admin` 服务的 `docker.sock` 挂载注释，并补充对应 service 定义。
+- 训练编排已落地：`admin` 已挂载宿主 `docker.sock`，`docker-compose.yml` 含 `train` 服务（`profiles:["tools"]`，`deploy.sh` 会先 `docker compose --profile tools build train` 预构建 `ops-agent-train:latest`）。serving（推理部署）仍是后续迭代项。
 - 生产建议加 HTTPS（在 `front` 前再挂一层 `nginx-proxy` + `acme-companion` 或自建 cert）。
+
+## 七、存储约定
+
+业务数据统一落在 MinIO，PG 仅保留元数据：
+
+| 用途 | MinIO 路径 |
+| --- | --- |
+| 数据集（采集 / 上传的文件） | `datasets/<datasetId>/...` |
+| 训练产物（模型权重、指标） | `models/<modelVersionId>/model.pt`、`metrics.json` |
+| 训练日志 | `artifacts/<jobId>/logs.txt` |

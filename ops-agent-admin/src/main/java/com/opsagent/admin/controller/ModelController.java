@@ -43,4 +43,12 @@ public class ModelController {
         modelVersionService.delete(id);
         return ApiResponse.ok();
     }
+
+    @GetMapping("/{id}/download")
+    @PreAuthorize("hasAuthority('model:read')")
+    public ApiResponse<?> download(@PathVariable Long id,
+                                  @RequestParam(defaultValue = "30") int expiryMinutes) {
+        String url = modelVersionService.downloadUrl(id, expiryMinutes);
+        return ApiResponse.ok(java.util.Map.of("url", url));
+    }
 }

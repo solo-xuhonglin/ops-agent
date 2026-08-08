@@ -3,10 +3,8 @@ package com.opsagent.admin.service;
 import com.opsagent.admin.common.ResourceNotFoundException;
 import com.opsagent.admin.dto.DatasetDto;
 import com.opsagent.admin.entity.Dataset;
-import com.opsagent.admin.entity.DatasetWeather;
 import com.opsagent.admin.entity.User;
 import com.opsagent.admin.repository.DatasetRepository;
-import com.opsagent.admin.repository.DatasetWeatherRepository;
 import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.CurrentUser;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +13,11 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -26,7 +28,6 @@ import java.util.Optional;
 public class DatasetService {
 
     private final DatasetRepository datasetRepository;
-    private final DatasetWeatherRepository weatherRepository;
     private final CurrentUser currentUser;
     private final UserRepository userRepository;
     private final WeatherService weatherService;
@@ -47,8 +48,7 @@ public class DatasetService {
         Dataset d = new Dataset();
         d.setName(req.name());
         d.setDescription(req.description());
-        d.setObjectKey(req.objectKey() != null && !req.objectKey().isBlank()
-                ? req.objectKey() : "weather://" + (req.name() == null ? "dataset" : req.name()));
+        d.setObjectKey("weather://" + (req.name() == null ? "dataset" : req.name()));
         d.setRegions(req.regions() == null ? new ArrayList<>() : req.regions());
         d.setSource(req.source());
         d.setFileFormat(req.fileFormat());
@@ -59,7 +59,6 @@ public class DatasetService {
         d.setCreatedBy(currentUserId());
         Dataset saved = datasetRepository.save(d);
         collectWeather(saved);
-        saved.setStatus("READY");
         return toResponse(datasetRepository.save(saved));
     }
 
@@ -85,7 +84,6 @@ public class DatasetService {
         Dataset d = find(id);
         String objectKey = d.getObjectKey();
         datasetRepository.delete(d);
-        weatherRepository.deleteByDatasetId(id);
         // purge the associated MinIO object so deletion leaves no orphan file
         minioService.ifPresent(minio -> {
             if (objectKey != null && !objectKey.startsWith("weather://")) {
@@ -106,9 +104,32 @@ public class DatasetService {
         datasetRepository.save(d);
     }
 
+    @Transactional
+    public void updateObjectKeyAndRowCount(Long id, String objectKey, Long rowCount) {
+        Dataset d = find(id);
+        d.setObjectKey(objectKey);
+        d.setRowCount(rowCount);
+        datasetRepository.save(d);
+    }
+
     @Transactional(readOnly = true)
     public String getObjectKey(Long id) {
         return find(id).getObjectKey();
+    }
+
+    /**
+     * 上传文件后统计行数（含表头减 1）。失败返回 null，不阻断上传主流程。
+     */
+    public Long countRows(MultipartFile file) {
+        try (BufferedReader br = new BufferedReader(
+                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
+            long lines = 0;
+            while (br.readLine() != null) lines++;
+            return Math.max(0, lines - 1);
+        } catch (Exception e) {
+            log.warn("统计文件行数失败 error={}", e.getMessage());
+            return null;
+        }
     }
 
     private void collectWeather(Dataset d) {
@@ -117,9 +138,13 @@ public class DatasetService {
             return;
         }
         try {
-            weatherService.collect(d.getId(), d.getRegions(), d.getDateStart(), d.getDateEnd());
+            long rows = weatherService.collect(d.getId(), d.getRegions(), d.getDateStart(), d.getDateEnd());
+            d.setObjectKey(d.getId() + "/weather.csv");
+            d.setRowCount(rows);
+            d.setStatus(rows > 0 ? "READY" : "INVALID");
         } catch (Exception e) {
             log.warn("天气采集异常 datasetId={} error={}", d.getId(), e.getMessage());
+            d.setStatus("INVALID");
         }
     }
 

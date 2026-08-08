@@ -18,6 +18,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    networks:
+      - opsnet
 
   # ===== 对象存储（MinIO，S3 兼容）=====
   minio:
@@ -39,6 +41,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    networks:
+      - opsnet
 
   # 初始化 MinIO 桶（datasets / models / artifacts）
   minio-init:
@@ -55,6 +59,8 @@ services:
       mc mb -p ops/artifacts;
       echo 'MinIO buckets initialized';
       "
+    networks:
+      - opsnet
 
   # ===== 后端（Spring Boot）=====
   admin:
@@ -81,11 +87,18 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: ${MINIO_BUCKET}
       MINIO_PUBLIC_READ: "false"
+      # 训练编排：镜像名 / 网络 / 超时
+      TRAIN_ENABLED: ${TRAIN_ENABLED:-true}
+      TRAIN_IMAGE: ${TRAIN_IMAGE:-ops-agent-train:latest}
+      TRAIN_NETWORK: ${TRAIN_NETWORK:-ops-agent-opsnet}
+      TRAIN_TIMEOUT_MINUTES: ${TRAIN_TIMEOUT_MINUTES:-60}
     ports:
       - "${ADMIN_PORT}:8080"
-    # 如需后续动态拉起 training/serving 容器，取消下行注释挂载 docker.sock
-    # volumes:
-    #   - /var/run/docker.sock:/var/run/docker.sock
+    # 动态拉起 training 容器需要挂载宿主 docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - opsnet
 
   # ===== 前端（nginx 托管 dist + 反向代理）=====
   front:
@@ -98,7 +111,26 @@ services:
       - admin
     ports:
       - "${HTTP_PORT}:80"
+    networks:
+      - opsnet
+
+  # ===== 训练镜像（仅构建，不随 up 启动；由 admin 经 docker-java 动态实例化）=====
+  train:
+    image: ops-agent-train:latest
+    build:
+      context: ./ops-agent-data-train
+      dockerfile: Dockerfile
+    container_name: ops-agent-train
+    profiles:
+      - tools
+    networks:
+      - opsnet
 
 volumes:
   pgdata:
   minio-data:
+
+networks:
+  opsnet:
+    name: ops-agent-opsnet
+    driver: bridge
