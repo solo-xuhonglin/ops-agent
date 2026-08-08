@@ -87,3 +87,47 @@ def get_client():
 def target():
     """返回 user@host:port 形式的目标描述，供脚本打印（不含口令）。"""
     return f"{USER}@{HOST}:{PORT}"
+
+
+def run_detached(inner_cmd, log_path):
+    """在远程以 setsid 完全脱离 SSH 通道的方式后台执行命令。
+
+    参数：
+      inner_cmd  在 REMOTE_DIR 下执行的命令字符串
+      log_path   远程日志文件路径，命令的 stdout/stderr 都写入这里
+
+    返回：
+      True 表示确认收到 LAUNCHED；False 表示通道未及时回读
+      （后台进程已通过 setsid 脱离，通常仍在正常运行，用轮询脚本确认即可）。
+
+    说明：后台进程偶尔会让 SSH 通道延迟关闭，导致 stdout.read() 超时。
+    这里对超时做容错，不视为启动失败。
+    """
+    import socket
+
+    cmd = (
+        f"cd {REMOTE_DIR} && "
+        f"setsid bash -c 'cd {REMOTE_DIR} && {inner_cmd} > {log_path} 2>&1' "
+        f"</dev/null >/dev/null 2>&1 & "
+        f"echo LAUNCHED"
+    )
+    client = get_client()
+    print(f">> target: {target()} {REMOTE_DIR}")
+    launched = False
+    try:
+        stdin, stdout, stderr = client.exec_command(cmd, timeout=15)
+        try:
+            out = stdout.read().decode("utf-8", "ignore").strip()
+            if out:
+                print(out)
+            launched = "LAUNCHED" in out
+            err = stderr.read().decode("utf-8", "ignore").strip()
+            if err:
+                print("ERR:", err)
+        except (socket.timeout, Exception) as exc:  # noqa: BLE001
+            print(f">> channel read timed out ({type(exc).__name__}); "
+                  f"process was detached and is most likely running")
+    finally:
+        client.close()
+    print(f">> detached on remote; log at {log_path}")
+    return launched

@@ -18,10 +18,17 @@
 
 | 脚本 | 作用 | 关键输出 |
 |------|------|----------|
-| `_conn.py` | **共用辅助模块**，不是入口。解析连接配置并封装 SSH 连接；导出 `get_client()` / `target()` / `REMOTE_DIR`。其它脚本均 `import` 它。 | — |
+| `_conn.py` | **共用辅助模块**，不是入口。解析连接配置、封装 SSH 连接与后台执行；导出 `get_client()` / `target()` / `run_detached()` / `REMOTE_DIR`。其它脚本均 `import` 它。 | — |
 | `ssh_status.py` | 查看远程部署状态 | git 当前版本、运行中容器（`docker compose ps`）、已构建镜像列表、磁盘占用 |
-| `ssh_train_build.py` | 在远程**后台**预构建训练镜像 `ops-agent-train:latest` | 立即返回 `LAUNCHED`；实际日志在远程 `/tmp/train_build.log` |
-| `ssh_poll.py` | 轮询训练镜像构建进度与结果 | 构建日志末尾 + 是否已生成 `ops-agent-train` 镜像（`NOT BUILT YET` → 镜像名） |
+| `ssh_deploy.py` | 在远程**后台**执行一键部署 `deploy.sh` | 立即返回 `LAUNCHED`；日志在远程 `/tmp/deploy.log` |
+| `ssh_train_build.py` | 在远程**后台**单独重建训练镜像 `ops-agent-train:latest` | 立即返回 `LAUNCHED`；日志在远程 `/tmp/train_build.log` |
+| `ssh_poll.py` | 轮询任一后台任务的日志与结果（部署 / 构建通用） | 日志末尾 + 当前 ops-agent 镜像与容器状态 |
+
+`ssh_deploy.py` 支持 `--force-train` 强制重建训练镜像；
+`ssh_poll.py` 支持 `--log <远程日志路径>`（默认 `/tmp/train_build.log`）与 `-n <行数>`（默认 25）。
+
+> 后台任务通过 `setsid` 脱离 SSH 通道。偶尔通道会延迟关闭导致读取超时，
+> `run_detached()` 已对此容错并提示 —— 此时进程仍在运行，用 `ssh_poll.py` 确认即可。
 
 ## 三、连接配置
 
@@ -62,26 +69,37 @@ REMOTE_HOST=192.168.1.10 SSHPASS='******' python scripts/ssh_status.py
 
 ## 四、用法示例
 
+下文用 `PY` 代指受管 Python：
+`C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/python.exe`
+
 ```bash
 # 1) 查看当前部署状态
-C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/ssh_status.py
+$PY scripts/ssh_status.py
 
-# 2) 仅当训练相关代码（ops-agent-data-train/）变更后，后台重建训练镜像
-C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/ssh_train_build.py
+# 2) 一键部署（最常用）
+$PY scripts/ssh_deploy.py
+$PY scripts/ssh_poll.py --log /tmp/deploy.log -n 40    # 反复执行直到出现「部署完成」
 
-# 3) 反复轮询，直到出现镜像（构建较大，可能需数分钟）
-C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/python.exe scripts/ssh_poll.py
+# 3) 只重建训练镜像，不跑完整部署
+$PY scripts/ssh_train_build.py
+$PY scripts/ssh_poll.py                                 # 默认看 /tmp/train_build.log
+
+# 4) 强制重建训练镜像后完整部署（如需刷新基础镜像）
+$PY scripts/ssh_deploy.py --force-train
 ```
 
 每个脚本启动时会打印 `>> target: user@host:port`（不含口令），便于确认连的是哪台机器。
 
 ## 五、典型运维流程
 
-1. **改了训练代码**（`ops-agent-data-train/` 下的 `train.py` / `Dockerfile` / `requirements.txt`）
-   且已 push 到 GitHub 并在服务器 `git pull` 后 → 跑 `ssh_train_build.py` 重建镜像，
-   再 `ssh_poll.py` 确认构建成功。
-2. **改了后端/前端** → 用根目录 `deploy.sh` 整体重新部署（其内置 `docker compose --profile tools build train`）。
+1. **改了后端/前端/训练代码** → push 到 GitHub 后跑 `ssh_deploy.py`，
+   再用 `ssh_poll.py --log /tmp/deploy.log` 跟踪到「部署完成」。
+   训练镜像是否重建由 `deploy.sh` 按内容哈希自动决定（见 `04-deploy.md`）。
+2. **只想重建训练镜像**（不动 admin/front） → `ssh_train_build.py` + `ssh_poll.py`。
 3. **日常巡检** → `ssh_status.py` 一眼看版本、容器、镜像、磁盘。
+
+> ⚠️ 若本次提交改动了 `deploy.sh` 自身，建议先在服务器单独 `git pull` 再运行部署，
+> 避免 bash 边读边执行时脚本文件被 pull 覆盖导致行为异常。
 
 ## 六、安全约定
 

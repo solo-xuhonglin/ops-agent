@@ -12,6 +12,14 @@ build/
 .m2/
 .deploy-cache/
 
+# ===== Python =====
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
 # ===== IDE / editor =====
 .idea/
 *.iml
