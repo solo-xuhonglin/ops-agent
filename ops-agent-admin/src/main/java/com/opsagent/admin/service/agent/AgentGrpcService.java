@@ -23,6 +23,7 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
 
     private final WorkerRegistry registry;
     private final AgentTaskService taskService;
+    private final ToolSchemaService toolSchemaService;
 
     @Override
     public StreamObserver<ClientMessage> connect(StreamObserver<ServerMessage> responseObserver) {
@@ -61,12 +62,15 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 workerIdRef.set(register.getWorkerId());
                 List<AgentInfo> agents = register.getAgentsList();
                 registry.register(register.getWorkerId(), agents, observer);
+                List<ToolSchema> tools = toolSchemaService.readToolSchemas();
                 observer.onNext(ServerMessage.newBuilder()
                         .setRegisterAck(RegisterAck.newBuilder()
                                 .setOk(true)
                                 .setMessage("registered, agents=" + agents.stream()
-                                        .map(AgentInfo::getAgentId).collect(Collectors.joining(","))))
+                                        .map(AgentInfo::getAgentId).collect(Collectors.joining(",")))
+                                .addAllTools(tools))
                         .build());
+                log.info("register ack sent to {}: {} read tools", register.getWorkerId(), tools.size());
             }
 
             private void handleEvent(TaskEvent event) {
