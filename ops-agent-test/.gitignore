@@ -1,0 +1,9 @@
+# 本地环境变量（含测试账号密码，切勿提交）
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/

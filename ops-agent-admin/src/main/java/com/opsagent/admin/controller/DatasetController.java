@@ -1,6 +1,7 @@
 package com.opsagent.admin.controller;
 
 import com.opsagent.admin.common.ApiResponse;
+import com.opsagent.admin.common.ResourceNotFoundException;
 import com.opsagent.admin.dto.DatasetDto;
 import com.opsagent.admin.service.DatasetService;
 import com.opsagent.admin.service.MinioService;
@@ -70,6 +71,9 @@ public class DatasetController {
             minio.upload(objectKey, file);
             datasetService.updateObjectKey(id, objectKey);
             return ApiResponse.ok(java.util.Map.of("objectKey", objectKey));
+        } catch (ResourceNotFoundException e) {
+            // dataset missing -> propagate as 404 (mapped by global handler)
+            throw e;
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Failed to upload file to object storage: " + e.getMessage());
@@ -90,6 +94,9 @@ public class DatasetController {
             String url = minio.presignedUrl(objectKey, expiryMinutes);
             return ApiResponse.ok(java.util.Map.of("url", url, "objectKey", objectKey));
         } catch (ResponseStatusException e) {
+            throw e;
+        } catch (ResourceNotFoundException e) {
+            // dataset missing -> propagate as 404 (mapped by global handler)
             throw e;
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,

@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +30,7 @@ public class DatasetService {
     private final CurrentUser currentUser;
     private final UserRepository userRepository;
     private final WeatherService weatherService;
+    private final Optional<MinioService> minioService;
 
     @Transactional(readOnly = true)
     public Page<DatasetDto.Response> list(Pageable pageable) {
@@ -80,8 +82,21 @@ public class DatasetService {
 
     @Transactional
     public void delete(Long id) {
-        datasetRepository.delete(find(id));
+        Dataset d = find(id);
+        String objectKey = d.getObjectKey();
+        datasetRepository.delete(d);
         weatherRepository.deleteByDatasetId(id);
+        // purge the associated MinIO object so deletion leaves no orphan file
+        minioService.ifPresent(minio -> {
+            if (objectKey != null && !objectKey.startsWith("weather://")) {
+                try {
+                    minio.delete(objectKey);
+                } catch (Exception e) {
+                    log.warn("MinIO object delete failed datasetId={} objectKey={} error={}",
+                            id, objectKey, e.getMessage());
+                }
+            }
+        });
     }
 
     @Transactional

@@ -1,0 +1,129 @@
+"""Thin HTTP client for the ops-agent backend API.
+
+Wraps the real endpoints (verified against DatasetController / DatasetService):
+  GET    /api/datasets              list (paginated, id desc)
+  GET    /api/datasets/{id}         detail
+  POST   /api/datasets              create (JSON)
+  PUT    /api/datasets/{id}         update (JSON)
+  DELETE /api/datasets/{id}         delete
+  POST   /api/datasets/{id}/file    upload file -> MinIO (multipart)
+  GET    /api/datasets/{id}/file/url  presigned URL
+
+Backend envelope: { code, message, data, timestamp }  (null fields omitted).
+"""
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEFAULT_BASE_URL = os.getenv("BASE_URL", "http://118.195.145.247:8080/api")
+DEFAULT_USER = os.getenv("ADMIN_USERNAME", "admin")
+DEFAULT_PASS = os.getenv("ADMIN_PASSWORD", "admin123")
+
+
+class OpsAgentError(Exception):
+    def __init__(self, message: str, status_code: int | None = None, envelope: Any = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.envelope = envelope
+
+
+class OpsAgentClient:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        timeout: float = 30.0,
+    ):
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        # Normalize: BASE_URL may be provided WITH or WITHOUT the `/api` suffix
+        # (e.g. "http://host:8080/api" or "http://host:8080"). The helper methods
+        # below already prefix paths with `/api`, so strip a trailing `/api` here
+        # to avoid building ".../api/api/..." (which the security whitelist would
+        # reject with 401, making login look like "bad credentials").
+        if self.base_url.endswith("/api"):
+            self.base_url = self.base_url[: -len("/api")]
+        self.username = username or DEFAULT_USER
+        self.password = password or DEFAULT_PASS
+        self.timeout = timeout
+        self.token: str | None = None
+        self.http = httpx.Client(base_url=self.base_url, timeout=timeout)
+
+    # ---- auth ----
+    def login(self) -> dict:
+        resp = self.http.post(
+            "/api/auth/login",
+            json={"username": self.username, "password": self.password},
+        )
+        if resp.status_code >= 400:
+            raise OpsAgentError(f"login failed {resp.status_code}: {resp.text}", resp.status_code)
+        data = resp.json().get("data") or {}
+        self.token = data.get("token")
+        if not self.token:
+            raise OpsAgentError("login returned no token", resp.status_code, data)
+        self.http.headers["Authorization"] = f"Bearer {self.token}"
+        return data
+
+    # ---- low-level request with envelope handling ----
+    def _request(self, method: str, path: str, **kwargs) -> dict:
+        resp = self.http.request(method, path, **kwargs)
+        try:
+            body = resp.json()
+        except Exception:
+            body = None
+        if resp.status_code >= 400:
+            raise OpsAgentError(
+                f"{method} {path} -> HTTP {resp.status_code}: {resp.text[:300]}",
+                resp.status_code,
+                body,
+            )
+        return body  # envelope { code, message, data, timestamp }
+
+    def get(self, path: str, **kw):
+        return self._request("GET", path, **kw)
+
+    def post(self, path: str, **kw):
+        return self._request("POST", path, **kw)
+
+    def put(self, path: str, **kw):
+        return self._request("PUT", path, **kw)
+
+    def delete(self, path: str, **kw):
+        return self._request("DELETE", path, **kw)
+
+    # ---- dataset helpers (operate on the envelope's data field) ----
+    def create_dataset(self, payload: dict) -> dict:
+        return self.post("/api/datasets", json=payload)["data"]
+
+    def get_dataset(self, ds_id: int) -> dict:
+        return self.get(f"/api/datasets/{ds_id}")["data"]
+
+    def list_datasets(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/datasets", params={"page": page, "size": size})["data"]
+
+    def update_dataset(self, ds_id: int, payload: dict) -> dict:
+        return self.put(f"/api/datasets/{ds_id}", json=payload)["data"]
+
+    def delete_dataset(self, ds_id: int) -> dict:
+        return self.delete(f"/api/datasets/{ds_id}")
+
+    def upload_file(self, ds_id: int, file_path: str, filename: str | None = None) -> dict:
+        fname = filename or os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            files = {"file": (fname, f, "application/octet-stream")}
+            return self.post(f"/api/datasets/{ds_id}/file", files=files)["data"]
+
+    def file_url(self, ds_id: int, expiry_minutes: int = 30) -> dict:
+        return self.get(
+            f"/api/datasets/{ds_id}/file/url",
+            params={"expiryMinutes": expiry_minutes},
+        )["data"]
+
+    def close(self):
+        self.http.close()
