@@ -206,19 +206,23 @@ function switchList(tab) {
 }
 
 // ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
-// 跟手的关键：拖动期间直接改 DOM（rAF 合并），不经过 Vue 重渲染；松手后才提交 ref
+// 跟手的关键：拖动期间直接改 DOM（同步写入，零 Vue 重渲染），松手后才提交 ref
 const MIN_W = 320
 const MAX_W = 760
 const drawerEl = ref(null)
 const drawerWidth = ref(Number(localStorage.getItem('agentDrawerWidth')) || 430)
-let resizeRaf = 0
+
+// 取抽屉根 DOM：优先直接查 DOM（组件实例的 $el 在此环境解析不稳定）
+function drawerDom() {
+  return document.querySelector('.agent-drawer') || drawerEl.value?.$el || drawerEl.value
+}
 
 function startResize(e) {
   e.preventDefault()
   if (e.pointerId !== undefined && e.target?.setPointerCapture) {
     try { e.target.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ }
   }
-  const drawer = drawerEl.value?.$el || drawerEl.value
+  const drawer = drawerDom()
   const startX = e.clientX
   const startW = drawer ? drawer.getBoundingClientRect().width : drawerWidth.value
 
@@ -226,16 +230,13 @@ function startResize(e) {
   if (drawer) drawer.style.transition = 'none'
 
   const onMove = (ev) => {
-    cancelAnimationFrame(resizeRaf)
-    resizeRaf = requestAnimationFrame(() => {
-      if (!drawer) return
-      // 抽屉在右侧：手柄向左拖 → 宽度增大
-      const w = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)))
-      drawer.style.width = `${w}px`
-    })
+    if (!drawer) return
+    // 抽屉在右侧：手柄向左拖 → 宽度增大
+    const w = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)))
+    drawer.style.width = `${w}px`   // 直接写 DOM：视觉即时跟手
+    drawerWidth.value = w           // 同步 ref：轮询重渲染时宽度不会跳回
   }
   const onUp = () => {
-    cancelAnimationFrame(resizeRaf)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('pointercancel', onUp)
