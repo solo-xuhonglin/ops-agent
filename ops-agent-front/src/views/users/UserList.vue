@@ -96,7 +96,7 @@ const items = ref([])
 const total = ref(0)
 const loading = ref(false)
 const search = ref('')
-const pageSize = ref(20)
+const pageSize = ref(10)
 const page = ref(0)
 
 const dialog = ref(false)

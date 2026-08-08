@@ -133,7 +133,7 @@ const headers = [
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const page = ref(0)
 
 const hasActive = computed(() => items.value.some(ep => ['CREATING', 'STOPPING'].includes(ep.status)))
