@@ -171,7 +171,9 @@ ADMIN_DIR="$PROJECT_DIR/ops-agent-admin"
 build_front() {
   echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
   cd "$PROJECT_DIR/ops-agent-front"
-  npm install
+  # --force：绕过 npm optional 依赖跨平台 bug（npm/cli#4828，lock 在 Windows 生成，
+  # linux 服务器上 rollup/esbuild 原生包会缺失）；平台包已显式加入 devDependencies
+  npm install --force
   npm run build
   if [ ! -d "$PROJECT_DIR/ops-agent-front/dist" ] || [ -z "$(ls -A "$PROJECT_DIR/ops-agent-front/dist" 2>/dev/null)" ]; then
     echo "ERROR: 前端构建产物 dist/ 缺失，前端构建失败" >&2
