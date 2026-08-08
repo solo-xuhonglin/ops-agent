@@ -4,8 +4,10 @@ import com.opsagent.admin.agent.proto.ServerMessage;
 import com.opsagent.admin.agent.proto.Suggestion;
 import com.opsagent.admin.agent.proto.TaskDispatch;
 import com.opsagent.admin.entity.AgentEvent;
+import com.opsagent.admin.entity.AgentSuggestion;
 import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.repository.AgentEventRepository;
+import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
 import com.opsagent.admin.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,7 @@ public class AgentTaskService {
 
     private final AgentTaskRepository taskRepository;
     private final AgentEventRepository eventRepository;
+    private final AgentSuggestionRepository suggestionRepository;
     private final WorkerRegistry workerRegistry;
     private final JwtUtil jwtUtil;
 
@@ -104,7 +107,7 @@ public class AgentTaskService {
         });
     }
 
-    /** 任务完成（TaskResult 到达） */
+    /** 任务完成（TaskResult 到达）：落结论；写操作建议落 agent_suggestions（PENDING，待人工确认） */
     @Transactional
     public void complete(String taskId, boolean ok, String conclusion, List<Suggestion> suggestions, String error) {
         taskRepository.findByTaskId(taskId).ifPresent(task -> {
@@ -113,8 +116,7 @@ public class AgentTaskService {
                 task.setStatus(STATUS_SUCCEEDED);
                 task.setConclusion(conclusion);
                 if (suggestions != null && !suggestions.isEmpty()) {
-                    // M1 阶段建议不落库（agent_suggestions 表 M3 引入），仅记录
-                    log.info("task suggestions (persisted in M3): taskId={}, count={}", taskId, suggestions.size());
+                    persistSuggestions(taskId, suggestions);
                 }
             } else {
                 task.setStatus(STATUS_FAILED);
@@ -123,6 +125,21 @@ public class AgentTaskService {
             taskRepository.save(task);
             log.info("task finished: taskId={}, ok={}", taskId, ok);
         });
+    }
+
+    private void persistSuggestions(String taskId, List<Suggestion> suggestions) {
+        for (Suggestion s : suggestions) {
+            AgentSuggestion suggestion = new AgentSuggestion();
+            suggestion.setTaskId(taskId);
+            suggestion.setActionType(s.getActionType());
+            suggestion.setTargetType(s.getTargetType());
+            suggestion.setTargetId(s.getTargetId());
+            suggestion.setParams(s.getParams());
+            suggestion.setReason(s.getReason());
+            suggestion.setPriority(s.getPriority().isBlank() ? "NORMAL" : s.getPriority());
+            suggestionRepository.save(suggestion);
+        }
+        log.info("task suggestions persisted: taskId={}, count={}", taskId, suggestions.size());
     }
 
     public Page<AgentTask> list(int page, int size) {
