@@ -68,11 +68,13 @@ class GrpcClient:
                 event_type=event_type, content=content)))
 
     async def send_result(self, task_id: str, ok: bool, conclusion: str,
-                          error: str = "") -> None:
-        await self._send(agent_pb2.ClientMessage(
+                          error: str = "", suggestions: Optional[list] = None) -> None:
+        msg = agent_pb2.ClientMessage(
             task_result=agent_pb2.TaskResult(
-                task_id=task_id, ok=ok,
-                conclusion=conclusion, error=error)))
+                task_id=task_id, ok=ok, conclusion=conclusion, error=error))
+        if suggestions:
+            msg.task_result.suggestions.extend(suggestions)
+        await self._send(msg)
 
     # ---- 接收路由 ----
 
