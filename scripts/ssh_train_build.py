@@ -14,7 +14,7 @@
   - 本脚本总是执行真实构建，但 Docker 层缓存仍然生效：
     仅 train.py 变更时只重跑末尾 COPY 层，秒级完成。
 
-连接参数来自环境变量或项目根 deploy-remote.env，详见同目录 _conn.py。
+连接参数来自环境变量或 scripts/ssh.env，详见同目录 _conn.py。
 """
 import os
 import sys

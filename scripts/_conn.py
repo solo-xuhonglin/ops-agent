@@ -4,8 +4,8 @@
 连接参数按以下优先级解析：
 
   1) 进程环境变量
-  2) 项目根目录的 deploy-remote.env（已被 .gitignore 忽略，
-     与 deploy-remote.py / deploy-remote.sh 共用同一份凭据）
+  2) scripts/ssh.env（已被 .gitignore 忽略；scripts/ 下所有脚本共用，
+     优先读取用户主目录 ~/.ops-agent/ssh.env）
 
 配置项：
   REMOTE_HOST   必填  服务器 IP 或域名
@@ -15,16 +15,16 @@
   REMOTE_DIR    可选  服务器上的项目目录，默认 /opt/ops-agent
 
 缺少必填项时脚本会直接退出并给出提示，而不是回退到某个内置默认值。
-初始化：复制 deploy-remote.env.example 为 deploy-remote.env 并填入真实值。
+初始化：复制 scripts/ssh.env.example 为 scripts/ssh.env（或 ~/.ops-agent/ssh.env）并填入真实值。
 """
 import os
 
 import paramiko
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# 凭据优先放用户主目录 ~/.ops-agent/deploy-remote.env（项目目录内容易被清理/同步覆盖），项目根为兼容兜底
-HOME_CFG = os.path.join(os.path.expanduser("~"), ".ops-agent", "deploy-remote.env")
-ENV_FILE = HOME_CFG if os.path.exists(HOME_CFG) else os.path.join(PROJECT_ROOT, "deploy-remote.env")
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+# 凭据优先放用户主目录 ~/.ops-agent/ssh.env（项目目录内容易被清理/同步覆盖），scripts/ssh.env 为兼容兜底
+HOME_CFG = os.path.join(os.path.expanduser("~"), ".ops-agent", "ssh.env")
+ENV_FILE = HOME_CFG if os.path.exists(HOME_CFG) else os.path.join(SCRIPTS_DIR, "ssh.env")
 
 
 def _load_env_file(path):
@@ -46,7 +46,7 @@ _FILE_CFG = _load_env_file(ENV_FILE)
 
 
 def cfg(key, default=None):
-    """取配置：环境变量 > deploy-remote.env > default。"""
+    """取配置：环境变量 > ssh.env > default。"""
     return os.environ.get(key) or _FILE_CFG.get(key) or default
 
 
@@ -63,7 +63,7 @@ def _require(name, value):
         raise SystemExit(
             f"ERROR: {name} is not configured.\n"
             f"  Set it as an environment variable, or put it in: {ENV_FILE}\n"
-            f"  Template: deploy-remote.env.example\n"
+            f"  Template: scripts/ssh.env.example\n"
             f"  Credentials must never be hardcoded in scripts."
         )
 

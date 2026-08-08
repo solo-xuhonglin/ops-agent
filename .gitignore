@@ -34,6 +34,7 @@ venv/
 application-local.yml
 application-local.properties
 deploy-remote.env
+ssh.env
 
 # ===== Logs =====
 *.log

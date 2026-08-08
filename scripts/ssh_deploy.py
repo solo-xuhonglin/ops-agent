@@ -25,7 +25,7 @@
 注意：deploy.sh 自身会执行 git pull。若本次提交改动了 deploy.sh，
 建议先单独 pull 再用 --no-pull 运行，避免脚本在执行过程中被覆盖。
 
-连接参数来自环境变量或项目根 deploy-remote.env，详见同目录 _conn.py。
+连接参数来自环境变量或 scripts/ssh.env，详见同目录 _conn.py。
 """
 import argparse
 import os

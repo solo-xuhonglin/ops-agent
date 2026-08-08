@@ -12,7 +12,7 @@
      `C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/python.exe`
    - 该 venv 已含 `paramiko`；若缺失可执行：
      `C:/Users/wangc/.workbuddy/binaries/python/envs/default/Scripts/pip.exe install paramiko`
-2. 已在项目根创建 `deploy-remote.env`（见下一节），或已导出对应环境变量。
+2. 已创建 `scripts/ssh.env`（见下一节），或已导出对应环境变量。
 
 ## 二、脚本清单
 
@@ -61,7 +61,7 @@ python scripts/ssh_deploy.py [选项] [服务...]
 
 所有脚本通过 `_conn.py` 建立连接。配置解析优先级：
 
-**环境变量 > 项目根 `deploy-remote.env` > 内置默认值（仅限非敏感项）**
+**环境变量 > `~/.ops-agent/ssh.env` 或 `scripts/ssh.env` > 内置默认值（仅限非敏感项）**
 
 | 配置项 | 含义 | 是否必填 | 默认值 |
 |--------|------|----------|--------|
@@ -74,10 +74,10 @@ python scripts/ssh_deploy.py [选项] [服务...]
 ### 初始化
 
 ```bash
-cp deploy-remote.env.example deploy-remote.env   # 然后填入真实值
+cp scripts/ssh.env.example scripts/ssh.env   # 然后填入真实值（也可放到 ~/.ops-agent/ssh.env）
 ```
 
-`deploy-remote.env` 已被 `.gitignore` 忽略，**不会**进入版本库。
+`scripts/ssh.env` 已被 `.gitignore` 忽略，**不会**进入版本库。
 这份配置由 `scripts/*.py`（经 `_conn.py`）共用，只需维护一处。
 
 ### 临时覆盖（切换目标服务器）
@@ -151,8 +151,8 @@ $PY scripts/ssh_deploy.py --no-build --no-deps admin
 
 ## 六、安全约定
 
-- **禁止**在任何脚本源码中写入服务器地址、账号或口令；一律走 `deploy-remote.env` 或环境变量。
-- `deploy-remote.env` 与 `.env` 均已 gitignore；提交前可用
+- **禁止**在任何脚本源码中写入服务器地址、账号或口令；一律走 `ssh.env` 或环境变量。
+- `ssh.env` 与 `.env` 均已 gitignore；提交前可用
   `git status --short` 与 `git diff --cached` 复核，确认没有凭据被带入。
 - 更适合团队/生产的做法：改用 SSH 密钥登录，或从密钥管理服务读取口令，
   避免密码以明文形式落盘。

@@ -12,7 +12,7 @@
   ops-agent-data-train/{train.py,Dockerfile,requirements.txt}
   docker-compose.yml  deploy.sh  .env.example
 
-连接参数来自环境变量或项目根 deploy-remote.env，详见同目录 _conn.py。
+连接参数来自环境变量或 scripts/ssh.env，详见同目录 _conn.py。
 """
 import os
 import sys
