@@ -24,6 +24,18 @@ SYSTEM_PROMPT = (
 )
 
 
+def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
+    """user prompt：query 优先，否则用 target 构造诊断指令（task_type 仅作轻提示）。"""
+    hint = ""
+    if d.task_type and d.task_type != "question":
+        hint = f"（任务类型：{d.task_type}）"
+    if d.query:
+        return hint, d.query
+    if d.target_id:
+        return hint, f"请诊断目标状态：{d.target_type}={d.target_id}"
+    return hint, "请汇总当前系统状态"
+
+
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                           llm: DeepSeekClient, http: AdminHttpClient,
                           msg: agent_pb2.ServerMessage, max_rounds: int = 10) -> None:
@@ -32,10 +44,9 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                       target_type=d.target_type, target_id=d.target_id)
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_type}]")
 
-    user_prompt = d.query or (f"请诊断目标状态：{d.target_type}={d.target_id}"
-                              if d.target_id else "请汇总当前系统状态")
+    hint, user_prompt = _build_prompt(d)
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": SYSTEM_PROMPT + hint},
         {"role": "user", "content": user_prompt},
     ]
 

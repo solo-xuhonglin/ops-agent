@@ -51,9 +51,10 @@ public class AgentTaskService {
     /** 派发任务：入库 DISPATCHED → 找在线 worker → 发 TaskDispatch（无 worker 直接 FAILED） */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query, Long dispatchedBy) {
+        String effectiveType = (taskType == null || taskType.isBlank()) ? "question" : taskType;
         AgentTask task = new AgentTask();
         task.setTaskId(UUID.randomUUID().toString());
-        task.setTaskType(taskType);
+        task.setTaskType(effectiveType);
         task.setTargetType(targetType);
         task.setTargetId(targetId);
         task.setQuery(query);
@@ -76,7 +77,7 @@ public class AgentTaskService {
             worker.getResponseObserver().onNext(ServerMessage.newBuilder()
                     .setTaskDispatch(TaskDispatch.newBuilder()
                             .setTaskId(task.getTaskId())
-                            .setTaskType(taskType)
+                            .setTaskType(effectiveType)
                             .setTargetType(targetType == null ? "" : targetType)
                             .setTargetId(targetId == null ? 0 : targetId)
                             .setQuery(query == null ? "" : query)
