@@ -70,7 +70,7 @@ async function load() {
   loading.value = true
   try {
     const res = await listTools()
-    items.value = res.data || []
+    items.value = res.data?.data || [] // axios 返回 response → data 是 ApiResponse → 业务数据在 .data
   } finally {
     loading.value = false
   }
