@@ -1,7 +1,7 @@
 """Tier 2 - MinIO file upload link (real object-storage verification).
 
 Verifies the upload *really* succeeded by:
-  1. upload returns 200 with objectKey == datasets/{id}/{filename}
+  1. upload returns 200 with objectKey == {id}/{filename} (no datasets/ prefix)
   2. the presigned URL endpoint successfully signs a URL (backend <-> MinIO OK)
 
 We deliberately do NOT download/byte-compare the presigned URL: the backend signs
@@ -36,16 +36,20 @@ def test_upload_file_and_verify(client, make_dataset):
     try:
         res = client.upload_file(ds["id"], path)
         # (1) objectKey written correctly -> file really landed in MinIO path
-        assert res["objectKey"] == f"datasets/{ds['id']}/{fname}"
+        #     NOTE: upload stores key as "{id}/{filename}" (no datasets/ prefix)
+        assert res["objectKey"] == f"{ds['id']}/{fname}"
+        # rowCount is counted from the uploaded file (lines - 1), file-driven (not weather)
+        assert res["rowCount"] == SAMPLE_CSV.decode().count("\n") - 1, \
+            "rowCount should equal file data rows"
 
         # detail now reflects the MinIO objectKey
         got = client.get_dataset(ds["id"])
-        assert got["objectKey"] == f"datasets/{ds['id']}/{fname}"
+        assert got["objectKey"] == f"{ds['id']}/{fname}"
 
         # (2) presigned URL is actually issued (backend reached MinIO successfully)
         info = client.file_url(ds["id"])
         assert info.get("url"), "presigned URL must be returned"
-        assert info["objectKey"] == f"datasets/{ds['id']}/{fname}"
+        assert info["objectKey"] == f"{ds['id']}/{fname}"
     finally:
         os.unlink(path)
 

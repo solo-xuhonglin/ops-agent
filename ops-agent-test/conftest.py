@@ -82,3 +82,39 @@ def make_dataset(client: OpsAgentClient):
         except Exception:
             # already deleted by the test, or transient error -> ignore in teardown
             pass
+
+
+@pytest.fixture(scope="session")
+def reader_client() -> OpsAgentClient:
+    """Low-privilege client (user/user123) holding only dataset:read + model:read.
+    Used to verify that model:/training: write endpoints return 403."""
+    c = OpsAgentClient(username="user", password="user123")
+    c.login()
+    yield c
+    c.close()
+
+
+def _make_training_csv(path: str, n_per_region: int = 30) -> None:
+    """Write a CSV in the schema train.py expects:
+    region,time,temperature,precipitation — with enough rows per region
+    (need > seq_len windows)."""
+    import csv
+
+    regions = ["北京", "上海"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["region", "time", "temperature", "precipitation"])
+        for region in regions:
+            for i in range(n_per_region):
+                temp = 20.0 + (i % 15)
+                precip = float(i % 5)
+                w.writerow([region, f"2020-01-{i + 1:02d}T00:00:00", temp, precip])
+
+
+@pytest.fixture
+def training_csv(tmp_path) -> str:
+    """A real weather CSV (region/time/temperature/precipitation) usable as a
+    training dataset file. Lives in a temp dir, auto-cleaned by pytest."""
+    p = tmp_path / "weather_train.csv"
+    _make_training_csv(str(p), n_per_region=30)
+    return str(p)

@@ -125,5 +125,43 @@ class OpsAgentClient:
             params={"expiryMinutes": expiry_minutes},
         )["data"]
 
+    # ---- model version helpers (verified against ModelController) ----
+    def create_model(self, payload: dict) -> dict:
+        return self.post("/api/models", json=payload)["data"]
+
+    def get_model(self, mv_id: int) -> dict:
+        return self.get(f"/api/models/{mv_id}")["data"]
+
+    def list_models(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/models", params={"page": page, "size": size})["data"]
+
+    def delete_model(self, mv_id: int) -> dict:
+        return self.delete(f"/api/models/{mv_id}")
+
+    def model_download_url(self, mv_id: int, expiry_minutes: int = 30) -> dict:
+        return self.get(
+            f"/api/models/{mv_id}/download",
+            params={"expiryMinutes": expiry_minutes},
+        )["data"]
+
+    # ---- training job helpers (verified against TrainingController) ----
+    def create_training_job(self, req: dict) -> dict:
+        return self.post("/api/training/jobs", json=req)["data"]
+
+    def get_training_job(self, job_id: int) -> dict:
+        return self.get(f"/api/training/jobs/{job_id}")["data"]
+
+    def list_training_jobs(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/training/jobs", params={"page": page, "size": size})["data"]
+
+    def delete_training_job(self, job_id: int) -> dict:
+        return self.delete(f"/api/training/jobs/{job_id}")
+
+    def training_logs_url(self, job_id: int, expiry_minutes: int = 30) -> dict:
+        return self.get(
+            f"/api/training/jobs/{job_id}/logs",
+            params={"expiryMinutes": expiry_minutes},
+        )["data"]
+
     def close(self):
         self.http.close()
