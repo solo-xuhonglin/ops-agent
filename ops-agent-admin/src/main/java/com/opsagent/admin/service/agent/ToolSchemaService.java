@@ -25,6 +25,8 @@ public class ToolSchemaService {
                         .setDescription(t.getDescription())
                         .setParameters(t.getParamsSchema())
                         .setIsWrite(Boolean.TRUE.equals(t.getIsWrite()))
+                        .setHttpMethod(t.getHttpMethod())
+                        .setPathTemplate(t.getPathTemplate())
                         .build())
                 .toList();
     }

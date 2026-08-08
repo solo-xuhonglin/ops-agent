@@ -52,6 +52,8 @@ message ToolSchema {
   string description = 2;
   string parameters = 3;   // OpenAI JSON Schema 的 JSON 字符串
   bool is_write = 4;
+  string http_method = 5;  // GET/POST/DELETE（agent 直调 admin 现有 API）
+  string path_template = 6; // /api/training/jobs/{jobId}
 }
 
 message TaskEvent {
