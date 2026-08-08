@@ -70,7 +70,7 @@ public class WeatherService {
         String url = String.format(
                 "%s?latitude=%.4f&longitude=%.4f&start_date=%s&end_date=%s"
                         + "&hourly=temperature_2m,precipitation"
-                        + "&timezone=Asia%%2FShanghai",
+                        + "&timezone=Asia/Shanghai",
                 BASE, geo[0], geo[1],
                 start.format(DATE),
                 end.format(DATE));

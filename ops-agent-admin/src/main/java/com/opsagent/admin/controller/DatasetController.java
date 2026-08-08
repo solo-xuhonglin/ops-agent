@@ -67,6 +67,9 @@ public class DatasetController {
                 () -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                         "Object storage (MinIO) is not enabled in this environment"));
         try {
+            // 先校验数据集存在（缺失则抛 ResourceNotFoundException -> 404），
+            // 避免向不存在的数据集上传后在 MinIO 留下孤儿对象。
+            datasetService.getObjectKey(id);
             String objectKey = id + "/" + file.getOriginalFilename();
             minio.upload(objectKey, file);
             Long rows = datasetService.countRows(file);

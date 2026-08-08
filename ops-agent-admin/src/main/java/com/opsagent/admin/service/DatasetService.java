@@ -107,9 +107,24 @@ public class DatasetService {
     @Transactional
     public void updateObjectKeyAndRowCount(Long id, String objectKey, Long rowCount) {
         Dataset d = find(id);
+        String oldKey = d.getObjectKey();
         d.setObjectKey(objectKey);
         d.setRowCount(rowCount);
+        // 用户上传了自己的数据文件，数据集已有真实数据 -> READY
+        d.setStatus("READY");
         datasetRepository.save(d);
+        // 换新文件后清理旧对象（weather.csv 或上次上传），避免留下孤儿
+        if (oldKey != null && !oldKey.equals(objectKey) && !oldKey.startsWith("weather://")) {
+            String stale = oldKey;
+            minioService.ifPresent(minio -> {
+                try {
+                    minio.delete(stale);
+                } catch (Exception e) {
+                    log.warn("MinIO stale object delete failed datasetId={} objectKey={} error={}",
+                            id, stale, e.getMessage());
+                }
+            });
+        }
     }
 
     @Transactional(readOnly = true)
@@ -135,6 +150,8 @@ public class DatasetService {
     private void collectWeather(Dataset d) {
         if (d.getRegions() == null || d.getRegions().isEmpty()
                 || d.getDateStart() == null || d.getDateEnd() == null) {
+            // 未配置地区/日期，无法自动采集天气数据 -> 无数据
+            d.setStatus("INVALID");
             return;
         }
         try {

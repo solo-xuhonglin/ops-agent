@@ -56,7 +56,20 @@ public class TrainingJobService {
 
     @Transactional
     public void delete(Long id) {
+        TrainingJob job = trainingJobRepository.findById(id).orElse(null);
         trainingJobRepository.deleteById(id);
+        // purge the training log object so deletion leaves no orphan file
+        if (job != null && job.getLogKey() != null) {
+            String logKey = job.getLogKey();
+            minioService.ifPresent(minio -> {
+                try {
+                    minio.delete(minioConfig.getLogBucket(), logKey);
+                } catch (Exception e) {
+                    log.warn("MinIO training log delete failed jobId={} key={} error={}",
+                            id, logKey, e.getMessage());
+                }
+            });
+        }
     }
 
     /**

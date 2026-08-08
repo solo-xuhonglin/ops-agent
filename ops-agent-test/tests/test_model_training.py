@@ -7,8 +7,8 @@ Covers:
   terminal -> assert ModelVersion becomes READY with artifact + metrics, and the
   logs URL is issued. This exercises the full docker-java pipeline and surfaces
   remote problems (e.g. missing ops-agent-train image, docker.sock access).
-- Trigger validation: non-existent dataset -> 404; dataset without a real file is
-  accepted but the run ends FAILED (no data object in MinIO -> container exits).
+- Trigger validation: non-existent dataset -> 404; a data-less dataset (no
+  regions/dates, objectKey stays weather://...) is rejected with 422.
 """
 from __future__ import annotations
 
@@ -126,33 +126,15 @@ def test_trigger_training_missing_dataset_404(client, make_dataset):
     assert "404" in str(exc.value)
 
 
-def test_trigger_training_dataset_without_file_fails(client, make_dataset):
-    # A dataset without an uploaded file gets a placeholder objectKey (e.g. "<id>/weather.csv")
-    # and status INVALID. The trigger is accepted (200), but the training container cannot
-    # find the data object in MinIO, so the job ends FAILED. We assert that end-to-end path.
-    ds = make_dataset()
-    job = client.create_training_job({
-        "datasetId": ds["id"],
-        "name": "no-file",
-        "version": "v1",
-    })
-    job_id = job["id"]
-    mv_id = job["modelVersionId"]
-    assert job["status"] in ("PENDING", "RUNNING"), job["status"]
-
-    terminal = None
-    for _ in range(48):  # up to ~4 min
-        time.sleep(5)
-        j = client.get_training_job(job_id)
-        if j["status"] in ("SUCCEEDED", "FAILED"):
-            terminal = j
-            break
-    assert terminal is not None, "no-file training job did not reach a terminal state"
-    assert terminal["status"] == "FAILED", \
-        f"expected FAILED for dataset without a real data file, got {terminal['status']}"
-
-    # cleanup: on failure the model version stays TRAINING and must be removed too
-    try:
-        client.delete_training_job(job_id)
-    finally:
-        client.delete_model(mv_id)
+def test_trigger_training_dataset_without_data_errors(client, make_dataset):
+    # A dataset created WITHOUT regions/dates gets no weather data and no uploaded
+    # file: objectKey stays "weather://<name>", which trigger() rejects with 422
+    # (IllegalArgumentException -> UNPROCESSABLE_ENTITY).
+    ds = make_dataset(regions=[])
+    with pytest.raises(OpsAgentError) as exc:
+        client.create_training_job({
+            "datasetId": ds["id"],
+            "name": "no-data",
+            "version": "v1",
+        })
+    assert exc.value.status_code == 422, f"expected 422 for data-less dataset, got {exc.value.status_code}"
