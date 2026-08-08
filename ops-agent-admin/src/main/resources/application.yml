@@ -53,3 +53,7 @@ serving:
   ready-timeout-seconds: ${SERVING_READY_TIMEOUT_SECONDS:60}
   health-check-interval-ms: ${SERVING_HEALTH_CHECK_INTERVAL_MS:30000}
   unhealthy-threshold: ${SERVING_UNHEALTHY_THRESHOLD:3}
+
+grpc:
+  server:
+    port: ${AGENT_GRPC_PORT:9090}
