@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _conn import run_detached
 
 DEPLOY_LOG = "/tmp/deploy.log"
-SERVICES = ("all", "admin", "front", "train", "serving", "infra", "postgres", "minio")
+SERVICES = ("all", "admin", "agent", "front", "train", "serving", "infra", "postgres", "minio")
 
 
 def main():
