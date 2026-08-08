@@ -21,6 +21,7 @@ build/
 *.local
 application-local.yml
 application-local.properties
+deploy-remote.env
 
 # ===== Logs =====
 *.log
