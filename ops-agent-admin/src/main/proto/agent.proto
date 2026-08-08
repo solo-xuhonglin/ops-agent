@@ -43,6 +43,15 @@ message Register {
 message RegisterAck {
   bool ok = 1;
   string message = 2;
+  // 动态下发的工具 schema（OpenAI function calling 格式），agent 零硬编码
+  repeated ToolSchema tools = 3;
+}
+
+message ToolSchema {
+  string name = 1;
+  string description = 2;
+  string parameters = 3;   // OpenAI JSON Schema 的 JSON 字符串
+  bool is_write = 4;
 }
 
 message TaskEvent {
