@@ -36,6 +36,8 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket: ${MINIO_BUCKET:datasets}
+  model-bucket: ${MINIO_MODEL_BUCKET:models}
+  log-bucket: ${MINIO_LOG_BUCKET:logs}
   public-read: ${MINIO_PUBLIC_READ:false}
 
 train:

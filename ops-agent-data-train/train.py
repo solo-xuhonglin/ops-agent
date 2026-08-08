@@ -110,6 +110,7 @@ class LSTMModel(nn.Module):
 
 def main():
     bucket = env("MINIO_BUCKET", "datasets")
+    model_bucket = env("MODEL_BUCKET", bucket)
     dataset_key = env("DATASET_OBJECT_KEY")
     model_version_id = env("MODEL_VERSION_ID")
     job_id = env("JOB_ID")
@@ -195,12 +196,12 @@ def main():
             "std": std,
         },
     }
-    model_key = f"models/{model_version_id}/model.pt"
+    model_key = f"{model_version_id}/model.pt"
     buf = io.BytesIO()
     torch.save(model_payload, buf)
     buf.seek(0)
-    client.put_object(Bucket=bucket, Key=model_key, Body=buf.getvalue())
-    log.info("Model uploaded %s", model_key)
+    client.put_object(Bucket=model_bucket, Key=model_key, Body=buf.getvalue())
+    log.info("Model uploaded %s/%s", model_bucket, model_key)
 
     metrics = {
         "mae": round(float(mae), 6),
@@ -210,10 +211,10 @@ def main():
         "hidden_size": hidden_size,
         "seq_len": seq_len,
     }
-    metrics_key = f"models/{model_version_id}/metrics.json"
-    client.put_object(Bucket=bucket, Key=metrics_key,
+    metrics_key = f"{model_version_id}/metrics.json"
+    client.put_object(Bucket=model_bucket, Key=metrics_key,
                       Body=json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
-    log.info("Metrics uploaded %s  %s", metrics_key, json.dumps(metrics))
+    log.info("Metrics uploaded %s/%s  %s", model_bucket, metrics_key, json.dumps(metrics))
     log.info("Training job finished jobId=%s", job_id)
 
 

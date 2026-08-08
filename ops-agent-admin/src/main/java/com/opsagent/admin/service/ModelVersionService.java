@@ -16,6 +16,7 @@ public class ModelVersionService {
 
     private final ModelVersionRepository modelVersionRepository;
     private final Optional<MinioService> minioService;
+    private final com.opsagent.admin.config.MinioConfig minioConfig;
 
     @Transactional(readOnly = true)
     public Page<ModelVersion> list(Pageable pageable) {
@@ -39,7 +40,7 @@ public class ModelVersionService {
     }
 
     /**
-     * 返回模型文件（models/&lt;id&gt;/model.pt）的预签名下载 URL。
+     * 返回模型文件（models 桶内 &lt;id&gt;/model.pt）的预签名下载 URL。
      */
     @Transactional(readOnly = true)
     public String downloadUrl(Long id, int expiryMinutes) {
@@ -50,7 +51,7 @@ public class ModelVersionService {
         MinioService minio = minioService.orElseThrow(
                 () -> new IllegalStateException("对象存储未启用，无法生成下载链接"));
         try {
-            return minio.presignedUrl(mv.getArtifactKey(), expiryMinutes);
+            return minio.presignedUrl(minioConfig.getModelBucket(), mv.getArtifactKey(), expiryMinutes);
         } catch (Exception e) {
             throw new RuntimeException("生成模型下载链接失败: " + e.getMessage(), e);
         }

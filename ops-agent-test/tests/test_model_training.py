@@ -99,7 +99,8 @@ def test_trigger_training_real_run(client, make_dataset, training_csv):
     # 4) ModelVersion finalized: READY + artifact key + metrics written back
     mv = client.get_model(mv_id)
     assert mv["status"] == "READY", f"model version status={mv['status']}"
-    assert mv["artifactKey"] and mv["artifactKey"].startswith("models/")
+    assert mv["artifactKey"] and mv["artifactKey"].endswith("/model.pt"), \
+        f"artifactKey should point to model.pt, got {mv.get('artifactKey')}"
     assert mv["metrics"], "metrics.json should be written back to the model version"
 
     # 5) logs URL is issued once the job is done

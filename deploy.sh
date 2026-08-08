@@ -143,6 +143,8 @@ JWT_SECRET="$(ensure_secret JWT_SECRET)"
 MINIO_ROOT_PASSWORD="$(ensure_secret MINIO_ROOT_PASSWORD)"
 ensure_present MINIO_ROOT_USER minioadmin
 ensure_present MINIO_BUCKET datasets
+ensure_present MINIO_MODEL_BUCKET models
+ensure_present MINIO_LOG_BUCKET logs
 ensure_present MINIO_PORT 9000
 ensure_present MINIO_CONSOLE_PORT 9001
 

@@ -29,6 +29,8 @@ public class MinioService {
     @PostConstruct
     public void init() {
         ensureBucketExists(minioConfig.getBucket());
+        ensureBucketExists(minioConfig.getModelBucket());
+        ensureBucketExists(minioConfig.getLogBucket());
     }
 
     public void ensureBucketExists(String bucket) {
@@ -44,9 +46,13 @@ public class MinioService {
     }
 
     public String upload(String objectKey, MultipartFile file) throws Exception {
+        return upload(minioConfig.getBucket(), objectKey, file);
+    }
+
+    public String upload(String bucket, String objectKey, MultipartFile file) throws Exception {
         try (InputStream is = file.getInputStream()) {
             minioClient.putObject(PutObjectArgs.builder()
-                    .bucket(minioConfig.getBucket())
+                    .bucket(bucket)
                     .object(objectKey)
                     .stream(is, file.getSize(), -1)
                     .contentType(file.getContentType())
@@ -57,8 +63,12 @@ public class MinioService {
 
     /** 从任意输入流上传对象（采集的 CSV、训练日志等不走 MultipartFile 的场景）。 */
     public String upload(String objectKey, InputStream is, long size, String contentType) throws Exception {
+        return upload(minioConfig.getBucket(), objectKey, is, size, contentType);
+    }
+
+    public String upload(String bucket, String objectKey, InputStream is, long size, String contentType) throws Exception {
         minioClient.putObject(PutObjectArgs.builder()
-                .bucket(minioConfig.getBucket())
+                .bucket(bucket)
                 .object(objectKey)
                 .stream(is, size, -1)
                 .contentType(contentType)
@@ -67,15 +77,23 @@ public class MinioService {
     }
 
     public InputStream download(String objectKey) throws Exception {
+        return download(minioConfig.getBucket(), objectKey);
+    }
+
+    public InputStream download(String bucket, String objectKey) throws Exception {
         return minioClient.getObject(GetObjectArgs.builder()
-                .bucket(minioConfig.getBucket())
+                .bucket(bucket)
                 .object(objectKey)
                 .build());
     }
 
     public String presignedUrl(String objectKey, int expiryMinutes) throws Exception {
+        return presignedUrl(minioConfig.getBucket(), objectKey, expiryMinutes);
+    }
+
+    public String presignedUrl(String bucket, String objectKey, int expiryMinutes) throws Exception {
         return minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
-                .bucket(minioConfig.getBucket())
+                .bucket(bucket)
                 .object(objectKey)
                 .method(Method.GET)
                 .expiry(expiryMinutes * 60)
@@ -83,8 +101,12 @@ public class MinioService {
     }
 
     public void delete(String objectKey) throws Exception {
+        delete(minioConfig.getBucket(), objectKey);
+    }
+
+    public void delete(String bucket, String objectKey) throws Exception {
         minioClient.removeObject(RemoveObjectArgs.builder()
-                .bucket(minioConfig.getBucket())
+                .bucket(bucket)
                 .object(objectKey)
                 .build());
     }

@@ -106,6 +106,7 @@ public class TrainingLauncher {
         env.add("MINIO_ACCESS_KEY=" + minioConfig.getAccessKey());
         env.add("MINIO_SECRET_KEY=" + minioConfig.getSecretKey());
         env.add("MINIO_BUCKET=" + minioConfig.getBucket());
+        env.add("MODEL_BUCKET=" + minioConfig.getModelBucket());
         env.add("DATASET_OBJECT_KEY=" + datasetObjectKey);
         env.add("MODEL_VERSION_ID=" + modelVersionId);
         env.add("JOB_ID=" + jobId);

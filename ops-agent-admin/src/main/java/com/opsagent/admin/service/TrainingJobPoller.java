@@ -34,13 +34,12 @@ import java.util.Optional;
 public class TrainingJobPoller {
 
     private static final List<String> ACTIVE = List.of("PENDING", "RUNNING");
-    private static final String MODEL_PREFIX = "models/";
-    private static final String ARTIFACT_PREFIX = "artifacts/";
 
     private final TrainingJobRepository trainingJobRepository;
     private final ModelVersionRepository modelVersionRepository;
     private final Optional<MinioService> minioService;
     private final TrainProperties trainProperties;
+    private final com.opsagent.admin.config.MinioConfig minioConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Scheduled(fixedDelay = 5000)
@@ -112,16 +111,16 @@ public class TrainingJobPoller {
     private void finalizeSucceeded(TrainingJob job) {
         ModelVersion mv = modelVersionRepository.findById(job.getModelVersionId()).orElse(null);
         if (mv != null) {
-            String metricsKey = MODEL_PREFIX + mv.getId() + "/metrics.json";
+            String metricsKey = mv.getId() + "/metrics.json";
             minioService.ifPresent(minio -> {
-                try (java.io.InputStream is = minio.download(metricsKey)) {
+                try (java.io.InputStream is = minio.download(minioConfig.getModelBucket(), metricsKey)) {
                     String metricsJson = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                     mv.setMetrics(metricsJson);
                 } catch (Exception e) {
                     log.warn("Failed to read training metrics mvId={} error={}", mv.getId(), e.getMessage());
                 }
             });
-            mv.setArtifactKey(MODEL_PREFIX + mv.getId() + "/model.pt");
+            mv.setArtifactKey(mv.getId() + "/model.pt");
             mv.setStatus("READY");
             modelVersionRepository.save(mv);
         }
@@ -143,8 +142,8 @@ public class TrainingJobPoller {
         if (job.getLogKey() == null) {
             minioService.ifPresent(minio -> {
                 try {
-                    String key = ARTIFACT_PREFIX + job.getId() + "/logs.txt";
-                    minio.upload(key,
+                    String key = job.getId() + "/logs.txt";
+                    minio.upload(minioConfig.getLogBucket(), key,
                             new ByteArrayInputStream(reason.getBytes(StandardCharsets.UTF_8)),
                             reason.getBytes(StandardCharsets.UTF_8).length, "text/plain");
                     job.setLogKey(key);
@@ -173,11 +172,11 @@ public class TrainingJobPoller {
         } catch (Exception e) {
             log.warn("Failed to capture training logs jobId={} error={}", job.getId(), e.getMessage());
         }
-        String key = ARTIFACT_PREFIX + job.getId() + "/logs.txt";
+        String key = job.getId() + "/logs.txt";
         final String logText = sb.length() > 0 ? sb.toString() : "(no log output)";
         minioService.ifPresent(minio -> {
             try {
-                minio.upload(key,
+                minio.upload(minioConfig.getLogBucket(), key,
                         new ByteArrayInputStream(logText.getBytes(StandardCharsets.UTF_8)),
                         logText.getBytes(StandardCharsets.UTF_8).length, "text/plain");
                 job.setLogKey(key);

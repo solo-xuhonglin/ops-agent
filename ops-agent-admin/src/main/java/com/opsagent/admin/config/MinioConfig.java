@@ -17,6 +17,10 @@ public class MinioConfig {
     private String accessKey;
     private String secretKey;
     private String bucket = "datasets";
+    /** 模型产物桶（model.pt / metrics.json）。 */
+    private String modelBucket = "models";
+    /** 训练日志桶（logs.txt）。 */
+    private String logBucket = "logs";
     private boolean publicRead = false;
 
     public void setEndpoint(String endpoint) {
@@ -33,6 +37,14 @@ public class MinioConfig {
 
     public void setBucket(String bucket) {
         this.bucket = bucket;
+    }
+
+    public void setModelBucket(String modelBucket) {
+        this.modelBucket = modelBucket;
+    }
+
+    public void setLogBucket(String logBucket) {
+        this.logBucket = logBucket;
     }
 
     public void setPublicRead(boolean publicRead) {

@@ -35,6 +35,7 @@ public class TrainingJobService {
     private final CurrentUser currentUser;
     private final TrainingLauncher trainingLauncher;
     private final Optional<MinioService> minioService;
+    private final com.opsagent.admin.config.MinioConfig minioConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional(readOnly = true)
@@ -101,7 +102,7 @@ public class TrainingJobService {
     }
 
     /**
-     * 返回训练日志的预签名下载 URL（日志已回传到 artifacts/&lt;jobId&gt;/logs.txt）。
+     * 返回训练日志的预签名下载 URL（日志已回传到 logs 桶的 &lt;jobId&gt;/logs.txt）。
      */
     @Transactional(readOnly = true)
     public String logsUrl(Long jobId, int expiryMinutes) {
@@ -113,7 +114,7 @@ public class TrainingJobService {
         MinioService minio = minioService.orElseThrow(
                 () -> new IllegalStateException("对象存储未启用，无法生成日志链接"));
         try {
-            return minio.presignedUrl(logKey, expiryMinutes);
+            return minio.presignedUrl(minioConfig.getLogBucket(), logKey, expiryMinutes);
         } catch (Exception e) {
             throw new RuntimeException("生成日志链接失败: " + e.getMessage(), e);
         }
