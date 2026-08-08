@@ -46,6 +46,28 @@ public class JwtUtil {
                 .compact();
     }
 
+    /**
+     * 任务级 scoped token：权限裁剪（只读）+ 短时效，随 TaskDispatch 下发，agent 调工具时透传。
+     * 不关联用户库，鉴权在 filter 内直接读 claims。
+     */
+    public String generateScopedToken(Long userId, List<String> permissions, String taskId, long ttlMs) {
+        Date now = new Date();
+        Date exp = new Date(now.getTime() + ttlMs);
+        return Jwts.builder()
+                .subject(userId == null ? "agent" : String.valueOf(userId))
+                .claim("type", "scoped")
+                .claim("permissions", permissions)
+                .claim("taskId", taskId)
+                .issuedAt(now)
+                .expiration(exp)
+                .signWith(key())
+                .compact();
+    }
+
+    public boolean isScoped(String token) {
+        return "scoped".equals(parse(token).get("type", String.class));
+    }
+
     public Claims parse(String token) {
         return Jwts.parser()
                 .verifyWith(key())

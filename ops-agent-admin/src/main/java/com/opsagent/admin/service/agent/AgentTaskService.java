@@ -7,6 +7,7 @@ import com.opsagent.admin.entity.AgentEvent;
 import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.repository.AgentEventRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
+import com.opsagent.admin.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -35,9 +36,17 @@ public class AgentTaskService {
     public static final String STATUS_FAILED = "FAILED";
     public static final String STATUS_CANCELLED = "CANCELLED";
 
+    /** 任务级 scoped token 有效期：5 分钟（诊断任务足够，过期即失效） */
+    public static final long SCOPED_TOKEN_TTL_MS = 5 * 60_000;
+
+    /** scoped token 裁剪出的只读权限（诊断/问询仅需业务只读） */
+    private static final List<String> SCOPED_READ_PERMISSIONS = List.of(
+            "dataset:read", "model:read", "training:read", "serving:read");
+
     private final AgentTaskRepository taskRepository;
     private final AgentEventRepository eventRepository;
     private final WorkerRegistry workerRegistry;
+    private final JwtUtil jwtUtil;
 
     /** 派发任务：入库 DISPATCHED → 找在线 worker → 发 TaskDispatch（无 worker 直接 FAILED） */
     @Transactional
@@ -61,6 +70,8 @@ public class AgentTaskService {
 
         task.setWorkerId(worker.getWorkerId());
         taskRepository.save(task);
+        String taskToken = jwtUtil.generateScopedToken(task.getDispatchedBy(),
+                SCOPED_READ_PERMISSIONS, task.getTaskId(), SCOPED_TOKEN_TTL_MS);
         try {
             worker.getResponseObserver().onNext(ServerMessage.newBuilder()
                     .setTaskDispatch(TaskDispatch.newBuilder()
@@ -68,7 +79,8 @@ public class AgentTaskService {
                             .setTaskType(taskType)
                             .setTargetType(targetType == null ? "" : targetType)
                             .setTargetId(targetId == null ? 0 : targetId)
-                            .setQuery(query == null ? "" : query))
+                            .setQuery(query == null ? "" : query)
+                            .setTaskToken(taskToken))
                     .build());
             log.info("task dispatched: taskId={}, type={}, worker={}", task.getTaskId(), taskType, worker.getWorkerId());
         } catch (Exception e) {
