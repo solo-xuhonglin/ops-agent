@@ -30,6 +30,8 @@
         <template #item.actions="{ item }">
           <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
                  title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
+          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
+                 title="删除" @click="remove(item)" />
         </template>
       </v-data-table-server>
     </v-card>
@@ -56,7 +58,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
+import { useConfirm } from '../../composables/useConfirm'
+
+const auth = useAuthStore()
+const { confirmDialog } = useConfirm()
+const canWrite = computed(() => auth.hasPerm('training:write'))
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
@@ -65,7 +73,7 @@ const headers = [
   { title: '状态', key: 'status', width: 120 },
   { title: '开始时间', key: 'startedAt', width: 170 },
   { title: '结束时间', key: 'finishedAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 100 }
+  { title: '操作', key: 'actions', sortable: false, width: 130 }
 ]
 
 const items = ref([])
@@ -115,6 +123,22 @@ async function openLog(item) {
     logUrl.value = data.data.url
   } catch (e) {
     alert(e.response?.data?.message || '获取日志失败')
+  }
+}
+
+async function remove(item) {
+  const ok = await confirmDialog({
+    title: '删除训练任务',
+    message: `确定要删除训练任务 #${item.id} 吗？关联的训练日志将一并清理，运行中的容器会被停止。`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!ok) return
+  try {
+    await api.delete(`/training/jobs/${item.id}`)
+    load()
+  } catch (e) {
+    alert(e.response?.data?.message || '删除失败')
   }
 }
 

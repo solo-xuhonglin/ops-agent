@@ -100,7 +100,18 @@ public class ServingEndpointService {
 
     @Transactional
     public void delete(Long id) {
+        ServingEndpoint ep = servingEndpointRepository.findById(id).orElse(null);
+        // 删除记录前先确保容器已停删（无论当前状态，防遗留孤儿容器）
+        if (ep != null) {
+            try {
+                servingLauncher.stopAndRemove(id);
+            } catch (Exception e) {
+                log.warn("Failed to stop serving container while deleting endpointId={} error={}",
+                        id, e.getMessage());
+            }
+        }
         servingEndpointRepository.deleteById(id);
+        log.info("Serving endpoint record deleted endpointId={}", id);
     }
 
     private Long currentUserId() {

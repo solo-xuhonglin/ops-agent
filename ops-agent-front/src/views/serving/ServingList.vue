@@ -32,8 +32,10 @@
         <template #item.actions="{ item }">
           <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary"
                  title="测试推理" :disabled="item.status !== 'DEPLOYED'" @click="openTest(item)" />
-          <v-btn v-if="canWrite" icon="mdi-stop-circle" size="small" variant="text" color="error"
+          <v-btn v-if="canWrite" icon="mdi-stop-circle" size="small" variant="text" color="warning"
                  title="下线" :disabled="['STOPPED', 'FAILED', 'STOPPING'].includes(item.status)" @click="undeploy(item)" />
+          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
+                 title="删除" @click="remove(item)" />
         </template>
       </v-data-table-server>
     </v-card>
@@ -115,7 +117,7 @@ const headers = [
   { title: '状态', key: 'status', width: 120 },
   { title: '访问地址', key: 'url' },
   { title: '创建时间', key: 'createdAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 110 }
+  { title: '操作', key: 'actions', sortable: false, width: 150 }
 ]
 
 const items = ref([])
@@ -188,8 +190,23 @@ async function doDeploy() {
 async function undeploy(item) {
   const ok = await confirmDialog({
     title: '下线模型服务',
-    message: `确定要下线 endpoint #${item.id}（模型版本 #${item.modelVersionId}）吗？对应容器将被停止并删除。`,
-    confirmText: '下线',
+    message: `确定要下线 endpoint #${item.id}（模型版本 #${item.modelVersionId}）吗？对应容器将被停止并删除，记录保留。`,
+    confirmText: '下线'
+  })
+  if (!ok) return
+  try {
+    await api.post(`/serving/endpoints/${item.id}/undeploy`)
+    load()
+  } catch (e) {
+    alert(e.response?.data?.message || '下线失败')
+  }
+}
+
+async function remove(item) {
+  const ok = await confirmDialog({
+    title: '删除模型服务记录',
+    message: `确定要删除 endpoint #${item.id} 的记录吗？关联容器将被停止并删除，此操作不可恢复。`,
+    confirmText: '删除',
     danger: true
   })
   if (!ok) return
@@ -197,7 +214,7 @@ async function undeploy(item) {
     await api.delete(`/serving/endpoints/${item.id}`)
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '下线失败')
+    alert(e.response?.data?.message || '删除失败')
   }
 }
 

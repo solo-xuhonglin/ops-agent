@@ -65,10 +65,18 @@ public class ServingController {
         return ApiResponse.ok(servingEndpointService.deploy(Long.valueOf(mvId.toString())));
     }
 
-    /** 下线：停删容器并置 STOPPED */
-    @DeleteMapping("/endpoints/{id}")
+    /** 下线：停删容器并置 STOPPED（记录保留，供审计/历史查看） */
+    @PostMapping("/endpoints/{id}/undeploy")
     @PreAuthorize("hasAuthority('serving:write')")
     public ApiResponse<?> undeploy(@PathVariable Long id) {
         return ApiResponse.ok(servingEndpointService.undeploy(id));
+    }
+
+    /** 物理删除 endpoint 记录（先停删容器再删记录，幂等） */
+    @DeleteMapping("/endpoints/{id}")
+    @PreAuthorize("hasAuthority('serving:write')")
+    public ApiResponse<?> delete(@PathVariable Long id) {
+        servingEndpointService.delete(id);
+        return ApiResponse.ok();
     }
 }

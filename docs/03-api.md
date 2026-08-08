@@ -83,7 +83,7 @@
 | GET | `/api/training/jobs` | `training:read` | 分页列表 |
 | GET | `/api/training/jobs/{id}` | `training:read` | 任务详情（状态 / 容器 ID / 起止时间） |
 | GET | `/api/training/jobs/{id}/logs` | `training:read` | 返回 `artifacts/<jobId>/logs.txt` 预签名 URL（任务结束后才有） |
-| DELETE | `/api/training/jobs/{id}` | `training:write` | 删除任务记录 |
+| DELETE | `/api/training/jobs/{id}` | `training:write` | 删除任务记录（先停删运行中容器，并清理 MinIO 日志） |
 
 任务状态流转：`PENDING` → `RUNNING`（容器已启动）→ `SUCCEEDED` / `FAILED`（由 admin `@Scheduled(5s)` 轮询容器退出码回填；超时会强杀置 FAILED）。
 
@@ -103,7 +103,8 @@
 | GET | `/api/serving/endpoints` | `serving:read` | endpoint 列表（分页） |
 | GET | `/api/serving/endpoints/{id}` | `serving:read` | endpoint 详情 |
 | POST | `/api/serving/deploy` | `serving:write` | 部署：body `{modelVersionId}`（须 READY）→ 起 serving 容器 → 返回 CREATING 端点，就绪由轮询判定 |
-| DELETE | `/api/serving/endpoints/{id}` | `serving:write` | 下线：停删容器 → 置 STOPPED |
+| POST | `/api/serving/endpoints/{id}/undeploy` | `serving:write` | 下线：停删容器 → 置 STOPPED（记录保留，供审计） |
+| DELETE | `/api/serving/endpoints/{id}` | `serving:write` | 物理删除记录：先停删容器再删记录（幂等） |
 | POST | `/api/serving-proxy/{endpointId}/predict` | `serving:read` | 推理代理：JWT 鉴权后内网转发给对应 serving 容器（非 DEPLOYED 返回 409） |
 | GET | `/api/serving/tools` | `serving:read` | 供 agent 使用的工具清单（仅 `status=DEPLOYED` 的端点，含 `name=lstm_predict`、`url`、`endpointId`） |
 

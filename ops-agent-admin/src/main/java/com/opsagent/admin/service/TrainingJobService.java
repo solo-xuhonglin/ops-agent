@@ -57,6 +57,15 @@ public class TrainingJobService {
     @Transactional
     public void delete(Long id) {
         TrainingJob job = trainingJobRepository.findById(id).orElse(null);
+        // 若任务仍关联运行中的训练容器，先停删，避免删除记录后遗留孤儿容器
+        if (job != null && job.getContainerId() != null) {
+            try {
+                trainingLauncher.stopAndRemove(job.getId());
+            } catch (Exception e) {
+                log.warn("Failed to stop training container while deleting jobId={} error={}",
+                        id, e.getMessage());
+            }
+        }
         trainingJobRepository.deleteById(id);
         // purge the training log object so deletion leaves no orphan file
         if (job != null && job.getLogKey() != null) {
