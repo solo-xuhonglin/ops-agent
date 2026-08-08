@@ -1,12 +1,92 @@
 #!/usr/bin/env bash
 # ops-agent 一键部署脚本（全程在服务器上：拉取代码 → 宿主机编译 → 拷贝产物打包 → 启动）
 # 策略：依赖安装/编译在宿主机完成（node_modules、项目内 .m2 可缓存），Docker 仅拷贝 build 产物，镜像构建秒级
+#
+# 支持按服务粒度部署，避免每次都全量重编。用法见 usage() 或 ./deploy.sh --help
 set -euo pipefail
 
 # ===== 可配置项 =====
 REPO_URL="${REPO_URL:-https://github.com/solo-xuhonglin/ops-agent.git}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/ops-agent}"
 BRANCH="${BRANCH:-main}"
+
+usage() {
+  cat <<'USAGE'
+用法: ./deploy.sh [选项] [服务...]
+
+服务（可多选，省略等同 all）:
+  all         全部：前端 + 后端 + 训练镜像 + 基础设施
+  admin       后端 Spring Boot（mvn package → 重建 admin 镜像 → 重启）
+  front       前端 Vue（npm build → 重建 front 镜像 → 重启）
+  train       训练镜像 ops-agent-train:latest（仅构建，不启动容器）
+  infra       基础设施：postgres + minio + minio-init（仅启动，无需编译）
+  postgres    仅数据库
+  minio       仅对象存储
+
+选项:
+  --no-pull        跳过 git pull（改动了 deploy.sh 自身时建议手动 pull 后用此项）
+  --build-only     只编译/构建镜像，不执行 compose up
+  --no-build       跳过编译与镜像构建，仅重启容器（等价于 restart）
+  --no-deps        compose up 时不连带启动依赖服务（如只重启 admin 不碰 postgres）
+  --force-train    强制重建训练镜像（等价 FORCE_BUILD_TRAIN=1）
+  -h, --help       显示本帮助
+
+示例:
+  ./deploy.sh                      # 全量部署（默认）
+  ./deploy.sh admin                # 只更新后端
+  ./deploy.sh front admin          # 只更新前后端，不动训练镜像
+  ./deploy.sh --no-pull admin      # 用当前工作树代码重建后端
+  ./deploy.sh --build-only train   # 只构建训练镜像
+  ./deploy.sh --no-build --no-deps admin   # 仅重启 admin 容器
+USAGE
+}
+
+# ===== 参数解析 =====
+TARGETS=()
+DO_PULL=1
+DO_BUILD=1
+DO_UP=1
+NO_DEPS=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)    usage; exit 0 ;;
+    --no-pull)    DO_PULL=0 ;;
+    --build-only) DO_UP=0 ;;
+    --no-build)   DO_BUILD=0 ;;
+    --no-deps)    NO_DEPS=1 ;;
+    --force-train) FORCE_BUILD_TRAIN=1 ;;
+    all|admin|front|train|infra|postgres|minio) TARGETS+=("$1") ;;
+    backend)      TARGETS+=("admin") ;;
+    frontend)     TARGETS+=("front") ;;
+    -*)           echo "ERROR: 未知选项 $1（用 --help 查看用法）" >&2; exit 1 ;;
+    *)            echo "ERROR: 未知服务 $1（用 --help 查看可选服务）" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+[ ${#TARGETS[@]} -eq 0 ] && TARGETS=("all")
+
+# infra 展开为具体服务
+_expanded=()
+for t in "${TARGETS[@]}"; do
+  if [ "$t" = "infra" ]; then
+    _expanded+=("postgres" "minio" "minio-init")
+  else
+    _expanded+=("$t")
+  fi
+done
+TARGETS=("${_expanded[@]}")
+
+has_target() {
+  for t in "${TARGETS[@]}"; do
+    [ "$t" = "all" ] && return 0
+    [ "$t" = "$1" ] && return 0
+  done
+  return 1
+}
+
+echo "==> 目标服务: ${TARGETS[*]}"
 
 echo "==> 检查 Docker / Compose"
 docker --version
@@ -16,9 +96,11 @@ docker compose version || docker-compose --version
 if [ ! -d "$PROJECT_DIR/.git" ]; then
   echo "==> 首次部署：clone 仓库到 $PROJECT_DIR"
   git clone -b "$BRANCH" "$REPO_URL" "$PROJECT_DIR"
-else
+elif [ "$DO_PULL" = "1" ]; then
   echo "==> 更新代码：git pull ($BRANCH)"
   git -C "$PROJECT_DIR" pull --ff-only origin "$BRANCH"
+else
+  echo "==> 跳过 git pull（--no-pull），使用当前工作树代码"
 fi
 cd "$PROJECT_DIR"
 
@@ -110,59 +192,100 @@ echo "==> 部署凭证已写入 $CRED_FILE"
 M2_REPO="$PROJECT_DIR/.m2"
 ADMIN_DIR="$PROJECT_DIR/ops-agent-admin"
 
-echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
-cd "$PROJECT_DIR/ops-agent-front"
-npm install
-npm run build
-if [ ! -d "$PROJECT_DIR/ops-agent-front/dist" ] || [ -z "$(ls -A "$PROJECT_DIR/ops-agent-front/dist" 2>/dev/null)" ]; then
-  echo "ERROR: 前端构建产物 dist/ 缺失，前端构建失败" >&2
-  exit 1
-fi
+build_front() {
+  echo "==> 前端编译（npm install && build，依赖缓存于 node_modules）"
+  cd "$PROJECT_DIR/ops-agent-front"
+  npm install
+  npm run build
+  if [ ! -d "$PROJECT_DIR/ops-agent-front/dist" ] || [ -z "$(ls -A "$PROJECT_DIR/ops-agent-front/dist" 2>/dev/null)" ]; then
+    echo "ERROR: 前端构建产物 dist/ 缺失，前端构建失败" >&2
+    exit 1
+  fi
+  cd "$PROJECT_DIR"
+}
 
-echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物在 target/）"
-cd "$ADMIN_DIR"
-mvn -B clean package -DskipTests \
-  -Dmaven.repo.local="$M2_REPO"
-if ! ls "$ADMIN_DIR"/target/*.jar >/dev/null 2>&1; then
-  echo "ERROR: 未找到打包产物 $ADMIN_DIR/target/*.jar，后端构建失败" >&2
-  exit 1
-fi
+build_admin() {
+  echo "==> 后端打包（mvn package，依赖缓存于 $M2_REPO，产物在 target/）"
+  cd "$ADMIN_DIR"
+  mvn -B clean package -DskipTests \
+    -Dmaven.repo.local="$M2_REPO"
+  if ! ls "$ADMIN_DIR"/target/*.jar >/dev/null 2>&1; then
+    echo "ERROR: 未找到打包产物 $ADMIN_DIR/target/*.jar，后端构建失败" >&2
+    exit 1
+  fi
+  cd "$PROJECT_DIR"
+}
 
-cd "$PROJECT_DIR"
-
-# ===== 4. 预构建训练镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
+# ===== 4. 训练镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
 # 训练镜像体积大（约 1.9GB，含 CPU 版 torch），无变更时跳过构建以缩短部署时间。
 # 判定依据：镜像已存在，且训练构建上下文（Dockerfile/requirements.txt/train.py）内容哈希未变。
-# 强制重建：FORCE_BUILD_TRAIN=1 ./deploy.sh
-TRAIN_IMAGE="ops-agent-train:latest"
-TRAIN_CTX="$PROJECT_DIR/ops-agent-data-train"
-DEPLOY_CACHE="$PROJECT_DIR/.deploy-cache"
-TRAIN_STAMP="$DEPLOY_CACHE/train-image.sha256"
-mkdir -p "$DEPLOY_CACHE"
+# 强制重建：FORCE_BUILD_TRAIN=1 ./deploy.sh 或 ./deploy.sh --force-train
+build_train() {
+  local TRAIN_IMAGE="ops-agent-train:latest"
+  local TRAIN_CTX="$PROJECT_DIR/ops-agent-data-train"
+  local DEPLOY_CACHE="$PROJECT_DIR/.deploy-cache"
+  local TRAIN_STAMP="$DEPLOY_CACHE/train-image.sha256"
+  mkdir -p "$DEPLOY_CACHE"
 
-TRAIN_HASH="$(cat "$TRAIN_CTX/Dockerfile" "$TRAIN_CTX/requirements.txt" "$TRAIN_CTX/train.py" 2>/dev/null \
-  | sha256sum | awk '{print $1}')"
+  local TRAIN_HASH
+  TRAIN_HASH="$(cat "$TRAIN_CTX/Dockerfile" "$TRAIN_CTX/requirements.txt" "$TRAIN_CTX/train.py" 2>/dev/null \
+    | sha256sum | awk '{print $1}')"
 
-if [ -z "${FORCE_BUILD_TRAIN:-}" ] \
-   && docker image inspect "$TRAIN_IMAGE" >/dev/null 2>&1 \
-   && [ -f "$TRAIN_STAMP" ] \
-   && [ "$(cat "$TRAIN_STAMP")" = "$TRAIN_HASH" ]; then
-  echo "==> 训练镜像 $TRAIN_IMAGE 已是最新，跳过构建（强制重建：FORCE_BUILD_TRAIN=1 $0）"
+  if [ -z "${FORCE_BUILD_TRAIN:-}" ] \
+     && docker image inspect "$TRAIN_IMAGE" >/dev/null 2>&1 \
+     && [ -f "$TRAIN_STAMP" ] \
+     && [ "$(cat "$TRAIN_STAMP")" = "$TRAIN_HASH" ]; then
+    echo "==> 训练镜像 $TRAIN_IMAGE 已是最新，跳过构建（强制重建：./deploy.sh --force-train）"
+  else
+    echo "==> 构建训练镜像 $TRAIN_IMAGE（首次部署或训练代码/依赖有变更）"
+    docker compose --env-file .env --profile tools build train
+    printf '%s' "$TRAIN_HASH" > "$TRAIN_STAMP"
+  fi
+}
+
+if [ "$DO_BUILD" = "1" ]; then
+  if has_target front; then build_front; fi
+  if has_target admin; then build_admin; fi
+  if has_target train; then build_train; fi
 else
-  echo "==> 构建训练镜像 $TRAIN_IMAGE（首次部署或训练代码/依赖有变更）"
-  docker compose --env-file .env --profile tools build train
-  printf '%s' "$TRAIN_HASH" > "$TRAIN_STAMP"
+  echo "==> 跳过编译与镜像构建（--no-build）"
 fi
 
 # ===== 5. 仅拷贝产物打包镜像并启动（秒级）=====
-echo "==> 加载 .env，构建轻量镜像并启动"
-docker compose --env-file .env up -d --build
+# train 属 profiles:[tools]，只构建不启动，因此不进入 up 列表
+UP_SERVICES=()
+if has_target all; then
+  UP_ALL=1
+else
+  UP_ALL=0
+  for t in "${TARGETS[@]}"; do
+    [ "$t" = "train" ] && continue
+    UP_SERVICES+=("$t")
+  done
+fi
 
-echo "==> 等待服务就绪"
-sleep 8
-docker compose ps
+if [ "$DO_UP" != "1" ]; then
+  echo "==> 跳过 compose up（--build-only）"
+elif [ "$UP_ALL" = "1" ]; then
+  echo "==> 加载 .env，构建轻量镜像并启动（全部服务）"
+  docker compose --env-file .env up -d --build
+elif [ ${#UP_SERVICES[@]} -eq 0 ]; then
+  echo "==> 无需启动的服务（目标仅含 train，训练镜像只构建不常驻）"
+else
+  UP_FLAGS=(-d)
+  [ "$DO_BUILD" = "1" ] && UP_FLAGS+=(--build)
+  [ "$NO_DEPS" = "1" ] && UP_FLAGS+=(--no-deps)
+  echo "==> 启动指定服务: ${UP_SERVICES[*]}（flags: ${UP_FLAGS[*]}）"
+  docker compose --env-file .env up "${UP_FLAGS[@]}" "${UP_SERVICES[@]}"
+fi
 
-echo "==> 部署完成"
+if [ "$DO_UP" = "1" ]; then
+  echo "==> 等待服务就绪"
+  sleep 8
+  docker compose ps
+fi
+
+echo "==> 部署完成（目标: ${TARGETS[*]}）"
 echo "前端:    http://<服务器IP>:${HTTP_PORT:-80}"
 echo "后端API: http://<服务器IP>:${ADMIN_PORT:-8080}/api"
 echo "数据库:  ${DB_USERNAME:-opsagent} @ ${POSTGRES_PORT:-5432}"

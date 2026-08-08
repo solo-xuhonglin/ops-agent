@@ -1,0 +1,14 @@
+# 在 Linux 服务器上执行/解析的文件强制 LF 换行。
+# 本机 core.autocrlf=true 会把它们检出成 CRLF，导致服务器上出现
+# 无法消除的本地差异，git pull --ff-only 直接失败（已踩过坑）。
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+.dockerignore   text eol=lf
+docker-compose*.yml text eol=lf
+*.env.example   text eol=lf
+nginx.conf      text eol=lf
+
+# Windows 批处理保持 CRLF
+*.bat           text eol=crlf
+*.cmd           text eol=crlf

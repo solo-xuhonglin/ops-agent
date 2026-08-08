@@ -75,6 +75,54 @@ chmod +x deploy.sh
 5. **按需**预构建训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/` 下的 Dockerfile，基于 `python:3.11-slim` 自装 CPU 版 torch），该服务 `profiles:["tools"]` 不随 `up` 启动，仅供 admin 经 docker-java 动态实例化。详见下方「训练镜像的构建时机」；
 6. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
+### 按服务部署（避免每次全量重编）
+
+`./deploy.sh` 不带参数等同 `./deploy.sh all`（上述完整流程）。日常只改了某一端时，可只部署对应服务，跳过其余编译环节：
+
+```bash
+./deploy.sh --help              # 查看完整用法
+./deploy.sh admin               # 只跑 mvn package → 重建 admin 镜像 → 重启
+./deploy.sh front               # 只跑 npm build → 重建 front 镜像 → 重启
+./deploy.sh front admin         # 前后端都更新，不动训练镜像
+./deploy.sh --build-only train  # 只构建训练镜像，不 up
+./deploy.sh infra               # 只拉起 postgres + minio + minio-init
+```
+
+**可选服务**
+
+| 服务 | 含义 | 编译动作 | 是否启动容器 |
+|------|------|----------|--------------|
+| `all` | 全部（默认） | 前端 + 后端 + 训练镜像 | 是（全部） |
+| `admin` | 后端 Spring Boot | `mvn package` | 是 |
+| `front` | 前端 Vue | `npm build` | 是 |
+| `train` | 训练镜像 | 按哈希判定是否构建 | **否**（`profiles:[tools]`，只构建） |
+| `infra` | 展开为 `postgres` `minio` `minio-init` | 无 | 是 |
+| `postgres` / `minio` | 单独指定基础设施 | 无 | 是 |
+
+`backend` / `frontend` 作为 `admin` / `front` 的别名同样可用。
+
+**可选开关**
+
+| 选项 | 作用 |
+|------|------|
+| `--no-pull` | 跳过 `git pull`，用服务器当前工作树的代码构建 |
+| `--build-only` | 只编译 / 构建镜像，不执行 `compose up` |
+| `--no-build` | 跳过编译与镜像构建，仅重启容器 |
+| `--no-deps` | `compose up` 时不连带启动依赖服务（如只重启 admin 不触碰 postgres） |
+| `--force-train` | 强制重建训练镜像（等价 `FORCE_BUILD_TRAIN=1`） |
+
+> ⚠️ **改动了 `deploy.sh` 自身的提交**：bash 是边读边执行的，运行中脚本被 `git pull` 覆盖会产生难以排查的怪问题。
+> 正确做法是先单独 `git pull`，再用 `--no-pull` 运行：
+> ```bash
+> git -C /opt/ops-agent pull --ff-only origin main
+> ./deploy.sh --no-pull admin
+> ```
+
+> 仅重启某个容器（不重新编译、不影响依赖）：
+> ```bash
+> ./deploy.sh --no-build --no-deps admin
+> ```
+
 ### 训练镜像的构建时机
 
 训练镜像约 1.9GB（含 CPU 版 torch），**不是每次部署都重建**。`deploy.sh` 用「镜像是否存在 + 构建上下文内容哈希」判定：
@@ -95,7 +143,9 @@ Dockerfile 刻意把 `COPY train.py` 放在 `pip install` **之后**，正是为
 强制重建（例如想刷新基础镜像）：
 
 ```bash
-FORCE_BUILD_TRAIN=1 ./deploy.sh
+./deploy.sh --force-train              # 全量部署 + 强制重建训练镜像
+./deploy.sh --force-train train        # 只强制重建训练镜像
+FORCE_BUILD_TRAIN=1 ./deploy.sh        # 等价的环境变量写法
 ```
 
 ## 四、验证

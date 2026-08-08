@@ -20,12 +20,36 @@
 |------|------|----------|
 | `_conn.py` | **共用辅助模块**，不是入口。解析连接配置、封装 SSH 连接与后台执行；导出 `get_client()` / `target()` / `run_detached()` / `REMOTE_DIR`。其它脚本均 `import` 它。 | — |
 | `ssh_status.py` | 查看远程部署状态 | git 当前版本、运行中容器（`docker compose ps`）、已构建镜像列表、磁盘占用 |
-| `ssh_deploy.py` | 在远程**后台**执行一键部署 `deploy.sh` | 立即返回 `LAUNCHED`；日志在远程 `/tmp/deploy.log` |
+| `ssh_deploy.py` | 在远程**后台**执行一键部署 `deploy.sh`，**支持按服务粒度部署** | 立即返回 `LAUNCHED`；日志在远程 `/tmp/deploy.log` |
 | `ssh_train_build.py` | 在远程**后台**单独重建训练镜像 `ops-agent-train:latest` | 立即返回 `LAUNCHED`；日志在远程 `/tmp/train_build.log` |
 | `ssh_poll.py` | 轮询任一后台任务的日志与结果（部署 / 构建通用） | 日志末尾 + 当前 ops-agent 镜像与容器状态 |
 
-`ssh_deploy.py` 支持 `--force-train` 强制重建训练镜像；
 `ssh_poll.py` 支持 `--log <远程日志路径>`（默认 `/tmp/train_build.log`）与 `-n <行数>`（默认 25）。
+
+### `ssh_deploy.py` 参数
+
+参数与服务器上的 `deploy.sh` **一一对应**，脚本只负责透传（详见 `04-deploy.md`）。
+
+```
+python scripts/ssh_deploy.py [选项] [服务...]
+```
+
+| 服务 | 含义 |
+|------|------|
+| 省略 / `all` | 全量部署（前端 + 后端 + 训练镜像 + 基础设施） |
+| `admin` | 只更新后端（`mvn package` → 重建镜像 → 重启） |
+| `front` | 只更新前端（`npm build` → 重建镜像 → 重启） |
+| `train` | 只构建训练镜像（不启动容器） |
+| `infra` | 只拉起 `postgres` + `minio` + `minio-init` |
+| `postgres` / `minio` | 单独指定基础设施 |
+
+| 选项 | 作用 |
+|------|------|
+| `--no-pull` | 远程跳过 `git pull`，用当前工作树代码构建 |
+| `--build-only` | 只编译 / 构建镜像，不 `compose up` |
+| `--no-build` | 跳过编译与镜像构建，仅重启容器 |
+| `--no-deps` | `compose up` 时不连带启动依赖服务 |
+| `--force-train` | 强制重建训练镜像 |
 
 > 后台任务通过 `setsid` 脱离 SSH 通道。偶尔通道会延迟关闭导致读取超时，
 > `run_detached()` 已对此容错并提示 —— 此时进程仍在运行，用 `ssh_poll.py` 确认即可。
@@ -76,30 +100,51 @@ REMOTE_HOST=192.168.1.10 SSHPASS='******' python scripts/ssh_status.py
 # 1) 查看当前部署状态
 $PY scripts/ssh_status.py
 
-# 2) 一键部署（最常用）
+# 2) 全量部署
 $PY scripts/ssh_deploy.py
 $PY scripts/ssh_poll.py --log /tmp/deploy.log -n 40    # 反复执行直到出现「部署完成」
 
-# 3) 只重建训练镜像，不跑完整部署
-$PY scripts/ssh_train_build.py
-$PY scripts/ssh_poll.py                                 # 默认看 /tmp/train_build.log
+# 3) 只改了后端 → 只部署后端（跳过 npm build，快很多）
+$PY scripts/ssh_deploy.py admin
+$PY scripts/ssh_poll.py --log /tmp/deploy.log
 
-# 4) 强制重建训练镜像后完整部署（如需刷新基础镜像）
-$PY scripts/ssh_deploy.py --force-train
+# 4) 只改了前端
+$PY scripts/ssh_deploy.py front
+
+# 5) 前后端都改了，但训练代码没动
+$PY scripts/ssh_deploy.py front admin
+
+# 6) 只重建训练镜像，不跑完整部署（两种等价写法）
+$PY scripts/ssh_deploy.py --build-only train
+$PY scripts/ssh_train_build.py                          # 专用脚本，日志走 /tmp/train_build.log
+
+# 7) 强制重建训练镜像（如需刷新基础镜像）
+$PY scripts/ssh_deploy.py --force-train train
+
+# 8) 只重启某个容器，不重新编译、不触碰依赖
+$PY scripts/ssh_deploy.py --no-build --no-deps admin
 ```
 
-每个脚本启动时会打印 `>> target: user@host:port`（不含口令），便于确认连的是哪台机器。
+每个脚本启动时会打印 `>> target: user@host:port`（不含口令）与将在远程执行的 `deploy.sh` 命令行，
+便于确认连的是哪台机器、跑的是什么。
 
 ## 五、典型运维流程
 
-1. **改了后端/前端/训练代码** → push 到 GitHub 后跑 `ssh_deploy.py`，
-   再用 `ssh_poll.py --log /tmp/deploy.log` 跟踪到「部署完成」。
-   训练镜像是否重建由 `deploy.sh` 按内容哈希自动决定（见 `04-deploy.md`）。
-2. **只想重建训练镜像**（不动 admin/front） → `ssh_train_build.py` + `ssh_poll.py`。
-3. **日常巡检** → `ssh_status.py` 一眼看版本、容器、镜像、磁盘。
+1. **只改了后端** → push 后 `ssh_deploy.py admin`，再 `ssh_poll.py --log /tmp/deploy.log` 跟到「部署完成」。
+   跳过前端 `npm install/build`，通常快数倍。
+2. **只改了前端** → `ssh_deploy.py front`，同理跳过 Maven 打包。
+3. **改了训练代码** → `ssh_deploy.py --build-only train`（或专用的 `ssh_train_build.py`）。
+   是否真的重建由 `deploy.sh` 按内容哈希自动决定（见 `04-deploy.md`）。
+4. **不确定动了什么 / 首次部署** → 直接 `ssh_deploy.py` 全量。
+5. **服务异常想重启** → `ssh_deploy.py --no-build --no-deps <服务>`。
+6. **日常巡检** → `ssh_status.py` 一眼看版本、容器、镜像、磁盘。
 
-> ⚠️ 若本次提交改动了 `deploy.sh` 自身，建议先在服务器单独 `git pull` 再运行部署，
-> 避免 bash 边读边执行时脚本文件被 pull 覆盖导致行为异常。
+> ⚠️ 若本次提交改动了 `deploy.sh` 自身，**先在服务器单独 `git pull`，再用 `--no-pull` 运行**，
+> 避免 bash 边读边执行时脚本文件被 pull 覆盖导致行为异常：
+> ```bash
+> $PY scripts/ssh_deploy.py --no-pull admin
+> ```
+> （需先手动 pull，例如用 `ssh_status.py` 确认远程 HEAD 已是最新。）
 
 ## 六、安全约定
 
