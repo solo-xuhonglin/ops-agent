@@ -62,6 +62,20 @@ services:
     networks:
       - opsnet
 
+  # ===== Redis（grantKey 权威存储，仅 admin 内网可达）=====
+  redis:
+    image: redis:7-alpine
+    container_name: ops-agent-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - opsnet
+
   # ===== 后端（Spring Boot）=====
   admin:
     build:
@@ -74,6 +88,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -81,6 +97,8 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       APP_INIT_ENABLED: ${APP_INIT_ENABLED:-true}
       SPRING_PROFILES_ACTIVE: docker
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       MINIO_ENABLED: ${MINIO_ENABLED:-true}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}

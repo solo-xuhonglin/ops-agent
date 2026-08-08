@@ -20,6 +20,10 @@ spring:
     multipart:
       max-file-size: 200MB
       max-request-size: 200MB
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
 jwt:
   secret: ${JWT_SECRET:change-me-in-production-please-use-a-long-random-secret-key}
@@ -61,3 +65,9 @@ grpc:
     # 禁用 grpc starter 的 spring-security 自动配置（否则因缺 GrpcAuthenticationReader 启动失败）
     security:
       enabled: false
+
+# Redis（grantKey 权威存储：时效 TTL + GETDEL 原子消费）
+agent:
+  grant:
+    ttl-seconds: ${AGENT_GRANT_TTL_SECONDS:600}
+    key-prefix: "agent:grant:"
