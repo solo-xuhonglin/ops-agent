@@ -17,6 +17,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   # ===== 对象存储（MinIO，S3 兼容）=====
   minio:
@@ -33,10 +34,11 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "http://localhost:9000"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   # 初始化 MinIO 桶（datasets / models / artifacts）
   minio-init:
