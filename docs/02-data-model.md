@@ -124,9 +124,11 @@ conversations ──< agent_memories (session_id)
 | deployed_by | BIGINT | FK→users | |
 | created_at / stopped_at | TIMESTAMPTZ | | |
 
-## 4. 对话与记忆
+## 4. 对话与记忆（已搁置）
 
-### conversations
+> **设计变更（2026-08-08）**：agent 定位改为内部运维助手，端用户对话/记忆表未建，以下为原规划，保留备查。
+
+### conversations（未建）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
@@ -134,7 +136,7 @@ conversations ──< agent_memories (session_id)
 | title | VARCHAR(255) | | |
 | created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
 
-### messages
+### messages（未建）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
@@ -144,7 +146,7 @@ conversations ──< agent_memories (session_id)
 | tool_call | JSONB | | 工具调用记录（名/参/结果） |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
 
-### agent_memories（pgvector）
+### agent_memories（未建，pgvector）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
@@ -156,9 +158,69 @@ conversations ──< agent_memories (session_id)
 
 > embedding 维度与所选 LLM 的 embedding 模型一致，由 ENV 配置，建表时按实际维度调整。
 
-## 5. 审计
+## 5. Agent 任务 / 事件 / 建议 / 工具（2026-08-08 已实现）
 
-### audit_logs
+### agent_tools（工具注册表：能力=数据，admin 注册时动态下发 schema）
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | |
+| name | VARCHAR(64) | UNIQUE NOT NULL | 工具名（下划线，如 `dataset_list`；DeepSeek 拒含点） |
+| description | TEXT | NOT NULL | 给 LLM 的工具描述 |
+| http_method | VARCHAR(8) | NOT NULL | GET/POST/DELETE |
+| path_template | VARCHAR(255) | NOT NULL | 现有 REST API 路径模板（`{jobId}` 占位） |
+| auth_permission | VARCHAR(64) | | 权限点（如 `training:read`） |
+| is_write | BOOLEAN | DEFAULT FALSE | 写工具需 grantKey 授权 |
+| params_schema | TEXT | NOT NULL | OpenAI 格式 JSON Schema（仅业务参数） |
+| enabled | BOOLEAN | DEFAULT TRUE | |
+| created_at | TIMESTAMPTZ | DEFAULT now() | |
+
+### agent_tasks（任务记录）
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | |
+| task_id | VARCHAR(64) | UNIQUE NOT NULL | uuid |
+| task_type | VARCHAR(32) | NOT NULL | question / diagnose_training / diagnose_serving / diagnose_dataset / model_review |
+| target_type / target_id | VARCHAR(32) / BIGINT | | 焦点对象（可空） |
+| query | TEXT | | 问询原文 / 诊断指令 |
+| status | VARCHAR(16) | DEFAULT DISPATCHED | DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED |
+| dispatched_by | BIGINT | FK→users | 触发人（Poller 自动触发可空） |
+| worker_id | VARCHAR(64) | | 执行 worker |
+| conclusion | TEXT | | TaskResult 结论 |
+| started_at / finished_at | TIMESTAMPTZ | | |
+| created_at | TIMESTAMPTZ | DEFAULT now() | |
+
+### agent_events（任务事件流：进度可观测）
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | |
+| task_id | VARCHAR(64) | NOT NULL | |
+| seq | INT | | 序号 |
+| event_type | VARCHAR(16) | | progress / tool_call / error |
+| content | TEXT | | 进度文案 / 工具调用 |
+| created_at | TIMESTAMPTZ | DEFAULT now() | |
+
+### agent_suggestions（处置建议：写操作必须人工确认）
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| id | BIGSERIAL | PK | |
+| task_id | VARCHAR(64) | | 来源任务 |
+| action_type | VARCHAR(32) | NOT NULL | 对应写工具名（serving_undeploy 等） |
+| target_type / target_id | VARCHAR(32) / BIGINT | NOT NULL | 处置目标 |
+| params | TEXT | | 业务参数（LLM 填） |
+| reason | TEXT | | 建议理由 |
+| priority | VARCHAR(8) | DEFAULT NORMAL | HIGH / NORMAL / LOW |
+| status | VARCHAR(16) | DEFAULT PENDING | PENDING → APPROVED → EXECUTING → EXECUTED / FAILED；REJECTED；EXPIRED |
+| grant_key | VARCHAR(64) | | 确认后签发（审计留痕；Redis 是消费权威） |
+| confirmed_by / confirmed_at | BIGINT / TIMESTAMPTZ | | 确认人/时间 |
+| executed_at | TIMESTAMPTZ | | 执行时间 |
+| result | TEXT | | 执行回执（agent 报告） |
+| created_at | TIMESTAMPTZ | DEFAULT now() | |
+
+> grantKey 生命周期（Redis）：`SET agent:grant:{key} = {action, target, suggestionId, workerId} EX 600`；写端点 `@RequireGrant` 校验 action+target 精确匹配 + `GETDEL` 原子消费（一次性）。
+
+## 6. 审计
+
+### audit_logs（规划中）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
@@ -170,16 +232,18 @@ conversations ──< agent_memories (session_id)
 | ip | VARCHAR(64) | | |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
 
-## 6. MinIO 目录约定
+## 7. MinIO 目录约定（多桶）
 
 ```
-datasets/   <dataset_id>/<file>           # 原始天气数据集
-models/     <model_version_id>/            # 训练产物（.pt / 配置 / scaler）
-artifacts/  <training_job_id>/logs.txt     # 训练日志、评估图、导出
+桶 datasets：datasets/   <dataset_id>/<file>      # 原始天气数据集（weather.csv / 上传文件）
+桶 models：  models/     <model_version_id>/      # 训练产物（model.pt / metrics.json / scaler）
+桶 logs：    logs/       <training_job_id>/logs.txt  # 训练日志
 ```
 
-## 7. 索引建议
+> 桶名可配：`MINIO_BUCKET` / `MINIO_MODEL_BUCKET` / `MINIO_LOG_BUCKET`。遗留：历史空 `artifacts` 桶可删。
 
-- 外键列建索引：`datasets(created_by)`、`model_versions(dataset_id, status)`、`training_jobs(status)`、`serving_endpoints(status)`、`messages(conversation_id)`、`agent_memories(session_id)`。
-- `agent_memories` 对 `embedding` 建 ivfflat / hnsw 向量索引（按 pgvector 版本）。
-- `audit_logs(created_at)`、`conversations(user_id, updated_at)`。
+## 8. 索引建议
+
+- 外键列建索引：`datasets(created_by)`、`model_versions(dataset_id, status)`、`training_jobs(status)`、`serving_endpoints(status)`、`agent_tasks(status)`、`agent_suggestions(status)`、`agent_events(task_id)`。
+- `agent_tools(name)` 唯一索引（建表已带）。
+- `audit_logs(created_at)`。

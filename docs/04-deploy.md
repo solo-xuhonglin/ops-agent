@@ -10,15 +10,17 @@
 用户浏览器
    │  http://<IP>           (80)
    ▼
-[ front: nginx ] ── /api/ 反向代理 ──► [ admin: Spring Boot ] (8080)
-                                          │  JDBC          │  docker.sock（动态起容器）
-                                          ▼               ▼
-                                    [ postgres ]    [ train: ops-agent-train ]（按任务动态起）
-                                          │  S3           [ serving: ops-agent-serving ]（按版本动态起）
-                                          ▼
-                                    [ minio: datasets/models/artifacts ]
+[ front: nginx ] ── /api/ 反向代理 ──► [ admin: Spring Boot ] (8080)  ◄── gRPC :9090（内网）
+                                          │  JDBC   │  docker.sock（动态起容器）
+                                          ▼         ▼
+                                    [ postgres ]  [ train: ops-agent-train ]（按任务动态起）
+                                    [ redis   ]  [ serving: ops-agent-serving ]（按版本动态起）
+                                          │  S3    │  gRPC 双向流（agent 出站拨号，零端口）
+                                          ▼       ▼
+                                    [ minio: datasets/models/logs 三桶 ]  [ agent: ops-agent-core ]
 ```
 > admin 挂载宿主 `/var/run/docker.sock`：点击训练时经 docker-java 拉起 `ops-agent-train` 容器（训练产物回传 MinIO，跑完即回收）；部署模型时拉起 `ops-agent-serving` 常驻容器（只加入内网 `opsnet`、不映射宿主端口），外部经 admin 的 `/api/serving-proxy/{endpointId}/predict` 代理调用推理。
+> **agent（Python）** 为常驻 worker：作为 gRPC client **出站拨号** admin 的 gRPC server（内网 `:9090`，不映射宿主），**零监听端口**；agent 与 redis 均不对外暴露。agent 唯一外呼：`api.deepseek.com`（LLM）。
 
 ## 一、服务器前置要求
 
@@ -45,11 +47,12 @@
 
 ## 二、修改密钥（上线前必做）
 
-编辑 `.env`，至少替换：
+**权威环境文件在 `/root/ops-agent.env`**（`deploy.sh` 的 `ENV_FILE` 默认值；首次部署无此文件时会从 `.env.example` 初始化后退出，填完密钥重跑）。编辑 `/root/ops-agent.env`，至少替换：
 
 - `DB_PASSWORD` —— 强密码
 - `JWT_SECRET` —— 至少 32 位随机串，可用 `openssl rand -base64 48` 生成
 - `SERVER_IP` / `CORS_ALLOWED_ORIGINS` —— 改成你的服务器公网 IP
+- `DEEPSEEK_API_KEY` —— Agent 的 LLM key（DeepSeek，`https://api.deepseek.com`，model `deepseek-chat`）；缺失时 agent 工具调用会失败
 
 > 演示账号由后端 `DataInitializer` 写入：`admin / admin123`（管理员，全部权限）、`user / user123`（运营人员，业务读写）。本系统为演示用途，无需修改默认密码。
 
@@ -102,6 +105,8 @@ chmod +x deploy.sh
 | `serving` | 推理镜像 | 按哈希判定是否构建 | **否**（`profiles:[tools]`，只构建） |
 | `infra` | 展开为 `postgres` `minio` `minio-init` | 无 | 是 |
 | `postgres` / `minio` | 单独指定基础设施 | 无 | 是 |
+| `agent` | Agent（Python worker，gRPC 出站拨号） | 服务器 `docker compose build agent`（pip 走清华镜像） | 是（零端口） |
+| `redis` | Redis（grantKey 存储） | 无（拉取 `redis:7-alpine`） | 是（零端口） |
 
 `backend` / `frontend` 作为 `admin` / `front` 的别名同样可用。
 
@@ -122,7 +127,7 @@ chmod +x deploy.sh
 > ./deploy.sh --no-deps front          # 重建前端但不碰 admin
 > ./deploy.sh --no-build --no-deps front   # 仅重启前端容器
 > ```
-> 依赖链：`front → admin → postgres, minio`。
+> 依赖链：`front → admin → postgres, minio, redis`；`agent → admin, redis`。
 
 > ⚠️ **改动了 `deploy.sh` 自身的提交**：bash 是边读边执行的，运行中脚本被 `git pull` 覆盖会产生难以排查的怪问题。
 > 正确做法是先单独 `git pull`，再用 `--no-pull` 运行：

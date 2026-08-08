@@ -131,18 +131,59 @@
     "endpointId": 5, "url": "http://ops-agent-serving-5:8000" } ]
 ```
 
-## 7. 对话（SSE）Conversation
+## 7. Agent 管理面（人用，非 agent 能力接口）
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| POST | `/api/agent/tasks` | `agent:write` | 派发任务：`{taskType?, targetType?, targetId?, query?}`（taskType 可选，默认 `question`，仅作提示；agent 靠 query+target 自主决策调哪些工具） |
+| GET | `/api/agent/tasks` | `agent:read` | 任务列表（分页，新→旧） |
+| GET | `/api/agent/tasks/{taskId}` | `agent:read` | 任务详情 + 事件流：`{task, events}` |
+| GET | `/api/agent/suggestions` | `agent:read` | 处置建议列表（分页） |
+| POST | `/api/agent/suggestions/{id}/approve` | `agent:write` | 确认建议：签发时效 grantKey（Redis）沿 gRPC 推 agent + 派发执行任务 → `APPROVED` |
+| POST | `/api/agent/suggestions/{id}/reject` | `agent:write` | 忽略建议 → `REJECTED` |
+
+**任务状态**：`DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED`。
+**建议状态**：`PENDING → APPROVED → EXECUTING → EXECUTED / FAILED`；`PENDING → REJECTED`；`APPROVED` 但 key 超时未执行 → `EXPIRED`。
+
+```jsonc
+// POST /api/agent/tasks   （问询）
+{ "query": "当前系统有哪些数据集？" }
+// → 200
+{ "taskId": "96f69a16-...", "status": "DISPATCHED" }
+
+// POST /api/agent/tasks   （列表页"分析"按钮派发诊断）
+{ "taskType": "diagnose_training", "targetType": "training_job", "targetId": 12 }
+// → 200  { "taskId": "...", "status": "DISPATCHED" }
+
+// GET /api/agent/tasks/{taskId}
+{ "task": { "taskId": "...", "taskType": "question", "query": "...", "status": "SUCCEEDED",
+            "workerId": "ops-agent-core-1", "conclusion": "当前系统共有 1 个数据集：...",
+            "createdAt": "..." },
+  "events": [
+    { "eventType": "progress", "content": "received task [question]", "createdAt": "..." },
+    { "eventType": "tool_call", "content": "dataset_list({})", "createdAt": "..." }
+  ] }
+
+// POST /api/agent/suggestions/7/approve
+// → 200  { "id": 7, "status": "APPROVED", "grantKey": "agent:grant:215d926a-..." }
+```
+
+> **agent 能力接口**（工具 = admin 现有 REST API 子集）不在本文档重复：只读 11 个（`dataset_list/get/get_file_url`、`model_list/get`、`training_list/get/get_logs_url`、`serving_list/get/predict`）+ 写 4 个（`training_create/delete`、`serving_deploy/undeploy`），定义存 `agent_tools` 表，agent 注册时动态下发 schema。写工具调用需携带 `X-Grant-Key`（人工确认后签发、一次性、精确绑定 action+target）；身份头 `X-Agent-Worker`/`X-Agent-Task` 由 agent 代码注入。
+
+## 8. 对话（SSE）Conversation —— 已搁置
+
+> **设计变更（2026-08-08）**：agent 定位由"终端用户自然语言对话"改为"**内部运维/业务自动化助手**"（纯被动、admin 下发任务才行动），端用户对话接口未实现、不再规划。值班问询改由前端 Agent 浮窗输入框 → `POST /api/agent/tasks`（question 任务）承载。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/chat/stream` | SSE 流式对话 |
+| POST | `/api/chat/stream` | （未实现，已搁置） |
 
 ```jsonc
-// 请求体
+// 请求体（已搁置）
 { "conversationId": 1, "message": "北京接下来 7 天气温趋势如何？" }
 ```
 
-SSE 事件流：
+SSE 事件流（已搁置）：
 ```
 event: token
 data: {"content": "根据"}
@@ -157,9 +198,7 @@ event: done
 data: {"conversationId": 1}
 ```
 
-> agent 内部流程：意图识别 → 抽参调用 `lstm_predict` tool → 取 serving 返回 → LLM 生成解读 → 流式回传；多轮上下文经 pgvector 检索。
-
-## 8. 审计 Audit
+## 9. 审计 Audit（规划中）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -174,7 +213,7 @@ data: {"conversationId": 1}
   ], "totalElements": 1 }
 ```
 
-## 9. serving 容器推理接口（内部）
+## 10. serving 容器推理接口（内部）
 
 serving 容器（`ops-agent-serving-<endpointId>:8000`）仅加入内网 `opsnet`，不映射宿主端口，不直接对外暴露；由 admin 的 `/api/serving-proxy/{endpointId}/predict` 转发调用：
 
