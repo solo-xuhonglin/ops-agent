@@ -68,10 +68,11 @@ public class AgentSuggestionService {
                         .setTtlSeconds((int) grantService.ttlSeconds()))
                 .build());
 
-        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query 调写工具（自动带 key），结果回传更新状态
-        String query = "{\"suggestionId\":%d,\"action\":\"%s\",\"params\":%s}".formatted(
-                suggestion.getId(), suggestion.getActionType(),
-                suggestion.getParams() == null ? "{}" : suggestion.getParams());
+        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query（含 target）调写工具（自动带 key），结果回传更新状态
+        String query = "{\"suggestionId\":%d,\"action\":\"%s\",\"targetType\":\"%s\",\"targetId\":%d,\"params\":%s}"
+                .formatted(suggestion.getId(), suggestion.getActionType(),
+                        suggestion.getTargetType(), suggestion.getTargetId(),
+                        suggestion.getParams() == null ? "{}" : suggestion.getParams());
         taskService.dispatch("execute_suggestion", suggestion.getTargetType(),
                 suggestion.getTargetId(), query, confirmedBy);
 
