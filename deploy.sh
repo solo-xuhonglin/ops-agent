@@ -15,10 +15,11 @@ usage() {
 用法: ./deploy.sh [选项] [服务...]
 
 服务（可多选，省略等同 all）:
-  all         全部：前端 + 后端 + 训练镜像 + 基础设施
+  all         全部：前端 + 后端 + 训练/推理镜像 + 基础设施
   admin       后端 Spring Boot（mvn package → 重建 admin 镜像 → 重启）
   front       前端 Vue（npm build → 重建 front 镜像 → 重启）
   train       训练镜像 ops-agent-train:latest（仅构建，不启动容器）
+  serving     推理镜像 ops-agent-serving:latest（仅构建，不启动容器）
   infra       基础设施：postgres + minio + minio-init（仅启动，无需编译）
   postgres    仅数据库
   minio       仅对象存储
@@ -37,6 +38,7 @@ usage() {
   ./deploy.sh front admin          # 只更新前后端，不动训练镜像
   ./deploy.sh --no-pull admin      # 用当前工作树代码重建后端
   ./deploy.sh --build-only train   # 只构建训练镜像
+  ./deploy.sh --build-only serving # 只构建推理镜像
   ./deploy.sh --no-build --no-deps admin   # 仅重启 admin 容器
 USAGE
 }
@@ -56,7 +58,8 @@ while [ $# -gt 0 ]; do
     --no-build)   DO_BUILD=0 ;;
     --no-deps)    NO_DEPS=1 ;;
     --force-train) FORCE_BUILD_TRAIN=1 ;;
-    all|admin|front|train|infra|postgres|minio) TARGETS+=("$1") ;;
+    --force-serving) FORCE_BUILD_SERVING=1 ;;
+    all|admin|front|train|serving|infra|postgres|minio) TARGETS+=("$1") ;;
     backend)      TARGETS+=("admin") ;;
     frontend)     TARGETS+=("front") ;;
     -*)           echo "ERROR: 未知选项 $1（用 --help 查看用法）" >&2; exit 1 ;;
@@ -218,9 +221,9 @@ build_admin() {
   cd "$PROJECT_DIR"
 }
 
-# ===== 4. 训练镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
+# ===== 4. 训练/推理镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
 # 训练镜像体积大（约 1.9GB，含 CPU 版 torch），无变更时跳过构建以缩短部署时间。
-# 判定依据：镜像已存在，且训练构建上下文（Dockerfile/requirements.txt/train.py）内容哈希未变。
+# 判定依据：镜像已存在，且构建上下文（Dockerfile/requirements.txt/*.py）内容哈希未变。
 # 强制重建：FORCE_BUILD_TRAIN=1 ./deploy.sh 或 ./deploy.sh --force-train
 build_train() {
   local TRAIN_IMAGE="ops-agent-train:latest"
@@ -245,16 +248,41 @@ build_train() {
   fi
 }
 
+# 推理镜像（体积小，约 800MB），同样按上下文哈希跳过
+build_serving() {
+  local SERVING_IMAGE="ops-agent-serving:latest"
+  local SERVING_CTX="$PROJECT_DIR/ops-agent-data-service"
+  local DEPLOY_CACHE="$PROJECT_DIR/.deploy-cache"
+  local SERVING_STAMP="$DEPLOY_CACHE/serving-image.sha256"
+  mkdir -p "$DEPLOY_CACHE"
+
+  local SERVING_HASH
+  SERVING_HASH="$(cat "$SERVING_CTX/Dockerfile" "$SERVING_CTX/requirements.txt" "$SERVING_CTX/serve.py" 2>/dev/null \
+    | sha256sum | awk '{print $1}')"
+
+  if [ -z "${FORCE_BUILD_SERVING:-}" ] \
+     && docker image inspect "$SERVING_IMAGE" >/dev/null 2>&1 \
+     && [ -f "$SERVING_STAMP" ] \
+     && [ "$(cat "$SERVING_STAMP")" = "$SERVING_HASH" ]; then
+    echo "==> 推理镜像 $SERVING_IMAGE 已是最新，跳过构建（强制重建：./deploy.sh --force-serving）"
+  else
+    echo "==> 构建推理镜像 $SERVING_IMAGE（首次部署或推理代码/依赖有变更）"
+    docker compose --env-file .env --profile tools build serving
+    printf '%s' "$SERVING_HASH" > "$SERVING_STAMP"
+  fi
+}
+
 if [ "$DO_BUILD" = "1" ]; then
   if has_target front; then build_front; fi
   if has_target admin; then build_admin; fi
   if has_target train; then build_train; fi
+  if has_target serving; then build_serving; fi
 else
   echo "==> 跳过编译与镜像构建（--no-build）"
 fi
 
 # ===== 5. 仅拷贝产物打包镜像并启动（秒级）=====
-# train 属 profiles:[tools]，只构建不启动，因此不进入 up 列表
+# train/serving 属 profiles:[tools]，只构建不启动，因此不进入 up 列表
 UP_SERVICES=()
 if has_target all; then
   UP_ALL=1
@@ -262,6 +290,7 @@ else
   UP_ALL=0
   for t in "${TARGETS[@]}"; do
     [ "$t" = "train" ] && continue
+    [ "$t" = "serving" ] && continue
     UP_SERVICES+=("$t")
   done
 fi
@@ -272,7 +301,7 @@ elif [ "$UP_ALL" = "1" ]; then
   echo "==> 加载 .env，构建轻量镜像并启动（全部服务）"
   docker compose --env-file .env up -d --build
 elif [ ${#UP_SERVICES[@]} -eq 0 ]; then
-  echo "==> 无需启动的服务（目标仅含 train，训练镜像只构建不常驻）"
+  echo "==> 无需启动的服务（目标仅含 train/serving，工具镜像只构建不常驻）"
 else
   UP_FLAGS=(-d)
   [ "$DO_BUILD" = "1" ] && UP_FLAGS+=(--build)

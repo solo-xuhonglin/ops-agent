@@ -36,6 +36,10 @@ public class ServingEndpoint {
     @Column(length = 16)
     private String status;
 
+    /** 连续探活失败次数（ServingHealthPoller 维护，达阈值置 UNHEALTHY） */
+    @Column(name = "unhealthy_count")
+    private Integer unhealthyCount = 0;
+
     @Column(name = "deployed_by")
     private Long deployedBy;
 

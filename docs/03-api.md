@@ -98,27 +98,36 @@
 
 ## 6. 部署 Serving
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/serving/deploy` | 部署某版本 → 起 serving 容器（当前为基础版，接收 `ServingEndpoint` 实体，`status` 置 `DEPLOYING`/`DEPLOYED`） |
-| POST | `/api/serving/endpoints/{id}/undeploy` | 卸载 |
-| GET | `/api/serving/endpoints` | endpoint 列表（分页） |
-| GET | `/api/serving/tools` | 供 agent 使用的工具清单（仅返回 `status=DEPLOYED` 的端点，含 `name=lstm_predict`、`url`、`endpointId`） |
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/api/serving/endpoints` | `serving:read` | endpoint 列表（分页） |
+| GET | `/api/serving/endpoints/{id}` | `serving:read` | endpoint 详情 |
+| POST | `/api/serving/deploy` | `serving:write` | 部署：body `{modelVersionId}`（须 READY）→ 起 serving 容器 → 返回 CREATING 端点，就绪由轮询判定 |
+| DELETE | `/api/serving/endpoints/{id}` | `serving:write` | 下线：停删容器 → 置 STOPPED |
+| POST | `/api/serving-proxy/{endpointId}/predict` | `serving:read` | 推理代理：JWT 鉴权后内网转发给对应 serving 容器（非 DEPLOYED 返回 409） |
+| GET | `/api/serving/tools` | `serving:read` | 供 agent 使用的工具清单（仅 `status=DEPLOYED` 的端点，含 `name=lstm_predict`、`url`、`endpointId`） |
 
-> **当前实现状态**：`/api/datasets`、`/api/models`、`/api/training/jobs` 均为完整实现（训练已接 Docker 动态编排 + 轮询回填）。`/api/serving` 仍为接口桩，直接以实体 JSON 收发，尚未实现推理容器拉起逻辑。
+> **当前实现状态**：`/api/datasets`、`/api/models`、`/api/training/jobs`、`/api/serving` 均为完整实现。serving 已接 Docker 动态编排（`ServingLauncher` 起容器 + `ServingHealthPoller` 就绪轮询/探活 + 状态机 CREATING→DEPLOYED/FAILED→STOPPING→STOPPED/UNHEALTHY），推理统一经 `/api/serving-proxy` 代理，serving 容器自身不设鉴权（仅内网）。
 
 ```jsonc
 // POST /api/serving/deploy
 { "modelVersionId": 1 }
-// → 201
-{ "id": 5, "modelVersionId": 1, "url": "http://ops-serve-5:8000/predict",
-  "status": "DEPLOYING" }
+// → 200
+{ "id": 5, "modelVersionId": 1, "status": "CREATING",
+  "containerId": null, "host": null, "port": null, "url": null }
+// 就绪轮询成功后：
+{ "id": 5, "modelVersionId": 1, "status": "DEPLOYED",
+  "containerId": "a1b2...", "host": "ops-agent-serving-5",
+  "port": 8000, "url": "http://ops-agent-serving-5:8000" }
+
+// POST /api/serving-proxy/5/predict
+{ "values": [20.1, 20.5, 21.0, 20.8, 19.9], "horizon": 3 }
+// → 200
+{ "predictions": [20.7, 20.9, 21.1], "modelVersionId": "1" }
 
 // GET /api/serving/tools
 [ { "name": "lstm_predict", "description": "基于历史天气的 LSTM 预测",
-    "parameters": { "region": "string", "metric": "string",
-                    "startDate": "date", "days": "int" },
-    "endpointId": 5 } ]
+    "endpointId": 5, "url": "http://ops-agent-serving-5:8000" } ]
 ```
 
 ## 7. 对话（SSE）Conversation
@@ -166,17 +175,19 @@ data: {"conversationId": 1}
 
 ## 9. serving 容器推理接口（内部）
 
-agent 调用，不对外暴露：
+serving 容器（`ops-agent-serving-<endpointId>:8000`）仅加入内网 `opsnet`，不映射宿主端口，不直接对外暴露；由 admin 的 `/api/serving-proxy/{endpointId}/predict` 转发调用：
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/predict` | LSTM 推理 |
+| GET | `/health` | 就绪/探活：`{"status":"ok","modelVersionId":"1"}` |
+| POST | `/predict` | LSTM 推理（单步/多步递归） |
 
 ```jsonc
 // POST /predict
-{ "region": "北京", "metric": "气温", "startDate": "2026-08-08", "days": 7 }
+{ "values": [20.1, 20.5, 21.0, 20.8, 19.9, 20.3], "horizon": 7 }
 // → 200
-{ "region": "北京", "metric": "气温",
-  "forecast": [ { "date": "2026-08-08", "value": 28.4 },
-                { "date": "2026-08-09", "value": 29.1 } ] }
+{ "predictions": [20.7, 20.9, 21.1, 21.4, 21.6, 21.8, 21.9],
+  "modelVersionId": "1" }
 ```
+
+> 语义约定：`values` 为历史气温序列（单位 ℃，长度 ≥ 模型 seq_len），`horizon` 为未来预测步数（1–168）；参数非法返回 400，模型加载失败时容器启动即异常退出（由 admin 判定 FAILED）。

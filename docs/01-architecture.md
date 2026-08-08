@@ -48,10 +48,10 @@
 ## 3. 服务划分与职责
 
 - **front（Vuetify）**：管理后台（用户/角色/权限/数据集）+ 仪表盘 + 对话工作台（后续）。响应式布局，导航抽屉在桌面常驻、移动端临时。
-- **admin（Spring Boot）**：唯一后端入口。JWT 认证；RBAC（用户/角色/权限）；数据集 CRUD；模型注册表；训练编排（已接 Docker API）；部署编排（后续）；对话网关（后续转发 agent）；审计日志（后续）。
+- **admin（Spring Boot）**：唯一后端入口。JWT 认证；RBAC（用户/角色/权限）；数据集 CRUD；模型注册表；训练编排（已接 Docker API）；serving 编排（已实现：起/停容器 + 就绪轮询 + 代理转发）；对话网关（后续转发 agent）；审计日志（后续）。
 - **agent（Python 常驻，后续）**：LangGraph 对话编排；把已部署 LSTM 模型注册为 tool；调 serving 推理 API；记忆写 pgvector。
 - **training（Python 动态容器，已实现）**：从 MinIO 拉数据集 CSV→预处理→训 PyTorch LSTM→评估→产物（`model.pt` / `metrics.json`）存 MinIO→退出；状态由 admin 轮询回填。
-- **serving（Python 按版本动态容器，后续）**：加载指定模型版本→暴露 `/predict`→注册到 admin endpoint。
+- **serving（Python 按版本动态容器，已实现）**：加载指定模型版本→暴露 `/health` + `/predict`（单步/多步递归）→admin 代理 `/api/serving-proxy/{endpointId}/predict` 对外转发。
 
 ## 4. RBAC 权限模型
 
@@ -85,12 +85,12 @@ admin 挂宿主 `/var/run/docker.sock`，用 docker-java 客户端动态起容�
 
 > 采用轮询而非容器回调：容器无需出网与服务间 token 鉴权，容器崩溃也能靠轮询兜底。
 
-**部署 serving（后续）**：按模型版本动态起 serving 容器，admin 写 `serving_endpoints` 并暴露 `/api/serving/tools` 供 agent 发现。
+**部署 serving（已实现）**：按模型版本动态起 serving 容器（`ops-agent-serving-<endpointId>`，仅内网），admin 就绪轮询 `/health` 后写 `serving_endpoints`（DEPLOYED），运行期探活标记 UNHEALTHY，下线停删容器；外部经 `/api/serving-proxy/{endpointId}/predict` 代理调用，`/api/serving/tools` 暴露已部署工具供 agent 发现。
 
 ## 7. 部署拓扑（docker-compose 规划）
 
 常驻：`front / admin(挂 docker.sock) / postgres(+pgvector) / minio`（agent、redis 后续按需）。所有服务并入自定义网络 `ops-agent-opsnet`。
-`train` 镜像在 compose 中以 `profiles:["tools"]` 定义，只用于构建出 `ops-agent-train:latest`、不随 `up` 启动，实例由 admin 经 Docker API 动态创建。`serving` 同理（后续）。
+`train` / `serving` 镜像在 compose 中以 `profiles:["tools"]` 定义，只用于构建出 `ops-agent-train:latest` / `ops-agent-serving:latest`、不随 `up` 启动，实例由 admin 经 Docker API 动态创建。
 
 ## 8. 当前实现状态
 
@@ -104,7 +104,7 @@ admin 挂宿主 `/var/run/docker.sock`，用 docker-java 客户端动态起容�
 | 训练模块 `ops-agent-data-train`（PyTorch LSTM，CPU 镜像） | ✅ 已实现 |
 | 前端：登录 / 布局 / 仪表盘 / 用户·角色·权限·数据集 | ✅ 已实现 |
 | 前端：模型管理 / 训练任务列表 | ✅ 已实现 |
-| 部署 serving（推理上线） | 🟡 接口桩（实体 JSON 收发） |
+| 部署 serving（推理上线）：data-service 推理服务 + admin 编排 + 代理转发 + 模型服务页 | ✅ 已实现 |
 | agent（LangGraph 对话）/ 前端对话工作台 / 审计日志 | ⏳ 后续 |
 
-> 验证：后端 `mvn clean compile` 通过；前端 `vite build` 通过；数据集链路有 pytest E2E（10 passed）。
+> 验证：后端 `mvn clean compile` 通过；前端 `vite build` 通过；数据集链路有 pytest E2E（10 passed）；serving 模块有模型加载/预测兼容性测试（pytest）。

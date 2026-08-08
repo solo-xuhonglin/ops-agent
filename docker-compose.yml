@@ -94,9 +94,14 @@ services:
       TRAIN_IMAGE: ${TRAIN_IMAGE:-ops-agent-train:latest}
       TRAIN_NETWORK: ${TRAIN_NETWORK:-ops-agent-opsnet}
       TRAIN_TIMEOUT_MINUTES: ${TRAIN_TIMEOUT_MINUTES:-60}
+      # serving 编排：镜像名 / 网络 / 就绪超时
+      SERVING_ENABLED: ${SERVING_ENABLED:-true}
+      SERVING_IMAGE: ${SERVING_IMAGE:-ops-agent-serving:latest}
+      SERVING_NETWORK: ${SERVING_NETWORK:-ops-agent-opsnet}
+      SERVING_READY_TIMEOUT_SECONDS: ${SERVING_READY_TIMEOUT_SECONDS:-60}
     ports:
       - "${ADMIN_PORT}:8080"
-    # 动态拉起 training 容器需要挂载宿主 docker.sock
+    # 动态拉起 training/serving 容器需要挂载宿主 docker.sock
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
@@ -123,6 +128,18 @@ services:
       context: ./ops-agent-data-train
       dockerfile: Dockerfile
     container_name: ops-agent-train
+    profiles:
+      - tools
+    networks:
+      - opsnet
+
+  # ===== serving 推理镜像（仅构建，不随 up 启动；由 admin 经 docker-java 动态实例化）=====
+  serving:
+    image: ops-agent-serving:latest
+    build:
+      context: ./ops-agent-data-service
+      dockerfile: Dockerfile
+    container_name: ops-agent-serving
     profiles:
       - tools
     networks:

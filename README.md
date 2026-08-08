@@ -22,10 +22,13 @@ ops-agent/
 ├── docs/
 │   ├── 01-architecture.md     # 项目架构
 │   ├── 02-data-model.md       # 表结构
-│   └── 03-api.md              # API 设计
+│   ├── 03-api.md              # API 设计
+│   └── 04-deploy.md           # 部署指南
 ├── ops-agent-front/           # Vuetify 4 前端（管理后台 + 对话工作台）
 ├── ops-agent-admin/           # Spring Boot 后端（总入口 / 编排 / Docker 生命周期）
-└── ops-agent-core/            # Python：agent / training / serving
+├── ops-agent-core/            # Python：agent / training / serving（后续）
+├── ops-agent-data-train/      # Python：LSTM 训练容器（MinIO 输入 / 产物）
+└── ops-agent-data-service/    # Python：LSTM 推理服务容器（FastAPI）
 ```
 
 ## 文档导航
@@ -37,4 +40,4 @@ ops-agent/
 
 ## 状态
 
-🔧 **初始设计阶段** —— 仅产出架构文档，尚未开始编码。
+🔧 **开发中** —— 数据 → 训练 → 模型版本 → 部署 serving → 代理预测链路已闭环；agent（LangGraph）对话编排为后续项。

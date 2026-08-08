@@ -4,14 +4,15 @@ import com.opsagent.admin.common.ApiResponse;
 import com.opsagent.admin.entity.ServingEndpoint;
 import com.opsagent.admin.service.ServingEndpointService;
 import lombok.RequiredArgsConstructor;
-
-import java.util.List;
-import java.util.Map;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/serving")
@@ -39,12 +40,11 @@ public class ServingController {
     @PreAuthorize("hasAuthority('serving:read')")
     public ApiResponse<?> tools() {
         List<Map<String, Object>> tools = servingEndpointService.list(
-                        org.springframework.data.domain.PageRequest.of(0, 100,
-                                org.springframework.data.domain.Sort.by("id").descending()))
+                        PageRequest.of(0, 100, Sort.by("id").descending()))
                 .getContent().stream()
                 .filter(ep -> "DEPLOYED".equals(ep.getStatus()))
                 .map(ep -> {
-                    Map<String, Object> t = new java.util.LinkedHashMap<>();
+                    Map<String, Object> t = new LinkedHashMap<>();
                     t.put("name", "lstm_predict");
                     t.put("description", "基于历史天气的 LSTM 预测");
                     t.put("endpointId", ep.getId());
@@ -54,16 +54,21 @@ public class ServingController {
         return ApiResponse.ok(tools);
     }
 
+    /** 部署：校验模型 READY 后由 ServingLauncher 起容器，返回 CREATING 状态的 endpoint */
     @PostMapping("/deploy")
     @PreAuthorize("hasAuthority('serving:write')")
-    public ApiResponse<?> deploy(@RequestBody ServingEndpoint ep) {
-        return ApiResponse.ok(servingEndpointService.save(ep));
+    public ApiResponse<?> deploy(@RequestBody Map<String, Object> body) {
+        Object mvId = body.get("modelVersionId");
+        if (mvId == null) {
+            throw new IllegalArgumentException("缺少 modelVersionId");
+        }
+        return ApiResponse.ok(servingEndpointService.deploy(Long.valueOf(mvId.toString())));
     }
 
+    /** 下线：停删容器并置 STOPPED */
     @DeleteMapping("/endpoints/{id}")
     @PreAuthorize("hasAuthority('serving:write')")
     public ApiResponse<?> undeploy(@PathVariable Long id) {
-        servingEndpointService.delete(id);
-        return ApiResponse.ok();
+        return ApiResponse.ok(servingEndpointService.undeploy(id));
     }
 }

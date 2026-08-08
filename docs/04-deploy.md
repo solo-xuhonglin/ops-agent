@@ -14,11 +14,11 @@
                                           │  JDBC          │  docker.sock（动态起容器）
                                           ▼               ▼
                                     [ postgres ]    [ train: ops-agent-train ]（按任务动态起）
-                                          │  S3
+                                          │  S3           [ serving: ops-agent-serving ]（按版本动态起）
                                           ▼
                                     [ minio: datasets/models/artifacts ]
 ```
-> admin 挂载宿主 `/var/run/docker.sock`，点击训练时经 docker-java 拉起 `ops-agent-train` 容器，训练产物（模型 + 指标 + 日志）回传 MinIO，容器跑完即回收。
+> admin 挂载宿主 `/var/run/docker.sock`：点击训练时经 docker-java 拉起 `ops-agent-train` 容器（训练产物回传 MinIO，跑完即回收）；部署模型时拉起 `ops-agent-serving` 常驻容器（只加入内网 `opsnet`、不映射宿主端口），外部经 admin 的 `/api/serving-proxy/{endpointId}/predict` 代理调用推理。
 
 ## 一、服务器前置要求
 
@@ -72,7 +72,9 @@ chmod +x deploy.sh
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
 4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`）；Dockerfile 直接 `COPY target/*.jar`；
-5. **按需**预构建训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/` 下的 Dockerfile，基于 `python:3.11-slim` 自装 CPU 版 torch），该服务 `profiles:["tools"]` 不随 `up` 启动，仅供 admin 经 docker-java 动态实例化。详见下方「训练镜像的构建时机」；
+5. **按需**预构建工具镜像（`profiles:["tools"]`，不随 `up` 启动，仅供 admin 经 docker-java 动态实例化）：
+   - 训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/`，基于 `python:3.11-slim` 自装 CPU 版 torch）；
+   - 推理镜像 `ops-agent-serving:latest`（`ops-agent-data-service/`，FastAPI + CPU 版 torch）。详见下方「工具镜像的构建时机」；
 6. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
 
 ### 按服务部署（避免每次全量重编）
@@ -83,8 +85,9 @@ chmod +x deploy.sh
 ./deploy.sh --help              # 查看完整用法
 ./deploy.sh admin               # 只跑 mvn package → 重建 admin 镜像 → 重启
 ./deploy.sh front               # 只跑 npm build → 重建 front 镜像 → 重启
-./deploy.sh front admin         # 前后端都更新，不动训练镜像
+./deploy.sh front admin         # 前后端都更新，不动工具镜像
 ./deploy.sh --build-only train  # 只构建训练镜像，不 up
+./deploy.sh --build-only serving # 只构建推理镜像，不 up
 ./deploy.sh infra               # 只拉起 postgres + minio + minio-init
 ```
 
@@ -92,10 +95,11 @@ chmod +x deploy.sh
 
 | 服务 | 含义 | 编译动作 | 是否启动容器 |
 |------|------|----------|--------------|
-| `all` | 全部（默认） | 前端 + 后端 + 训练镜像 | 是（全部） |
+| `all` | 全部（默认） | 前端 + 后端 + 训练/推理镜像 | 是（全部） |
 | `admin` | 后端 Spring Boot | `mvn package` | 是 |
 | `front` | 前端 Vue | `npm build` | 是 |
 | `train` | 训练镜像 | 按哈希判定是否构建 | **否**（`profiles:[tools]`，只构建） |
+| `serving` | 推理镜像 | 按哈希判定是否构建 | **否**（`profiles:[tools]`，只构建） |
 | `infra` | 展开为 `postgres` `minio` `minio-init` | 无 | 是 |
 | `postgres` / `minio` | 单独指定基础设施 | 无 | 是 |
 
@@ -110,6 +114,7 @@ chmod +x deploy.sh
 | `--no-build` | 跳过编译与镜像构建，仅重启容器 |
 | `--no-deps` | `compose up` 时不连带启动依赖服务（如只重启 admin 不触碰 postgres） |
 | `--force-train` | 强制重建训练镜像（等价 `FORCE_BUILD_TRAIN=1`） |
+| `--force-serving` | 强制重建推理镜像（等价 `FORCE_BUILD_SERVING=1`） |
 
 > ℹ️ **依赖会被连带启动**：compose 的 `depends_on` 决定了 `./deploy.sh front` 也会把 `admin` 纳入启动图（`front` 依赖 `admin`），
 > 因而可能顺带重启后端。这是为了保证依赖确实在跑。若要严格只动目标服务，加 `--no-deps`：
@@ -131,29 +136,32 @@ chmod +x deploy.sh
 > ./deploy.sh --no-build --no-deps admin
 > ```
 
-### 训练镜像的构建时机
+### 工具镜像的构建时机
 
-训练镜像约 1.9GB（含 CPU 版 torch），**不是每次部署都重建**。`deploy.sh` 用「镜像是否存在 + 构建上下文内容哈希」判定：
+训练镜像约 1.9GB、推理镜像约 800MB（均含 CPU 版 torch），**不是每次部署都重建**。`deploy.sh` 对两者都用「镜像是否存在 + 构建上下文内容哈希」判定：
 
 ```
-sha256(Dockerfile + requirements.txt + train.py) 与 .deploy-cache/train-image.sha256 比对
+训练镜像  sha256(Dockerfile + requirements.txt + train.py)  与 .deploy-cache/train-image.sha256   比对
+推理镜像  sha256(Dockerfile + requirements.txt + serve.py)  与 .deploy-cache/serving-image.sha256 比对
 ```
 
 | 场景 | 行为 | 耗时 |
 |------|------|------|
 | 首次部署 | 完整构建：拉基础镜像 + 装 torch 及依赖 | 约 3–6 分钟 |
-| 训练文件三件套均未变 | **跳过构建**，脚本直接进入下一步 | 0 秒 |
-| 只改了 `train.py` | 重建，但 `pip install` 层命中 Docker 缓存，仅重跑末尾 `COPY train.py` | 数秒 |
+| 构建上下文均未变 | **跳过构建**，脚本直接进入下一步 | 0 秒 |
+| 只改了 `train.py` / `serve.py` | 重建，但 `pip install` 层命中 Docker 缓存，仅重跑末尾 `COPY` | 数秒 |
 | 改了 `requirements.txt` / `Dockerfile` | 重建且依赖层缓存失效，重新安装 | 约 3–6 分钟 |
 
-Dockerfile 刻意把 `COPY train.py` 放在 `pip install` **之后**，正是为了让训练代码的日常改动不触发依赖重装。
+两个 Dockerfile 都刻意把 `COPY *.py` 放在 `pip install` **之后**，正是为了让代码日常改动不触发依赖重装。
 
 强制重建（例如想刷新基础镜像）：
 
 ```bash
 ./deploy.sh --force-train              # 全量部署 + 强制重建训练镜像
 ./deploy.sh --force-train train        # 只强制重建训练镜像
+./deploy.sh --force-serving serving    # 只强制重建推理镜像
 FORCE_BUILD_TRAIN=1 ./deploy.sh        # 等价的环境变量写法
+FORCE_BUILD_SERVING=1 ./deploy.sh
 ```
 
 ## 四、验证
@@ -178,7 +186,7 @@ curl http://localhost/api/actuator/health   # 后端健康检查（若已开启 
 
 ## 六、后续迭代
 
-- 训练编排已落地：`admin` 已挂载宿主 `docker.sock`，`docker-compose.yml` 含 `train` 服务（`profiles:["tools"]`，`deploy.sh` 会先 `docker compose --profile tools build train` 预构建 `ops-agent-train:latest`）。serving（推理部署）仍是后续迭代项。
+- 训练编排已落地：`admin` 已挂载宿主 `docker.sock`，`docker-compose.yml` 含 `train` / `serving` 服务（均 `profiles:["tools"]`，`deploy.sh` 会按需预构建镜像）。serving 推理部署也已落地：模型 READY 后可在前端「模型管理」页点击部署，经 admin 动态拉起 `ops-agent-serving` 容器（仅内网），「模型服务」页可测试推理与下线。
 - 生产建议加 HTTPS（在 `front` 前再挂一层 `nginx-proxy` + `acme-companion` 或自建 cert）。
 
 ## 七、存储约定

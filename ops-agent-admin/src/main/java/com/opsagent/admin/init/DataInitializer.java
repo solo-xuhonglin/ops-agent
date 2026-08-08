@@ -73,7 +73,9 @@ public class DataInitializer implements CommandLineRunner {
             }
         }
 
-        // 2. 角色：按名判断，缺失才插入；已存在则取出用于用户绑定
+        // 2. 角色：按名判断，缺失才插入；已存在则取出用于用户绑定。
+        //    对 ADMIN/OPERATOR 做增量补全：新增权限码（如 serving:*）后自动同步给既有角色，
+        //    避免升级后旧角色拿不到新权限。
         Role admin = roleRepository.findByName("ADMIN").orElseGet(() -> {
             Role r = new Role();
             r.setName("ADMIN");
@@ -81,14 +83,16 @@ public class DataInitializer implements CommandLineRunner {
             r.setPermissions(Set.copyOf(permissionRepository.findAll()));
             return roleRepository.save(r);
         });
+        syncAllPermissions(admin);
 
-        roleRepository.findByName("OPERATOR").orElseGet(() -> {
+        Role operator = roleRepository.findByName("OPERATOR").orElseGet(() -> {
             Role r = new Role();
             r.setName("OPERATOR");
             r.setDescription("运营人员");
             r.setPermissions(Set.copyOf(permissionRepository.findAll()));
             return roleRepository.save(r);
         });
+        syncAllPermissions(operator);
 
         Role user = roleRepository.findByName("USER").orElseGet(() -> {
             Role r = new Role();
@@ -122,6 +126,20 @@ public class DataInitializer implements CommandLineRunner {
             demoUser.setStatus("ACTIVE");
             demoUser.setRoles(Set.of(user));
             userRepository.save(demoUser);
+        }
+    }
+
+    /** 将角色权限补齐为当前全部权限（仅当缺失时写库，避免每次启动无谓更新）。 */
+    private void syncAllPermissions(Role role) {
+        Set<Long> allIds = permissionRepository.findAll().stream()
+                .map(Permission::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<Long> roleIds = role.getPermissions().stream()
+                .map(Permission::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        if (!roleIds.containsAll(allIds)) {
+            role.setPermissions(Set.copyOf(permissionRepository.findAll()));
+            roleRepository.save(role);
         }
     }
 }

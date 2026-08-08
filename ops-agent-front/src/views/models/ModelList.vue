@@ -29,6 +29,8 @@
         <template #item.actions="{ item }">
           <v-btn icon="mdi-information" size="small" variant="text" color="primary" title="详情" @click="openDetail(item)" />
           <v-btn icon="mdi-download" size="small" variant="text" color="secondary" title="下载模型" @click="download(item)" />
+          <v-btn v-if="canServe && item.status === 'READY'" icon="mdi-rocket-launch" size="small" variant="text" color="primary"
+                 title="部署服务" @click="deploy(item)" />
           <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" title="删除" @click="remove(item)" />
         </template>
       </v-data-table-server>
@@ -66,13 +68,16 @@
 
 <script setup>
 import { ref, reactive, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
 const { confirmDialog } = useConfirm()
+const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('model:write'))
+const canServe = computed(() => auth.hasPerm('serving:write'))
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
@@ -144,6 +149,21 @@ async function remove(item) {
     load()
   } catch (e) {
     alert(e.response?.data?.message || '删除失败')
+  }
+}
+
+async function deploy(item) {
+  const ok = await confirmDialog({
+    title: '部署模型服务',
+    message: `确定要部署模型「${item.name} (${item.version})」为推理服务吗？将启动一个 serving 容器。`,
+    confirmText: '部署'
+  })
+  if (!ok) return
+  try {
+    await api.post('/serving/deploy', { modelVersionId: item.id })
+    router.push('/serving')
+  } catch (e) {
+    alert(e.response?.data?.message || '部署失败')
   }
 }
 

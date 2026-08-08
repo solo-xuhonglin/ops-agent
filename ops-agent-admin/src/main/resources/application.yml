@@ -45,3 +45,11 @@ train:
   image: ${TRAIN_IMAGE:ops-agent-train:latest}
   network: ${TRAIN_NETWORK:ops-agent-opsnet}
   timeout-minutes: ${TRAIN_TIMEOUT_MINUTES:60}
+
+serving:
+  enabled: ${SERVING_ENABLED:true}
+  image: ${SERVING_IMAGE:ops-agent-serving:latest}
+  network: ${SERVING_NETWORK:ops-agent-opsnet}
+  ready-timeout-seconds: ${SERVING_READY_TIMEOUT_SECONDS:60}
+  health-check-interval-ms: ${SERVING_HEALTH_CHECK_INTERVAL_MS:30000}
+  unhealthy-threshold: ${SERVING_UNHEALTHY_THRESHOLD:3}
