@@ -1,13 +1,22 @@
-/* 全局列表页与通用样式（实用美化） */
+/* ============================================================
+ * 全局样式层：所有跨页面复用的样式统一在这里维护，
+ * 业务组件只允许保留与其自身强绑定的局部样式。
+ * 颜色一律走 Vuetify 主题变量（--v-theme-*），禁止硬编码色值。
+ * ============================================================ */
 
-/* Vuetify 4 移除了全局 CSS reset，这里补齐标题/段落默认 margin（项目内标题多用 text-* 类 + 显式 margin 类） */
+/* Vuetify 4 移除了全局 CSS reset，这里补齐标题/段落默认 margin */
 h1, h2, h3, h4, h5, h6, p {
   margin: 0;
 }
 
-/* 列表页标题 */
-.list-title {
-  font-weight: 700;
+/* ---------- 列表页骨架 ---------- */
+/* 页头操作行：标题已统一由顶栏展示，这里只放搜索/按钮等操作 */
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
 }
 
 /* 数据表卡片：用细边框替代强阴影 */
@@ -16,10 +25,11 @@ h1, h2, h3, h4, h5, h6, p {
   box-shadow: none;
 }
 
-/* 表头加粗 */
+/* 表头加粗 + 浅底色 */
 .data-card .v-table thead th {
   font-weight: 700;
   background: rgba(0, 0, 0, 0.02);
+  white-space: nowrap;
 }
 
 /* 表格行 hover */
@@ -27,7 +37,106 @@ h1, h2, h3, h4, h5, h6, p {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
 }
 
+/* 表格操作列：按钮永不换行、间距一致 */
+.row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  margin: 0 -4px;
+}
+
 /* 操作按钮 hover 更明确 */
 .v-btn.v-btn--icon:hover {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+}
+
+/* ---------- 表单 ---------- */
+/* 页头里的搜索/筛选框固定宽度（替代内联 style="max-width: ..."） */
+.field-fixed {
+  max-width: 240px;
+  min-width: 180px;
+}
+
+/* ---------- 卡片动效（仪表盘等） ---------- */
+.hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.hover-tint:hover {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
+}
+
+/* ---------- 图表 / 日志等嵌入内容 ---------- */
+.chart-box {
+  width: 100%;
+  height: 420px;
+}
+.log-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: rgb(var(--v-theme-background));
+  border-radius: 8px;
+}
+
+/* ---------- 抽屉/对话里的空状态 ---------- */
+.empty-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  height: 100%;
+  padding: 32px 16px;
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+/* ---------- Agent 抽屉历史列表项（处置建议 / 历史任务共用） ---------- */
+.history-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  transition: background 0.15s ease;
+  cursor: default;
+}
+.history-item:hover {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
+}
+.history-item--clickable {
+  cursor: pointer;
+}
+.history-item--active {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+}
+.history-item--pending {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 6%, transparent);
+}
+/* 头部行：图标 + 标题 + 状态 chip + 时间，时间固定不折行，标题可截断 */
+.history-item__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.history-item__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.history-item__time {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+}
+.history-item__body {
+  margin-top: 4px;
+  padding-left: 36px; /* 与头像对齐 */
+  word-break: break-word;
 }

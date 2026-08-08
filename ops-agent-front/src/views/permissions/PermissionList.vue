@@ -1,12 +1,11 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">权限管理</h2>
+    <div class="page-toolbar">
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建权限</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -16,17 +15,19 @@
         @update:options="onOptions"
       >
         <template #item.actions="{ item }">
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
-    <v-dialog v-model="dialog" max-width="480">
-      <v-card rounded="lg">
+    <v-dialog v-model="dialog">
+      <v-card>
         <v-card-title>新建权限</v-card-title>
         <v-card-text>
-          <v-text-field v-model="form.code" label="权限编码" variant="outlined" :rules="[(v)=>!!v||'必填']" placeholder="如 dataset:write" />
-          <v-text-field v-model="form.description" label="描述" variant="outlined" />
+          <v-text-field v-model="form.code" label="权限编码" :rules="[(v)=>!!v||'必填']" placeholder="如 dataset:write" />
+          <v-text-field v-model="form.description" label="描述" />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
@@ -43,16 +44,18 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
 
 const auth = useAuthStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('permission:write'))
 
 const headers = [
   { title: 'ID', key: 'id', width: 80 },
   { title: '编码', key: 'code' },
   { title: '描述', key: 'description' },
-  { title: '操作', key: 'actions', sortable: false }
+  { title: '操作', key: 'actions', sortable: false, width: 90 }
 ]
 
 const items = ref([])
@@ -78,7 +81,7 @@ function openCreate() { Object.assign(form, { code: '', description: '' }); dial
 async function save() {
   saving.value = true
   try { await api.post('/permissions', { ...form }); dialog.value = false; load() }
-  catch (e) { alert(e.response?.data?.message || '保存失败') }
+  catch (e) { notifyError(errMsg(e, '保存失败')) }
   finally { saving.value = false }
 }
 
@@ -90,7 +93,9 @@ async function remove(item) {
     danger: true
   })
   if (!ok) return
-  await api.delete(`/permissions/${item.id}`); load()
+  try {
+    await api.delete(`/permissions/${item.id}`); load()
+  } catch (e) { notifyError(errMsg(e, '删除失败')) }
 }
 
 onMounted(load)

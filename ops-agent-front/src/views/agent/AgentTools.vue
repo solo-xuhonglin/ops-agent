@@ -1,28 +1,27 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">Agent 工具</h2>
-      <v-spacer />
+    <div class="page-toolbar">
       <span class="text-body-small text-medium-emphasis">
         共 {{ items.length }} 个工具 · 能力=数据，注册时按启用状态动态下发，改动即时生效
       </span>
+      <v-spacer />
+      <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table
         :headers="headers"
         :items="items"
         :loading="loading"
-        density="compact"
       >
         <template #item.httpMethod="{ item }">
-          <v-chip size="small" :color="methodColor(item.httpMethod)" variant="tonal">
+          <v-chip :color="methodColor(item.httpMethod)" variant="tonal">
             {{ item.httpMethod }}
           </v-chip>
         </template>
 
         <template #item.isWrite="{ item }">
-          <v-chip size="small" :color="item.isWrite ? 'warning' : 'default'" variant="tonal">
+          <v-chip :color="item.isWrite ? 'warning' : 'default'" variant="tonal">
             {{ item.isWrite ? '写' : '只读' }}
           </v-chip>
         </template>
@@ -45,9 +44,11 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
+import { useNotify, errMsg } from '../../composables/useNotify'
 import { listTools, setToolEnabled } from '../../api/agent'
 
 const auth = useAuthStore()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('agent:write'))
 
 const headers = [
@@ -83,7 +84,7 @@ async function toggle(item, enabled) {
     await setToolEnabled(item.id, enabled)
   } catch (e) {
     item.enabled = prev // 失败回滚
-    throw e
+    notifyError(errMsg(e, '更新失败'))
   }
 }
 

@@ -1,22 +1,21 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">用户管理</h2>
-      <v-spacer />
+    <div class="page-toolbar">
       <v-text-field
         v-model="search"
         label="搜索用户名"
         prepend-inner-icon="mdi-magnify"
-        variant="solo-filled"
         density="compact"
         hide-details
-        style="max-width: 260px"
+        clearable
+        class="field-fixed"
         @update:model-value="load"
       />
-      <v-btn v-if="canWrite" color="primary" class="ml-3" prepend-icon="mdi-plus" @click="openCreate">新建用户</v-btn>
+      <v-spacer />
+      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建用户</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -26,27 +25,29 @@
         @update:options="onOptions"
       >
         <template #item.status="{ item }">
-          <v-chip :color="item.status === 'ACTIVE' ? 'success' : 'grey'" size="small">{{ item.status }}</v-chip>
+          <v-chip :color="item.status === 'ACTIVE' ? 'success' : 'grey'">{{ item.status }}</v-chip>
         </template>
         <template #item.roles="{ item }">
-          <v-chip v-for="r in item.roles" :key="r" class="ma-1" size="small" variant="tonal">{{ r }}</v-chip>
+          <v-chip v-for="r in item.roles" :key="r" class="ma-1" variant="tonal">{{ r }}</v-chip>
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" title="编辑" @click="openEdit(item)" />
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
-    <v-dialog v-model="dialog" max-width="520">
-      <v-card rounded="lg">
+    <v-dialog v-model="dialog">
+      <v-card>
         <v-card-title>{{ editId ? '编辑用户' : '新建用户' }}</v-card-title>
         <v-card-text>
           <v-form ref="form">
-            <v-text-field v-model="form.username" label="用户名" variant="outlined" :disabled="!!editId" :rules="[(v)=>!!v||'必填']" />
-            <v-text-field v-if="!editId" v-model="form.password" label="密码" type="password" variant="outlined" :rules="[(v)=>!!v||'必填']" />
-            <v-text-field v-model="form.displayName" label="显示名" variant="outlined" />
-            <v-text-field v-model="form.email" label="邮箱" variant="outlined" />
+            <v-text-field v-model="form.username" label="用户名" :disabled="!!editId" :rules="[(v)=>!!v||'必填']" />
+            <v-text-field v-if="!editId" v-model="form.password" label="密码" type="password" :rules="[(v)=>!!v||'必填']" />
+            <v-text-field v-model="form.displayName" label="显示名" />
+            <v-text-field v-model="form.email" label="邮箱" />
             <v-select
               v-model="form.roleIds"
               :items="roleOptions"
@@ -55,9 +56,8 @@
               label="角色"
               multiple
               chips
-              variant="outlined"
             />
-            <v-select v-model="form.status" :items="['ACTIVE','DISABLED']" label="状态" variant="outlined" />
+            <v-select v-model="form.status" :items="['ACTIVE','DISABLED']" label="状态" />
           </v-form>
         </v-card-text>
         <v-card-actions>
@@ -75,9 +75,11 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
 
 const auth = useAuthStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('user:write'))
 
 const headers = [
@@ -85,9 +87,9 @@ const headers = [
   { title: '用户名', key: 'username' },
   { title: '显示名', key: 'displayName' },
   { title: '邮箱', key: 'email' },
-  { title: '状态', key: 'status' },
+  { title: '状态', key: 'status', width: 110 },
   { title: '角色', key: 'roles' },
-  { title: '操作', key: 'actions', sortable: false }
+  { title: '操作', key: 'actions', sortable: false, width: 100 }
 ]
 
 const items = ref([])
@@ -153,7 +155,7 @@ async function save() {
     dialog.value = false
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '保存失败')
+    notifyError(errMsg(e, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -167,8 +169,12 @@ async function remove(item) {
     danger: true
   })
   if (!ok) return
-  await api.delete(`/users/${item.id}`)
-  load()
+  try {
+    await api.delete(`/users/${item.id}`)
+    load()
+  } catch (e) {
+    notifyError(errMsg(e, '删除失败'))
+  }
 }
 
 onMounted(async () => { await loadRoles(); load() })

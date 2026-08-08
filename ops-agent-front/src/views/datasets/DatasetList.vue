@@ -1,12 +1,11 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">数据集管理</h2>
+    <div class="page-toolbar">
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -16,7 +15,7 @@
         @update:options="onOptions"
       >
         <template #item.regions="{ item }">
-          <v-chip v-for="r in (item.regions || [])" :key="r" class="ma-1" size="small" variant="tonal">{{ r }}</v-chip>
+          <v-chip v-for="r in (item.regions || [])" :key="r" class="ma-1" variant="tonal">{{ r }}</v-chip>
           <span v-if="!item.regions || !item.regions.length" class="text-medium-emphasis">—</span>
         </template>
         <template #item.dateRange="{ item }">
@@ -24,28 +23,30 @@
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.status="{ item }">
-          <v-chip :color="statusColor(item.status)" size="small">{{ statusText(item.status) }}</v-chip>
+          <v-chip :color="statusColor(item.status)">{{ statusText(item.status) }}</v-chip>
         </template>
         <template #item.rowCount="{ item }">
           <span v-if="item.rowCount != null">{{ item.rowCount.toLocaleString() }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary" title="让 Agent 分析" @click="analyze(item)" />
-          <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary" title="查看图表" @click="openChart(item)" />
-          <v-btn v-if="canTrain" icon="mdi-rocket-launch" size="small" variant="text" color="secondary" title="训练" @click="openTrain(item)" />
-          <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary" title="让 Agent 分析" @click="analyze(item)" />
+            <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary" title="查看图表" @click="openChart(item)" />
+            <v-btn v-if="canTrain" icon="mdi-rocket-launch" size="small" variant="text" color="secondary" title="训练" @click="openTrain(item)" />
+            <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" title="编辑" @click="openEdit(item)" />
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
     <v-dialog v-model="dialog" max-width="620">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title>{{ editId ? '编辑数据集' : '新建数据集' }}</v-card-title>
         <v-card-text>
-          <v-text-field v-model="form.name" label="名称" variant="outlined" :rules="[(v)=>!!v||'必填']" />
-          <v-textarea v-model="form.description" label="描述" variant="outlined" rows="2" />
+          <v-text-field v-model="form.name" label="名称" :rules="[(v)=>!!v||'必填']" />
+          <v-textarea v-model="form.description" label="描述" rows="2" />
           <v-select
             v-model="form.regions"
             :items="cityOptions"
@@ -53,18 +54,17 @@
             multiple
             chips
             closable-chips
-            variant="outlined"
           />
           <v-row>
             <v-col cols="6">
-              <v-date-input v-model="form.dateStart" label="起始日期" variant="outlined" prepend-icon="" :max="form.dateEnd || undefined" />
+              <v-date-input v-model="form.dateStart" label="起始日期" prepend-icon="" :max="form.dateEnd || undefined" />
             </v-col>
             <v-col cols="6">
-              <v-date-input v-model="form.dateEnd" label="结束日期" variant="outlined" prepend-icon="" :min="form.dateStart || undefined" />
+              <v-date-input v-model="form.dateEnd" label="结束日期" prepend-icon="" :min="form.dateStart || undefined" />
             </v-col>
           </v-row>
           <v-alert v-if="form.regions.length && form.dateStart && form.dateEnd" type="info" variant="tonal" density="compact" class="mt-2">
-            保存后将自动从免费天气接口采集 {{ form.regions.join('、') }} 在 {{ fmt(form.dateStart) }} ~ {{ fmt(form.dateEnd) }} 的每日天气。
+            保存后将自动从免费天气接口采集 {{ form.regions.join('、') }} 在 {{ fmtDate(form.dateStart) }} ~ {{ fmtDate(form.dateEnd) }} 的每日天气。
           </v-alert>
         </v-card-text>
         <v-card-actions>
@@ -76,11 +76,11 @@
     </v-dialog>
 
     <v-dialog v-model="chartDialog" max-width="920">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title class="d-flex align-center">
           天气图表
           <v-spacer />
-          <v-chip size="small" variant="tonal" class="mr-2">{{ chartItem?.name }}</v-chip>
+          <v-chip variant="tonal" class="mr-2">{{ chartItem?.name }}</v-chip>
         </v-card-title>
         <v-card-text>
           <div class="d-flex align-center flex-wrap mb-3">
@@ -90,14 +90,13 @@
               item-title="label"
               item-value="value"
               label="指标"
-              variant="outlined"
               density="compact"
               hide-details
-              style="max-width: 220px"
+              class="field-fixed"
             />
-            <v-progress-linear v-if="chartLoading" indeterminate color="primary" class="ml-4" style="max-width: 200px" />
+            <v-progress-linear v-if="chartLoading" indeterminate color="primary" class="ml-4 field-fixed" />
           </div>
-          <div ref="chartEl" style="width: 100%; height: 420px"></div>
+          <div ref="chartEl" class="chart-box"></div>
           <div v-if="!chartLoading && !hasData" class="text-medium-emphasis text-center py-8">暂无天气数据</div>
         </v-card-text>
         <v-card-actions>
@@ -108,28 +107,28 @@
     </v-dialog>
 
     <v-dialog v-model="trainDialog" max-width="620">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title>发起训练</v-card-title>
         <v-card-text>
           <v-alert v-if="trainItem" type="info" variant="tonal" density="compact" class="mb-3">
             数据集：{{ trainItem.name }}（数据条数 {{ trainItem.rowCount != null ? trainItem.rowCount.toLocaleString() : '—' }}）
           </v-alert>
-          <v-text-field v-model="trainForm.name" label="模型名称" variant="outlined" :rules="[(v)=>!!v||'必填']" />
+          <v-text-field v-model="trainForm.name" label="模型名称" :rules="[(v)=>!!v||'必填']" />
           <v-row>
             <v-col cols="6">
-              <v-text-field v-model="trainForm.version" label="版本号" variant="outlined" />
+              <v-text-field v-model="trainForm.version" label="版本号" />
             </v-col>
             <v-col cols="6">
-              <v-select v-model="trainForm.algorithm" :items="['LSTM']" label="算法" variant="outlined" />
+              <v-select v-model="trainForm.algorithm" :items="['LSTM']" label="算法" />
             </v-col>
           </v-row>
           <div class="text-body-large mb-2">超参数</div>
           <v-row>
-            <v-col cols="4"><v-text-field v-model.number="trainForm.seqLen" label="seqLen" type="number" variant="outlined" density="compact" /></v-col>
-            <v-col cols="4"><v-text-field v-model.number="trainForm.hiddenSize" label="hiddenSize" type="number" variant="outlined" density="compact" /></v-col>
-            <v-col cols="4"><v-text-field v-model.number="trainForm.epochs" label="epochs" type="number" variant="outlined" density="compact" /></v-col>
-            <v-col cols="6"><v-text-field v-model.number="trainForm.batchSize" label="batchSize" type="number" variant="outlined" density="compact" /></v-col>
-            <v-col cols="6"><v-text-field v-model.number="trainForm.lr" label="lr" type="number" step="0.0001" variant="outlined" density="compact" /></v-col>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.seqLen" label="seqLen" type="number" density="compact" /></v-col>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.hiddenSize" label="hiddenSize" type="number" density="compact" /></v-col>
+            <v-col cols="4"><v-text-field v-model.number="trainForm.epochs" label="epochs" type="number" density="compact" /></v-col>
+            <v-col cols="6"><v-text-field v-model.number="trainForm.batchSize" label="batchSize" type="number" density="compact" /></v-col>
+            <v-col cols="6"><v-text-field v-model.number="trainForm.lr" label="lr" type="number" step="0.0001" density="compact" /></v-col>
           </v-row>
         </v-card-text>
         <v-card-actions>
@@ -150,6 +149,8 @@ import { useAuthStore } from '../../stores/auth'
 import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
+import { fmtDate } from '../../utils/format'
 
 const CITY_OPTIONS = [
   '北京', '上海', '广州', '深圳', '成都', '杭州', '武汉', '西安', '南京', '重庆',
@@ -159,6 +160,7 @@ const CITY_OPTIONS = [
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('dataset:write'))
 const canTrain = computed(() => auth.hasPerm('training:write'))
@@ -175,7 +177,7 @@ const headers = [
   { title: '日期范围', key: 'dateRange' },
   { title: '数据条数', key: 'rowCount', width: 110 },
   { title: '状态', key: 'status', width: 110 },
-  { title: '操作', key: 'actions', sortable: false, width: 200 }
+  { title: '操作', key: 'actions', sortable: false, width: 190 }
 ]
 
 const cityOptions = CITY_OPTIONS
@@ -229,7 +231,7 @@ async function submitTrain() {
     })
     if (go) router.push('/training/jobs')
   } catch (e) {
-    alert(e.response?.data?.message || '提交训练失败')
+    notifyError(errMsg(e, '提交训练失败'))
   } finally {
     training.value = false
   }
@@ -244,15 +246,6 @@ async function load() {
   } finally { loading.value = false }
 }
 function onOptions(o) { page.value = o.page - 1; pageSize.value = o.itemsPerPage; load() }
-
-function fmt(d) {
-  if (!d) return ''
-  const dt = d instanceof Date ? d : new Date(d)
-  const y = dt.getFullYear()
-  const m = String(dt.getMonth() + 1).padStart(2, '0')
-  const day = String(dt.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 function reset() {
   editId.value = null
@@ -276,8 +269,8 @@ async function save() {
       name: form.name,
       description: form.description,
       regions: form.regions,
-      dateStart: form.dateStart ? fmt(form.dateStart) : null,
-      dateEnd: form.dateEnd ? fmt(form.dateEnd) : null
+      dateStart: form.dateStart ? fmtDate(form.dateStart) : null,
+      dateEnd: form.dateEnd ? fmtDate(form.dateEnd) : null
     }
     if (editId.value) {
       await api.put(`/datasets/${editId.value}`, { ...payload, status: form.status })
@@ -287,7 +280,7 @@ async function save() {
     dialog.value = false
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '保存失败')
+    notifyError(errMsg(e, '保存失败'))
   } finally { saving.value = false }
 }
 

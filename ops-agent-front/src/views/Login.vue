@@ -1,5 +1,5 @@
 <template>
-  <v-main class="login-bg d-flex align-center justify-center" style="min-height: 100vh">
+  <v-main class="login-bg d-flex align-center justify-center">
     <v-card class="login-card pa-8" width="420" elevation="12" rounded="xl">
       <div class="text-center mb-6">
         <v-avatar color="primary" variant="tonal" size="64" class="mb-4">
@@ -22,7 +22,7 @@
           prepend-inner-icon="mdi-lock"
           :rules="[(v) => !!v || '请输入密码']"
         />
-        <v-alert v-if="error" type="error" variant="tonal" class="mb-4" rounded="lg">{{ error }}</v-alert>
+        <v-alert v-if="error" type="error" variant="tonal" class="mb-4">{{ error }}</v-alert>
         <v-btn type="submit" color="primary" block size="large" :loading="loading">登录</v-btn>
       </v-form>
     </v-card>
@@ -33,7 +33,6 @@
 import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
-import api from '../plugins/axios'
 
 const username = ref('')
 const password = ref('')
@@ -60,7 +59,13 @@ async function onSubmit() {
 
 <style scoped>
 .login-bg {
-  background: linear-gradient(135deg, #5B6EF0 0%, #8B5CF6 50%, #6B7280 100%);
+  min-height: 100vh;
+  background: linear-gradient(
+    135deg,
+    rgb(var(--v-theme-primary)) 0%,
+    rgb(var(--v-theme-accent)) 50%,
+    rgb(var(--v-theme-secondary)) 100%
+  );
 }
 .login-card {
   backdrop-filter: blur(4px);

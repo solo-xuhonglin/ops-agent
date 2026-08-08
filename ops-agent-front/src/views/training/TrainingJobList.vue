@@ -1,15 +1,14 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">训练任务</h2>
-      <v-spacer />
-      <v-chip v-if="hasActive" color="info" size="small" class="mr-2">
+    <div class="page-toolbar">
+      <v-chip v-if="hasActive" color="info">
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
       </v-chip>
+      <v-spacer />
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -19,34 +18,36 @@
         @update:options="onOptions"
       >
         <template #item.status="{ item }">
-          <v-chip :color="statusColor(item.status)" size="small">{{ statusText(item.status) }}</v-chip>
+          <v-chip :color="statusColor(item.status)">{{ statusText(item.status) }}</v-chip>
         </template>
         <template #item.startedAt="{ item }">
-          {{ fmt(item.startedAt) }}
+          {{ fmtDateTime(item.startedAt) }}
         </template>
         <template #item.finishedAt="{ item }">
-          {{ fmt(item.finishedAt) }}
+          {{ fmtDateTime(item.finishedAt) }}
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
-                 title="让 Agent 分析" @click="analyze(item)" />
-          <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
-                 title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
-                 title="删除" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
+                   title="让 Agent 分析" @click="analyze(item)" />
+            <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
+                   title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
+                   title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
     <v-dialog v-model="logDialog" max-width="900">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title class="d-flex align-center">
           训练日志
           <v-spacer />
-          <v-chip size="small" variant="tonal">{{ logItem?.id }}</v-chip>
+          <v-chip variant="tonal">{{ logItem?.id }}</v-chip>
         </v-card-title>
         <v-card-text style="height: 60vh">
-          <iframe v-if="logUrl" :src="logUrl" style="width: 100%; height: 100%; border: 0; background: #f5f5f5" />
+          <iframe v-if="logUrl" :src="logUrl" class="log-frame" />
           <div v-else class="text-medium-emphasis text-center py-8">日志生成中，稍后重试</div>
         </v-card-text>
         <v-card-actions>
@@ -64,10 +65,13 @@ import { useAuthStore } from '../../stores/auth'
 import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
+import { fmtDateTime } from '../../utils/format'
 
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('training:write'))
 const canAgent = computed(() => auth.hasPerm('agent:read'))
 
@@ -80,9 +84,9 @@ const headers = [
   { title: '数据集', key: 'datasetId', width: 110 },
   { title: '模型版本', key: 'modelVersionId', width: 110 },
   { title: '状态', key: 'status', width: 120 },
-  { title: '开始时间', key: 'startedAt', width: 170 },
-  { title: '结束时间', key: 'finishedAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 160 }
+  { title: '开始时间', key: 'startedAt', width: 150 },
+  { title: '结束时间', key: 'finishedAt', width: 150 },
+  { title: '操作', key: 'actions', sortable: false, width: 130 }
 ]
 
 const items = ref([])
@@ -109,10 +113,6 @@ function statusText(s) {
 function statusColor(s) {
   return { PENDING: 'warning', RUNNING: 'info', SUCCEEDED: 'success', FAILED: 'error' }[s] || 'grey'
 }
-function fmt(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleString()
-}
 
 // 每 5s 轮询：仅在有活跃任务时拉取，避免无谓请求
 let timer = null
@@ -131,7 +131,7 @@ async function openLog(item) {
     const { data } = await api.get(`/training/jobs/${item.id}/logs`)
     logUrl.value = data.data.url
   } catch (e) {
-    alert(e.response?.data?.message || '获取日志失败')
+    notifyError(errMsg(e, '获取日志失败'))
   }
 }
 
@@ -147,7 +147,7 @@ async function remove(item) {
     await api.delete(`/training/jobs/${item.id}`)
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '删除失败')
+    notifyError(errMsg(e, '删除失败'))
   }
 }
 

@@ -69,15 +69,15 @@
                   {{ taskText(store.currentTask.status) }}
                 </v-chip>
                 <v-spacer />
-                <span class="text-caption text-medium-emphasis">{{ fmt(store.currentTask.createdAt) }}</span>
+                <span class="text-caption text-medium-emphasis">{{ fmtDateTime(store.currentTask.createdAt) }}</span>
               </div>
               <div v-if="store.taskError" class="text-body-small text-error mb-3">{{ store.taskError }}</div>
-              <div v-for="(e, i) in store.events" :key="i" class="d-flex mb-3">
+              <div v-for="(e, i) in store.events" :key="i" class="d-flex align-start mb-3">
                 <v-icon :icon="eventIcon(e.eventType)" size="small"
-                        :color="eventColor(e.eventType)" class="mt-0.5 mr-2" />
+                        :color="eventColor(e.eventType)" class="mr-2" />
                 <div>
                   <div class="text-body-small" :class="{ 'text-error': e.eventType === 'error' }">{{ e.content }}</div>
-                  <div class="text-caption text-medium-emphasis">{{ fmt(e.createdAt) }}</div>
+                  <div class="text-caption text-medium-emphasis">{{ fmtDateTime(e.createdAt) }}</div>
                 </div>
               </div>
               <v-card v-if="store.currentTask.conclusion" class="conclusion-card mt-2"
@@ -91,7 +91,7 @@
 
           <!-- 底部输入框：自然语言问询 -->
           <div class="pa-3">
-            <v-text-field v-model="input" density="compact" variant="outlined" hide-details
+            <v-text-field v-model="input" density="compact" hide-details
                           placeholder="询问系统状态，如：最近有哪些异常？"
                           :disabled="sending"
                           :append-inner-icon="sending ? '' : 'mdi-send'"
@@ -112,62 +112,54 @@
           <v-window v-model="historyTab" class="flex-grow-1 overflow-y-auto">
             <!-- 建议列表 -->
             <v-window-item value="suggestions">
-              <v-list density="comfortable" class="pa-2">
-                <v-list-item v-for="s in store.suggestions" :key="s.id" class="mb-1 rounded-lg"
-                             :class="s.status === 'PENDING' ? 'pending-item' : ''">
-                  <template #prepend>
+              <div class="pa-2">
+                <div v-for="s in store.suggestions" :key="s.id"
+                     class="history-item mb-1" :class="{ 'history-item--pending': s.status === 'PENDING' }">
+                  <div class="history-item__head">
                     <v-avatar :color="priorityColor(s.priority)" size="28" variant="tonal">
                       <v-icon size="16" :color="priorityColor(s.priority)">{{ actionIcon(s.actionType) }}</v-icon>
                     </v-avatar>
-                  </template>
-                  <div class="d-flex align-center">
-                    <span class="text-body-small font-weight-bold">{{ actionText(s.actionType) }}</span>
-                    <v-chip size="x-small" :color="sugColor(s.status)" class="ml-2">{{ sugText(s.status) }}</v-chip>
+                    <span class="history-item__title">{{ actionText(s.actionType) }}</span>
+                    <v-chip size="x-small" :color="sugColor(s.status)">{{ sugText(s.status) }}</v-chip>
+                    <span class="history-item__time">{{ fmtDateTime(s.createdAt) }}</span>
                   </div>
-                  <div class="text-caption text-medium-emphasis">{{ targetText(s) }}</div>
-                  <div v-if="s.reason" class="text-body-small text-medium-emphasis mt-1">{{ s.reason }}</div>
-                  <template #append>
-                    <div class="d-flex flex-column align-end">
-                      <span class="text-caption text-medium-emphasis">{{ fmt(s.createdAt) }}</span>
-                      <div v-if="s.status === 'PENDING' && canWrite" class="mt-1">
-                        <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
-                        <v-btn size="x-small" variant="text" @click="reject(s)">忽略</v-btn>
-                      </div>
-                      <span v-else-if="s.status === 'EXECUTED' && s.result" class="text-caption text-success mt-1">
-                        {{ s.result.slice(0, 40) }}
-                      </span>
-                    </div>
-                  </template>
-                </v-list-item>
-                <div v-if="!store.suggestions.length" class="text-center text-medium-emphasis py-8">
-                  暂无处置建议
+                  <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
+                  <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis">{{ s.reason }}</div>
+                  <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
+                    <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
+                    <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
+                  </div>
+                  <div v-else-if="s.status === 'EXECUTED' && s.result"
+                       class="history-item__body text-caption text-success">{{ s.result.slice(0, 80) }}</div>
                 </div>
-              </v-list>
+                <div v-if="!store.suggestions.length" class="empty-hint">
+                  <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
+                  <div class="text-body-medium text-medium-emphasis">暂无处置建议</div>
+                </div>
+              </div>
             </v-window-item>
             <!-- 任务列表 -->
             <v-window-item value="tasks">
-              <v-list density="comfortable" class="pa-2">
-                <v-list-item v-for="t in store.tasks" :key="t.taskId" class="mb-1 rounded-lg"
-                             :active="store.currentTask?.taskId === t.taskId" color="primary"
-                             @click="store.selectTask(t.taskId)">
-                  <template #prepend>
+              <div class="pa-2">
+                <div v-for="t in store.tasks" :key="t.taskId"
+                     class="history-item history-item--clickable mb-1"
+                     :class="{ 'history-item--active': store.currentTask?.taskId === t.taskId }"
+                     @click="store.selectTask(t.taskId)">
+                  <div class="history-item__head">
                     <v-avatar color="primary" size="28" variant="tonal">
                       <v-icon size="16">mdi-robot</v-icon>
                     </v-avatar>
-                  </template>
-                  <div class="d-flex align-center">
-                    <span class="text-body-small font-weight-bold">{{ taskTypeText(t.taskType) }}</span>
-                    <v-chip size="x-small" :color="taskColor(t.status)" class="ml-2">{{ taskText(t.status) }}</v-chip>
+                    <span class="history-item__title">{{ taskTypeText(t.taskType) }}</span>
+                    <v-chip size="x-small" :color="taskColor(t.status)">{{ taskText(t.status) }}</v-chip>
+                    <span class="history-item__time">{{ fmtDateTime(t.createdAt) }}</span>
                   </div>
-                  <div class="text-caption text-medium-emphasis text-truncate">{{ t.query || targetText(t) }}</div>
-                  <template #append>
-                    <span class="text-caption text-medium-emphasis">{{ fmt(t.createdAt) }}</span>
-                  </template>
-                </v-list-item>
-                <div v-if="!store.tasks.length" class="text-center text-medium-emphasis py-8">
-                  暂无历史任务
+                  <div class="history-item__body text-caption text-medium-emphasis">{{ t.query || targetText(t) }}</div>
                 </div>
-              </v-list>
+                <div v-if="!store.tasks.length" class="empty-hint">
+                  <v-icon icon="mdi-history" size="40" class="mb-2" />
+                  <div class="text-body-medium text-medium-emphasis">暂无历史任务</div>
+                </div>
+              </div>
             </v-window-item>
           </v-window>
         </div>
@@ -181,12 +173,15 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useAgentStore } from '../stores/agent'
 import { useConfirm } from '../composables/useConfirm'
+import { useNotify, errMsg } from '../composables/useNotify'
+import { fmtDateTime, shortId } from '../utils/format'
 
 const auth = useAuthStore()
 const store = useAgentStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 
-const visible = computed(() => auth.isLoggedIn && auth.hasPerm('agent:read'))
+const visible = computed(() => auth.isLoggedIn)
 const canWrite = computed(() => auth.hasPerm('agent:write'))
 
 const input = ref('')
@@ -216,7 +211,7 @@ async function send() {
   try {
     await store.dispatchQuestion(q)
   } catch (e) {
-    alert(e.response?.data?.message || '任务派发失败')
+    notifyError(errMsg(e, '任务派发失败'))
   } finally {
     sending.value = false
   }
@@ -233,7 +228,7 @@ async function approve(s) {
   try {
     await store.approve(s.id)
   } catch (e) {
-    alert(e.response?.data?.message || '确认失败')
+    notifyError(errMsg(e, '确认失败'))
   }
 }
 
@@ -248,7 +243,7 @@ async function reject(s) {
   try {
     await store.reject(s.id)
   } catch (e) {
-    alert(e.response?.data?.message || '操作失败')
+    notifyError(errMsg(e, '操作失败'))
   }
 }
 
@@ -302,11 +297,6 @@ function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
 function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
 function eventIcon(t) { return { progress: 'mdi-progress-clock', tool_call: 'mdi-wrench', error: 'mdi-alert-circle' }[t] || 'mdi-circle-small' }
 function eventColor(t) { return { progress: 'primary', tool_call: 'info', error: 'error' }[t] || 'grey' }
-function shortId(id) { return id ? id.slice(0, 8) : '' }
-function fmt(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleString()
-}
 </script>
 
 <style scoped>
@@ -322,23 +312,11 @@ function fmt(d) {
 .suggestion-card {
   border-left: 3px solid rgb(var(--v-theme-warning));
 }
-.pending-item {
-  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 6%, transparent);
-}
 .conclusion-card {
   border-left: 3px solid rgb(var(--v-theme-primary));
 }
 .conclusion-text {
   white-space: pre-wrap;
   line-height: 1.6;
-}
-.empty-hint {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  height: 100%;
-  color: rgb(var(--v-theme-on-surface-variant));
 }
 </style>

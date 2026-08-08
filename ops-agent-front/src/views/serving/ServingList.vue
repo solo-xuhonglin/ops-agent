@@ -1,16 +1,15 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">模型服务</h2>
-      <v-spacer />
-      <v-chip v-if="hasActive" color="info" size="small" class="mr-2">
+    <div class="page-toolbar">
+      <v-chip v-if="hasActive" color="info">
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
       </v-chip>
-      <v-btn v-if="canWrite" variant="tonal" color="primary" prepend-icon="mdi-rocket-launch" @click="openDeploy">部署模型</v-btn>
+      <v-spacer />
+      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-rocket-launch" @click="openDeploy">部署模型</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -20,31 +19,33 @@
         @update:options="onOptions"
       >
         <template #item.status="{ item }">
-          <v-chip :color="statusColor(item.status)" size="small">{{ statusText(item.status) }}</v-chip>
+          <v-chip :color="statusColor(item.status)">{{ statusText(item.status) }}</v-chip>
         </template>
         <template #item.url="{ item }">
           <span v-if="item.url" class="text-body-small text-medium-emphasis">{{ item.url }}</span>
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.createdAt="{ item }">
-          {{ fmt(item.createdAt) }}
+          {{ fmtDateTime(item.createdAt) }}
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
-                 title="让 Agent 分析" @click="analyze(item)" />
-          <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary"
-                 title="测试推理" :disabled="item.status !== 'DEPLOYED'" @click="openTest(item)" />
-          <v-btn v-if="canWrite" icon="mdi-stop-circle" size="small" variant="text" color="warning"
-                 title="下线" :disabled="['STOPPED', 'FAILED', 'STOPPING'].includes(item.status)" @click="undeploy(item)" />
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
-                 title="删除" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
+                   title="让 Agent 分析" @click="analyze(item)" />
+            <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary"
+                   title="测试推理" :disabled="item.status !== 'DEPLOYED'" @click="openTest(item)" />
+            <v-btn v-if="canWrite" icon="mdi-stop-circle" size="small" variant="text" color="warning"
+                   title="下线" :disabled="['STOPPED', 'FAILED', 'STOPPING'].includes(item.status)" @click="undeploy(item)" />
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
+                   title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
     <!-- 部署：选择 READY 模型 -->
     <v-dialog v-model="deployDialog" max-width="480">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title>部署模型</v-card-title>
         <v-card-text>
           <v-select
@@ -54,7 +55,6 @@
             item-value="value"
             label="模型版本（仅 READY）"
             density="compact"
-            variant="outlined"
             :loading="modelsLoading"
           />
         </v-card-text>
@@ -68,7 +68,7 @@
 
     <!-- 测试推理 -->
     <v-dialog v-model="testDialog" max-width="640">
-      <v-card rounded="lg">
+      <v-card>
         <v-card-title>测试推理 · endpoint #{{ testItem?.id }}</v-card-title>
         <v-card-text>
           <v-textarea
@@ -77,14 +77,12 @@
             hint="例如: 20.1,20.5,21.0,20.8,19.9,20.3"
             rows="3"
             density="compact"
-            variant="outlined"
           />
           <v-text-field
             v-model="testHorizon"
             label="预测步数 horizon（1-168）"
             type="number"
             density="compact"
-            variant="outlined"
             class="mt-2"
           />
           <v-alert v-if="testResult" variant="tonal" color="primary" class="mt-3">
@@ -109,10 +107,13 @@ import { useAuthStore } from '../../stores/auth'
 import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
+import { fmtDateTime } from '../../utils/format'
 
 const auth = useAuthStore()
 const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('serving:write'))
 const canAgent = computed(() => auth.hasPerm('agent:read'))
 
@@ -125,8 +126,8 @@ const headers = [
   { title: '模型版本', key: 'modelVersionId', width: 110 },
   { title: '状态', key: 'status', width: 120 },
   { title: '访问地址', key: 'url' },
-  { title: '创建时间', key: 'createdAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 180 }
+  { title: '创建时间', key: 'createdAt', width: 150 },
+  { title: '操作', key: 'actions', sortable: false, width: 160 }
 ]
 
 const items = ref([])
@@ -153,10 +154,6 @@ function statusText(s) {
 function statusColor(s) {
   return { CREATING: 'info', DEPLOYED: 'success', UNHEALTHY: 'warning', STOPPING: 'info', STOPPED: 'grey', FAILED: 'error' }[s] || 'grey'
 }
-function fmt(d) {
-  if (!d) return '—'
-  return new Date(d).toLocaleString()
-}
 
 // 每 5s 轮询：仅在有活跃状态（部署中/下线中）时拉取
 let timer = null
@@ -181,7 +178,7 @@ async function openDeploy() {
       .filter(m => m.status === 'READY')
       .map(m => ({ label: `${m.name} (${m.version}) · #${m.id}`, value: m.id }))
   } catch (e) {
-    alert(e.response?.data?.message || '加载模型列表失败')
+    notifyError(errMsg(e, '加载模型列表失败'))
   } finally { modelsLoading.value = false }
 }
 
@@ -192,7 +189,7 @@ async function doDeploy() {
     deployDialog.value = false
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '部署失败')
+    notifyError(errMsg(e, '部署失败'))
   } finally { deploying.value = false }
 }
 
@@ -207,7 +204,7 @@ async function undeploy(item) {
     await api.post(`/serving/endpoints/${item.id}/undeploy`)
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '下线失败')
+    notifyError(errMsg(e, '下线失败'))
   }
 }
 
@@ -223,7 +220,7 @@ async function remove(item) {
     await api.delete(`/serving/endpoints/${item.id}`)
     load()
   } catch (e) {
-    alert(e.response?.data?.message || '删除失败')
+    notifyError(errMsg(e, '删除失败'))
   }
 }
 
@@ -259,7 +256,7 @@ async function doTest() {
     const { data } = await api.post(`/serving-proxy/${testItem.value.id}/predict`, { values, horizon })
     testResult.value = data.data.predictions
   } catch (e) {
-    testError.value = e.response?.data?.message || '推理调用失败'
+    testError.value = errMsg(e, '推理调用失败')
   } finally { testing.value = false }
 }
 

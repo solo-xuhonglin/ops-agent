@@ -7,7 +7,7 @@
 
     <v-row>
       <v-col cols="12" sm="6" md="3" v-for="s in stats" :key="s.title">
-        <v-card class="stat-card" rounded="lg">
+        <v-card class="hover-lift">
           <v-card-text>
             <div class="d-flex align-center justify-space-between">
               <div>
@@ -23,15 +23,14 @@
       </v-col>
     </v-row>
 
-    <v-card rounded="lg" class="mt-6">
+    <v-card class="mt-6">
       <v-card-title class="font-weight-bold pt-4 px-4">快速入口</v-card-title>
       <v-card-text class="pa-4">
         <v-row density="compact">
           <v-col cols="6" sm="4" md="3" v-for="m in menus" :key="m.to">
             <v-card
-              class="menu-card text-center pa-4"
+              class="menu-card hover-lift hover-tint text-center pa-4"
               variant="outlined"
-              rounded="lg"
               @click="router.push(m.to)"
             >
               <v-avatar color="primary" variant="tonal" size="40" class="mb-2">
@@ -94,19 +93,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.stat-card {
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
-}
 .menu-card {
   cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-.menu-card:hover {
-  transform: translateY(-2px);
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
 }
 </style>

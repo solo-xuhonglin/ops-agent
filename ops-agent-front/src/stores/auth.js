@@ -3,12 +3,14 @@ import api from '../plugins/axios'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
+    // token 同步到 localStorage，并保留在 state 里以保证 isLoggedIn 响应式
+    token: localStorage.getItem('token') || null,
     user: null,
     roles: [],
     permissions: []
   }),
   getters: {
-    isLoggedIn: (state) => !!localStorage.getItem('token'),
+    isLoggedIn: (state) => !!state.token,
     hasPerm: (state) => (code) => state.permissions.includes(code)
   },
   actions: {
@@ -17,6 +19,7 @@ export const useAuthStore = defineStore('auth', {
       const res = data.data
       localStorage.setItem('token', res.token)
       localStorage.setItem('refreshToken', res.refreshToken)
+      this.token = res.token
       this.user = {
         id: res.userId,
         username: res.username,
@@ -41,6 +44,7 @@ export const useAuthStore = defineStore('auth', {
     logout() {
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
+      this.token = null
       this.user = null
       this.roles = []
       this.permissions = []

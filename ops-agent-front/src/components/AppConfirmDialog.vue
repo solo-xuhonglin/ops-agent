@@ -6,13 +6,13 @@
           <v-icon :color="state.iconColor" size="34">{{ state.icon }}</v-icon>
         </v-avatar>
         <div class="text-title-large font-weight-bold">{{ state.title }}</div>
-        <div v-if="state.message" class="text-body-medium text-medium-emphasis mt-2" style="white-space: pre-line; line-height: 1.6">
+        <div v-if="state.message" class="text-body-medium text-medium-emphasis mt-2 confirm-message">
           {{ state.message }}
         </div>
       </div>
       <v-card-actions class="pa-6 pt-3">
         <v-spacer />
-        <v-btn variant="text" :color="state.danger ? 'medium-emphasis' : 'secondary'" min-width="88" @click="resolveDialog(false)">
+        <v-btn variant="text" color="secondary" min-width="88" @click="resolveDialog(false)">
           {{ state.cancelText }}
         </v-btn>
         <v-btn :color="state.color" variant="flat" min-width="88" :loading="state.loading" @click="resolveDialog(true)">
@@ -34,5 +34,10 @@ const { state, resolveDialog } = useConfirm()
 .confirm-card {
   border: 1px solid rgba(0, 0, 0, 0.08);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12) !important;
+}
+.confirm-message {
+  white-space: pre-line;
+  line-height: 1.6;
+  word-break: break-word;
 }
 </style>

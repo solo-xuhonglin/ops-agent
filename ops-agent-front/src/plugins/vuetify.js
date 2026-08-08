@@ -3,6 +3,7 @@ import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
 import '@mdi/font/css/materialdesignicons.css'
 import { VDateInput } from 'vuetify/components/VDateInput'
+import { zhHans } from 'vuetify/locale'
 
 export default createVuetify({
   components: {
@@ -21,6 +22,11 @@ export default createVuetify({
       xl: 1920,
       xxl: 2560
     }
+  },
+  locale: {
+    locale: 'zhHans',
+    fallback: 'en',
+    messages: { zhHans }
   },
   theme: {
     defaultTheme: 'light',
@@ -42,6 +48,8 @@ export default createVuetify({
       }
     }
   },
+  // 全局组件默认值：所有表单/卡片/按钮/弹窗/表格的统一外观在这里收口，
+  // 业务组件里不要再重复写 variant / rounded / density
   defaults: {
     VCard: {
       rounded: 'lg',
@@ -58,6 +66,30 @@ export default createVuetify({
     VSelect: {
       variant: 'outlined',
       density: 'comfortable'
+    },
+    VTextarea: {
+      variant: 'outlined',
+      density: 'comfortable'
+    },
+    VDateInput: {
+      variant: 'outlined',
+      density: 'comfortable'
+    },
+    VAutocomplete: {
+      variant: 'outlined',
+      density: 'comfortable'
+    },
+    VDialog: {
+      maxWidth: 560
+    },
+    VDataTable: {
+      density: 'comfortable'
+    },
+    VDataTableServer: {
+      density: 'comfortable'
+    },
+    VChip: {
+      size: 'small'
     }
   }
 })

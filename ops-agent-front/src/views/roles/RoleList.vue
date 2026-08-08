@@ -1,12 +1,11 @@
 <template>
   <div>
-    <div class="d-flex align-center mb-4">
-      <h2 class="text-title-large list-title">角色管理</h2>
+    <div class="page-toolbar">
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建角色</v-btn>
     </div>
 
-    <v-card rounded="lg" class="data-card" elevation="0">
+    <v-card class="data-card" elevation="0">
       <v-data-table-server
         :headers="headers"
         :items="items"
@@ -16,22 +15,24 @@
         @update:options="onOptions"
       >
         <template #item.permissions="{ item }">
-          <v-chip v-for="p in item.permissions.slice(0, 5)" :key="p.id" class="ma-1" size="small" variant="tonal">{{ p.code }}</v-chip>
-          <v-chip v-if="item.permissions.length > 5" class="ma-1" size="small" variant="text">+{{ item.permissions.length - 5 }}…</v-chip>
+          <v-chip v-for="p in item.permissions.slice(0, 5)" :key="p.id" class="ma-1" variant="tonal">{{ p.code }}</v-chip>
+          <v-chip v-if="item.permissions.length > 5" class="ma-1" variant="text">+{{ item.permissions.length - 5 }}…</v-chip>
         </template>
         <template #item.actions="{ item }">
-          <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
-          <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" @click="remove(item)" />
+          <div class="row-actions">
+            <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" title="编辑" @click="openEdit(item)" />
+            <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error" title="删除" @click="remove(item)" />
+          </div>
         </template>
       </v-data-table-server>
     </v-card>
 
-    <v-dialog v-model="dialog" max-width="560">
-      <v-card rounded="lg">
+    <v-dialog v-model="dialog">
+      <v-card>
         <v-card-title>{{ editId ? '编辑角色' : '新建角色' }}</v-card-title>
         <v-card-text>
-          <v-text-field v-model="form.name" label="角色名" variant="outlined" :disabled="!!editId" :rules="[(v)=>!!v||'必填']" />
-          <v-text-field v-model="form.description" label="描述" variant="outlined" />
+          <v-text-field v-model="form.name" label="角色名" :disabled="!!editId" :rules="[(v)=>!!v||'必填']" />
+          <v-text-field v-model="form.description" label="描述" />
           <v-select
             v-model="form.permissionIds"
             :items="permOptions"
@@ -40,7 +41,6 @@
             label="权限"
             multiple
             chips
-            variant="outlined"
           />
         </v-card-text>
         <v-card-actions>
@@ -58,9 +58,11 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
+import { useNotify, errMsg } from '../../composables/useNotify'
 
 const auth = useAuthStore()
 const { confirmDialog } = useConfirm()
+const { notifyError } = useNotify()
 const canWrite = computed(() => auth.hasPerm('role:write'))
 
 const headers = [
@@ -68,7 +70,7 @@ const headers = [
   { title: '角色名', key: 'name' },
   { title: '描述', key: 'description' },
   { title: '权限', key: 'permissions' },
-  { title: '操作', key: 'actions', sortable: false }
+  { title: '操作', key: 'actions', sortable: false, width: 100 }
 ]
 
 const items = ref([])
@@ -111,7 +113,7 @@ async function save() {
     if (editId.value) await api.put(`/roles/${editId.value}`, { description: form.description, permissionIds: form.permissionIds })
     else await api.post('/roles', { ...form })
     dialog.value = false; load()
-  } catch (e) { alert(e.response?.data?.message || '保存失败') }
+  } catch (e) { notifyError(errMsg(e, '保存失败')) }
   finally { saving.value = false }
 }
 
@@ -123,7 +125,9 @@ async function remove(item) {
     danger: true
   })
   if (!ok) return
-  await api.delete(`/roles/${item.id}`); load()
+  try {
+    await api.delete(`/roles/${item.id}`); load()
+  } catch (e) { notifyError(errMsg(e, '删除失败')) }
 }
 
 onMounted(async () => { await loadPerms(); load() })
