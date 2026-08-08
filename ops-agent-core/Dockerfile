@@ -5,10 +5,9 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-# 依赖走国内 PyPI 镜像（阿里云，兼容性最好；带超时重试防网络抖动）
-RUN pip install --no-cache-dir --upgrade pip --timeout 60 --retries 5 && \
-    pip install --no-cache-dir -r requirements.txt \
-        -i https://mirrors.aliyun.com/pypi/simple \
+# 依赖走国内 PyPI 镜像（清华 tuna：simple 文件链接自包含重写，不落到国外 pythonhosted）
+RUN pip install --no-cache-dir -r requirements.txt \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
         --timeout 60 --retries 5
 
 # proto → 生成 gRPC stub（容器内生成，保证与 proto 一致）
