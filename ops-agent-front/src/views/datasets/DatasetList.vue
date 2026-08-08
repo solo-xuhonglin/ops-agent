@@ -31,6 +31,7 @@
           <span v-else class="text-medium-emphasis">—</span>
         </template>
         <template #item.actions="{ item }">
+          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary" title="让 Agent 分析" @click="analyze(item)" />
           <v-btn icon="mdi-chart-line" size="small" variant="text" color="primary" title="查看图表" @click="openChart(item)" />
           <v-btn v-if="canTrain" icon="mdi-rocket-launch" size="small" variant="text" color="secondary" title="训练" @click="openTrain(item)" />
           <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
@@ -146,6 +147,7 @@ import { ref, reactive, onMounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useAuthStore } from '../../stores/auth'
+import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
 
@@ -155,10 +157,16 @@ const CITY_OPTIONS = [
 ]
 
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
 const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('dataset:write'))
 const canTrain = computed(() => auth.hasPerm('training:write'))
+const canAgent = computed(() => auth.hasPerm('agent:read'))
+
+function analyze(item) {
+  agentStore.dispatchDiagnose({ taskType: 'diagnose_dataset', targetType: 'dataset', targetId: item.id })
+}
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
@@ -167,7 +175,7 @@ const headers = [
   { title: '日期范围', key: 'dateRange' },
   { title: '数据条数', key: 'rowCount', width: 110 },
   { title: '状态', key: 'status', width: 110 },
-  { title: '操作', key: 'actions', sortable: false, width: 160 }
+  { title: '操作', key: 'actions', sortable: false, width: 200 }
 ]
 
 const cityOptions = CITY_OPTIONS

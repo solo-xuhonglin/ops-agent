@@ -27,6 +27,7 @@
           {{ fmt(item.createdAt) }}
         </template>
         <template #item.actions="{ item }">
+          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary" title="让 Agent 分析" @click="analyze(item)" />
           <v-btn icon="mdi-information" size="small" variant="text" color="primary" title="详情" @click="openDetail(item)" />
           <v-btn icon="mdi-download" size="small" variant="text" color="secondary" title="下载模型" @click="download(item)" />
           <v-btn v-if="canServe && item.status === 'READY'" icon="mdi-rocket-launch" size="small" variant="text" color="primary"
@@ -70,14 +71,21 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
+import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
 const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('model:write'))
 const canServe = computed(() => auth.hasPerm('serving:write'))
+const canAgent = computed(() => auth.hasPerm('agent:read'))
+
+function analyze(item) {
+  agentStore.dispatchDiagnose({ taskType: 'model_review', targetType: 'model_version', targetId: item.id })
+}
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
@@ -88,7 +96,7 @@ const headers = [
   { title: '状态', key: 'status', width: 110 },
   { title: '关键指标', key: 'metrics' },
   { title: '创建时间', key: 'createdAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 140 }
+  { title: '操作', key: 'actions', sortable: false, width: 190 }
 ]
 
 const items = ref([])

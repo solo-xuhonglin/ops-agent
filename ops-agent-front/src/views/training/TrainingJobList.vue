@@ -28,6 +28,8 @@
           {{ fmt(item.finishedAt) }}
         </template>
         <template #item.actions="{ item }">
+          <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
+                 title="让 Agent 分析" @click="analyze(item)" />
           <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
                  title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
           <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
@@ -59,12 +61,19 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAuthStore } from '../../stores/auth'
+import { useAgentStore } from '../../stores/agent'
 import api from '../../plugins/axios'
 import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
+const agentStore = useAgentStore()
 const { confirmDialog } = useConfirm()
 const canWrite = computed(() => auth.hasPerm('training:write'))
+const canAgent = computed(() => auth.hasPerm('agent:read'))
+
+function analyze(item) {
+  agentStore.dispatchDiagnose({ taskType: 'diagnose_training', targetType: 'training_job', targetId: item.id })
+}
 
 const headers = [
   { title: 'ID', key: 'id', width: 70 },
@@ -73,7 +82,7 @@ const headers = [
   { title: '状态', key: 'status', width: 120 },
   { title: '开始时间', key: 'startedAt', width: 170 },
   { title: '结束时间', key: 'finishedAt', width: 170 },
-  { title: '操作', key: 'actions', sortable: false, width: 130 }
+  { title: '操作', key: 'actions', sortable: false, width: 160 }
 ]
 
 const items = ref([])

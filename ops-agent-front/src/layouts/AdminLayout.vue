@@ -109,8 +109,8 @@ const menus = computed(() => {
     { to: '/roles', title: '角色管理', icon: 'mdi-shield-account', perm: 'role:read' },
     { to: '/permissions', title: '权限管理', icon: 'mdi-key', perm: 'permission:read' },
     { to: '/datasets', title: '数据集管理', icon: 'mdi-database', perm: 'dataset:read' },
-    { to: '/models', title: '模型管理', icon: 'mdi-cube-outline', perm: 'model:read' },
     { to: '/training/jobs', title: '训练任务', icon: 'mdi-rocket-launch', perm: 'training:read' },
+    { to: '/models', title: '模型管理', icon: 'mdi-cube-outline', perm: 'model:read' },
     { to: '/serving', title: '模型服务', icon: 'mdi-server', perm: 'serving:read' }
   ]
   return all.filter((m) => !m.perm || auth.hasPerm(m.perm))
