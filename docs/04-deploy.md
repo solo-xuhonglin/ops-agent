@@ -72,8 +72,31 @@ chmod +x deploy.sh
 2. 首次 `git clone` 仓库到 `PROJECT_DIR`，后续 `git pull --ff-only` 更新代码；
 3. 若无 `.env` 则从 `.env.example` 复制并退出，提示你填密钥后重跑；
 4. **宿主机编译**：前端 `npm install && npm run build`（产物 `ops-agent-front/dist`，依赖缓存于宿主机 `node_modules`）；后端 `mvn clean package -Dmaven.repo.local=$PROJECT_DIR/.m2`（产物在 `target/*.jar`，依赖缓存于项目内 `.m2`）；Dockerfile 直接 `COPY target/*.jar`；
-5. `docker compose --profile tools build train` —— 预构建训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/` 下的 Dockerfile，PyTorch CPU 版），该服务 `profiles:["tools"]` 不随 `up` 启动，仅供 admin 经 docker-java 动态实例化；
+5. **按需**预构建训练镜像 `ops-agent-train:latest`（`ops-agent-data-train/` 下的 Dockerfile，基于 `python:3.11-slim` 自装 CPU 版 torch），该服务 `profiles:["tools"]` 不随 `up` 启动，仅供 admin 经 docker-java 动态实例化。详见下方「训练镜像的构建时机」；
 6. `docker compose up -d --build` —— 镜像仅 `COPY` 上述成品，**构建秒级**，本地不上传任何包。
+
+### 训练镜像的构建时机
+
+训练镜像约 1.9GB（含 CPU 版 torch），**不是每次部署都重建**。`deploy.sh` 用「镜像是否存在 + 构建上下文内容哈希」判定：
+
+```
+sha256(Dockerfile + requirements.txt + train.py) 与 .deploy-cache/train-image.sha256 比对
+```
+
+| 场景 | 行为 | 耗时 |
+|------|------|------|
+| 首次部署 | 完整构建：拉基础镜像 + 装 torch 及依赖 | 约 3–6 分钟 |
+| 训练文件三件套均未变 | **跳过构建**，脚本直接进入下一步 | 0 秒 |
+| 只改了 `train.py` | 重建，但 `pip install` 层命中 Docker 缓存，仅重跑末尾 `COPY train.py` | 数秒 |
+| 改了 `requirements.txt` / `Dockerfile` | 重建且依赖层缓存失效，重新安装 | 约 3–6 分钟 |
+
+Dockerfile 刻意把 `COPY train.py` 放在 `pip install` **之后**，正是为了让训练代码的日常改动不触发依赖重装。
+
+强制重建（例如想刷新基础镜像）：
+
+```bash
+FORCE_BUILD_TRAIN=1 ./deploy.sh
+```
 
 ## 四、验证
 

@@ -131,8 +131,28 @@ fi
 cd "$PROJECT_DIR"
 
 # ===== 4. 预构建训练镜像（profile tools，不随 up 启动，仅供 admin 动态实例化）=====
-echo "==> 预构建训练镜像 ops-agent-train:latest"
-docker compose --env-file .env --profile tools build train
+# 训练镜像体积大（约 1.9GB，含 CPU 版 torch），无变更时跳过构建以缩短部署时间。
+# 判定依据：镜像已存在，且训练构建上下文（Dockerfile/requirements.txt/train.py）内容哈希未变。
+# 强制重建：FORCE_BUILD_TRAIN=1 ./deploy.sh
+TRAIN_IMAGE="ops-agent-train:latest"
+TRAIN_CTX="$PROJECT_DIR/ops-agent-data-train"
+DEPLOY_CACHE="$PROJECT_DIR/.deploy-cache"
+TRAIN_STAMP="$DEPLOY_CACHE/train-image.sha256"
+mkdir -p "$DEPLOY_CACHE"
+
+TRAIN_HASH="$(cat "$TRAIN_CTX/Dockerfile" "$TRAIN_CTX/requirements.txt" "$TRAIN_CTX/train.py" 2>/dev/null \
+  | sha256sum | awk '{print $1}')"
+
+if [ -z "${FORCE_BUILD_TRAIN:-}" ] \
+   && docker image inspect "$TRAIN_IMAGE" >/dev/null 2>&1 \
+   && [ -f "$TRAIN_STAMP" ] \
+   && [ "$(cat "$TRAIN_STAMP")" = "$TRAIN_HASH" ]; then
+  echo "==> 训练镜像 $TRAIN_IMAGE 已是最新，跳过构建（强制重建：FORCE_BUILD_TRAIN=1 $0）"
+else
+  echo "==> 构建训练镜像 $TRAIN_IMAGE（首次部署或训练代码/依赖有变更）"
+  docker compose --env-file .env --profile tools build train
+  printf '%s' "$TRAIN_HASH" > "$TRAIN_STAMP"
+fi
 
 # ===== 5. 仅拷贝产物打包镜像并启动（秒级）=====
 echo "==> 加载 .env，构建轻量镜像并启动"

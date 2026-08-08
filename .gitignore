@@ -8,6 +8,10 @@ dist/
 build/
 **/build/
 
+# 服务器部署时生成的项目内 Maven 本地仓库与构建标记缓存（可复用，不入库）
+.m2/
+.deploy-cache/
+
 # ===== IDE / editor =====
 .idea/
 *.iml
