@@ -43,6 +43,10 @@ public class AgentToolSeeder implements ApplicationRunner {
         log.info("agent_tools seeded: {} tools", repository.count());
     }
 
+    /** 分页类工具的通用参数 schema */
+    private static final String SCHEMA_PAGE =
+            "{\"type\":\"object\",\"properties\":{\"page\":{\"type\":\"integer\"},\"size\":{\"type\":\"integer\"}},\"required\":[]}";
+
     private static final List<ToolSpec> SEED = List.of(
             // ===== 只读工具（透传 taskToken 即可调）=====
             new ToolSpec("dataset.list", "List datasets (paginated, filter by region/status)",
@@ -92,8 +96,4 @@ public class AgentToolSeeder implements ApplicationRunner {
                     "GET", "/api/datasets/{datasetId}/weather", "dataset:write", true,
                     "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"}},\"required\":[\"datasetId\"]}")
     );
-
-    /** 分页类工具的通用参数 schema */
-    private static final String SCHEMA_PAGE =
-            "{\"type\":\"object\",\"properties\":{\"page\":{\"type\":\"integer\"},\"size\":{\"type\":\"integer\"}},\"required\":[]}";
 }
