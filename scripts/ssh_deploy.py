@@ -8,11 +8,12 @@
   python scripts/ssh_deploy.py admin                 # 只更新后端
   python scripts/ssh_deploy.py front admin           # 只更新前后端
   python scripts/ssh_deploy.py train --force-train   # 强制重建训练镜像
+  python scripts/ssh_deploy.py serving --force-serving # 强制重建推理镜像
   python scripts/ssh_deploy.py --no-pull admin       # 用远程当前工作树重建后端
   python scripts/ssh_deploy.py --no-build --no-deps admin   # 仅重启 admin 容器
 
-可选服务：all / admin / front / train / infra / postgres / minio
-（infra 展开为 postgres + minio + minio-init；train 只构建镜像，不启动容器）
+可选服务：all / admin / front / train / serving / infra / postgres / minio
+（infra 展开为 postgres + minio + minio-init；train/serving 只构建镜像，不启动容器）
 
 说明：
   - 通过 setsid 脱离 SSH 通道，命令立即返回，不会因部署耗时长而中断。
@@ -35,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _conn import run_detached
 
 DEPLOY_LOG = "/tmp/deploy.log"
-SERVICES = ("all", "admin", "front", "train", "infra", "postgres", "minio")
+SERVICES = ("all", "admin", "front", "train", "serving", "infra", "postgres", "minio")
 
 
 def main():
@@ -66,6 +67,8 @@ def main():
                         help="compose up 时不连带启动依赖服务")
     parser.add_argument("--force-train", action="store_true",
                         help="强制重建训练镜像（默认无变更时跳过）")
+    parser.add_argument("--force-serving", action="store_true",
+                        help="强制重建推理镜像（默认无变更时跳过）")
     args = parser.parse_args()
 
     unknown = [t for t in args.targets if t not in SERVICES]
@@ -86,6 +89,8 @@ def main():
         flags.append("--no-deps")
     if args.force_train:
         flags.append("--force-train")
+    if args.force_serving:
+        flags.append("--force-serving")
 
     argv = flags + list(args.targets)
     cmd = "./deploy.sh" + ("" if not argv else " " + " ".join(shlex.quote(a) for a in argv))
