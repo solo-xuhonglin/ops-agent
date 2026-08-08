@@ -245,7 +245,9 @@ function startResize(e) {
     if (drawer) {
       const w = Math.round(drawer.getBoundingClientRect().width)
       drawer.style.transition = ''
-      drawer.style.width = ''
+      // 关键：不要把 inline width 清空！清空瞬间 Vuetify 抽屉的 CSS 默认
+      // （width: 100%）生效会把抽屉撑到全屏（1440px）造成闪跳。
+      // 保留 inline width 作为最终值，与 prop 同步即可。
       drawerWidth.value = Math.min(MAX_W, Math.max(MIN_W, w))
       localStorage.setItem('agentDrawerWidth', String(drawerWidth.value))
     }
