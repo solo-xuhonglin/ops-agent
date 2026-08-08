@@ -10,6 +10,7 @@ from typing import Any, Optional
 import httpx
 
 from app.transport import agent_pb2
+from app.tools.grants import GrantStore
 
 log = logging.getLogger("tools.http_client")
 
@@ -24,16 +25,25 @@ class TaskContext:
 
 
 class AdminHttpClient:
-    def __init__(self, base_url: str, worker_id: str, timeout_s: float = 30.0):
+    def __init__(self, base_url: str, worker_id: str, grants: Optional[GrantStore] = None,
+                 timeout_s: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self.worker_id = worker_id
+        self.grants = grants or GrantStore()
         self._http = httpx.AsyncClient(timeout=timeout_s)
 
     async def close(self) -> None:
         await self._http.aclose()
 
     async def call(self, tool: agent_pb2.ToolSchema, args: dict, ctx: TaskContext) -> dict[str, Any]:
-        """执行一次工具调用：填充 path 模板 → 注入系统头 → 请求 → 返回 {status, body}。"""
+        """执行一次工具调用：写工具先查 grant（无授权不执行）→ 注入系统头 → 请求 → 返回 {status, body}。"""
+        if tool.is_write:
+            grant_key = self.grants.lookup(tool.name, self._candidate_target_ids(tool, args))
+            if grant_key is None:
+                log.warning("write tool without grant, skipped: %s (await human approval)", tool.name)
+                return {"status": 403,
+                        "body": "write operation not granted yet (await human approval then retry)"}
+
         path, query, body = self._render(tool, args)
         headers = {
             "Authorization": f"Bearer {ctx.task_token}",
@@ -41,9 +51,11 @@ class AdminHttpClient:
             "X-Agent-Task": ctx.task_id,
             "Content-Type": "application/json",
         }
+        if tool.is_write:
+            headers["X-Grant-Key"] = grant_key  # type: ignore[assignment]
         url = self.base_url + path
         method = tool.http_method.upper()
-        log.info("tool call: %s %s (args=%s)", method, path, query or body)
+        log.info("tool call: %s %s (args=%s write=%s)", method, path, query or body, tool.is_write)
         try:
             if method == "GET":
                 resp = await self._http.get(url, headers=headers, params=query or None)
@@ -54,6 +66,17 @@ class AdminHttpClient:
         except httpx.HTTPError as e:
             return {"status": 0, "body": f"HTTP error: {e}"}
         return {"status": resp.status_code, "body": text}
+
+    @staticmethod
+    def _candidate_target_ids(tool: agent_pb2.ToolSchema, args: dict) -> list[str]:
+        """候选 targetId：路径模板变量 + 数值参数（写工具授权按 action+targetId 匹配）。"""
+        ids: list[str] = []
+        for key, value in args.items():
+            if "{" + key + "}" in tool.path_template:
+                ids.append(str(value))
+            elif isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+                ids.append(str(value))
+        return ids
 
     def _render(self, tool: agent_pb2.ToolSchema, args: dict) -> tuple[str, dict, Optional[dict]]:
         """{jobId} 之类模板变量填入 path；GET 剩余参数走 query，POST/DELETE 走 body。"""

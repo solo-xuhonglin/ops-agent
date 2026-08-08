@@ -5,6 +5,7 @@ import logging
 from app.agent import core
 from app.config import Config
 from app.llm.deepseek import DeepSeekClient
+from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -27,13 +28,15 @@ async def amain() -> None:
     client = GrpcClient(cfg, AGENTS)
 
     registry = ToolRegistry()
+    grants = GrantStore()
     llm = DeepSeekClient(cfg.deepseek_api_key, cfg.deepseek_base_url,
                          cfg.deepseek_model, cfg.llm_timeout_s)
-    http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id)
+    http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id, grants)
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
     client.on("register_ack", lambda m: _load_tools(registry, m))
+    client.on("authorization_grant", lambda m: grants.add(m.authorization_grant))
     client.on("task_dispatch",
               lambda m: asyncio.create_task(
                   core.handle_dispatch(client, registry, llm, http, m, cfg.max_tool_rounds)))

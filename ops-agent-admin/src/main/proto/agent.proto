@@ -27,6 +27,7 @@ message ServerMessage {
     TaskDispatch task_dispatch = 2;
     CancelTask cancel_task = 3;
     Ping ping = 4;
+    AuthorizationGrant authorization_grant = 5;
   }
 }
 
@@ -92,6 +93,15 @@ message TaskDispatch {
 message CancelTask {
   string task_id = 1;
   string reason = 2;
+}
+
+// 处置授权：人工确认建议后签发（时效 grantKey），沿流推送，agent 执行写工具时携带
+message AuthorizationGrant {
+  string action_type = 1;   // 对应写工具名（serving_undeploy 等）
+  string target_type = 2;   // serving_endpoint / training_job ...
+  int64 target_id = 3;
+  string grant_key = 4;     // 完整 key（含前缀），agent 原样回传
+  int32 ttl_seconds = 5;
 }
 
 message AgentUpdate {

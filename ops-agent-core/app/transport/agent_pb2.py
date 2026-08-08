@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x0eopsagent.agent\"\x83\x02\n\rClientMessage\x12,\n\x08register\x18\x01 \x01(\x0b\x32\x18.opsagent.agent.RegisterH\x00\x12/\n\ntask_event\x18\x02 \x01(\x0b\x32\x19.opsagent.agent.TaskEventH\x00\x12\x31\n\x0btask_result\x18\x03 \x01(\x0b\x32\x1a.opsagent.agent.TaskResultH\x00\x12\x33\n\x0c\x61gent_update\x18\x04 \x01(\x0b\x32\x1b.opsagent.agent.AgentUpdateH\x00\x12$\n\x04pong\x18\x05 \x01(\x0b\x32\x14.opsagent.agent.PongH\x00\x42\x05\n\x03msg\"\xdb\x01\n\rServerMessage\x12\x33\n\x0cregister_ack\x18\x01 \x01(\x0b\x32\x1b.opsagent.agent.RegisterAckH\x00\x12\x35\n\rtask_dispatch\x18\x02 \x01(\x0b\x32\x1c.opsagent.agent.TaskDispatchH\x00\x12\x31\n\x0b\x63\x61ncel_task\x18\x03 \x01(\x0b\x32\x1a.opsagent.agent.CancelTaskH\x00\x12$\n\x04ping\x18\x04 \x01(\x0b\x32\x14.opsagent.agent.PingH\x00\x42\x05\n\x03msg\"3\n\tAgentInfo\x12\x10\n\x08\x61gent_id\x18\x01 \x01(\t\x12\x14\n\x0c\x63\x61pabilities\x18\x02 \x03(\t\"H\n\x08Register\x12\x11\n\tworker_id\x18\x01 \x01(\t\x12)\n\x06\x61gents\x18\x02 \x03(\x0b\x32\x19.opsagent.agent.AgentInfo\"U\n\x0bRegisterAck\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12)\n\x05tools\x18\x03 \x03(\x0b\x32\x1a.opsagent.agent.ToolSchema\"\x81\x01\n\nToolSchema\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x12\n\nparameters\x18\x03 \x01(\t\x12\x10\n\x08is_write\x18\x04 \x01(\x08\x12\x13\n\x0bhttp_method\x18\x05 \x01(\t\x12\x15\n\rpath_template\x18\x06 \x01(\t\"N\n\tTaskEvent\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0b\n\x03seq\x18\x02 \x01(\x05\x12\x12\n\nevent_type\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"{\n\nSuggestion\x12\x13\n\x0b\x61\x63tion_type\x18\x01 \x01(\t\x12\x13\n\x0btarget_type\x18\x02 \x01(\t\x12\x11\n\ttarget_id\x18\x03 \x01(\x03\x12\x0e\n\x06params\x18\x04 \x01(\t\x12\x0e\n\x06reason\x18\x05 \x01(\t\x12\x10\n\x08priority\x18\x06 \x01(\t\"}\n\nTaskResult\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\n\n\x02ok\x18\x02 \x01(\x08\x12\x12\n\nconclusion\x18\x03 \x01(\t\x12/\n\x0bsuggestions\x18\x04 \x03(\x0b\x32\x1a.opsagent.agent.Suggestion\x12\r\n\x05\x65rror\x18\x05 \x01(\t\"}\n\x0cTaskDispatch\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x11\n\ttask_type\x18\x02 \x01(\t\x12\x13\n\x0btarget_type\x18\x03 \x01(\t\x12\x11\n\ttarget_id\x18\x04 \x01(\x03\x12\r\n\x05query\x18\x05 \x01(\t\x12\x12\n\ntask_token\x18\x06 \x01(\t\"-\n\nCancelTask\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"8\n\x0b\x41gentUpdate\x12)\n\x06\x61gents\x18\x01 \x03(\x0b\x32\x19.opsagent.agent.AgentInfo\"\x12\n\x04Ping\x12\n\n\x02ts\x18\x01 \x01(\x03\"\x12\n\x04Pong\x12\n\n\x02ts\x18\x01 \x01(\x03\x32[\n\x0c\x41gentService\x12K\n\x07\x43onnect\x12\x1d.opsagent.agent.ClientMessage\x1a\x1d.opsagent.agent.ServerMessage(\x01\x30\x01\x42.\n\x1e\x63om.opsagent.admin.agent.protoB\nAgentProtoP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x0eopsagent.agent\"\x83\x02\n\rClientMessage\x12,\n\x08register\x18\x01 \x01(\x0b\x32\x18.opsagent.agent.RegisterH\x00\x12/\n\ntask_event\x18\x02 \x01(\x0b\x32\x19.opsagent.agent.TaskEventH\x00\x12\x31\n\x0btask_result\x18\x03 \x01(\x0b\x32\x1a.opsagent.agent.TaskResultH\x00\x12\x33\n\x0c\x61gent_update\x18\x04 \x01(\x0b\x32\x1b.opsagent.agent.AgentUpdateH\x00\x12$\n\x04pong\x18\x05 \x01(\x0b\x32\x14.opsagent.agent.PongH\x00\x42\x05\n\x03msg\"\x9e\x02\n\rServerMessage\x12\x33\n\x0cregister_ack\x18\x01 \x01(\x0b\x32\x1b.opsagent.agent.RegisterAckH\x00\x12\x35\n\rtask_dispatch\x18\x02 \x01(\x0b\x32\x1c.opsagent.agent.TaskDispatchH\x00\x12\x31\n\x0b\x63\x61ncel_task\x18\x03 \x01(\x0b\x32\x1a.opsagent.agent.CancelTaskH\x00\x12$\n\x04ping\x18\x04 \x01(\x0b\x32\x14.opsagent.agent.PingH\x00\x12\x41\n\x13\x61uthorization_grant\x18\x05 \x01(\x0b\x32\".opsagent.agent.AuthorizationGrantH\x00\x42\x05\n\x03msg\"3\n\tAgentInfo\x12\x10\n\x08\x61gent_id\x18\x01 \x01(\t\x12\x14\n\x0c\x63\x61pabilities\x18\x02 \x03(\t\"H\n\x08Register\x12\x11\n\tworker_id\x18\x01 \x01(\t\x12)\n\x06\x61gents\x18\x02 \x03(\x0b\x32\x19.opsagent.agent.AgentInfo\"U\n\x0bRegisterAck\x12\n\n\x02ok\x18\x01 \x01(\x08\x12\x0f\n\x07message\x18\x02 \x01(\t\x12)\n\x05tools\x18\x03 \x03(\x0b\x32\x1a.opsagent.agent.ToolSchema\"\x81\x01\n\nToolSchema\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x12\n\nparameters\x18\x03 \x01(\t\x12\x10\n\x08is_write\x18\x04 \x01(\x08\x12\x13\n\x0bhttp_method\x18\x05 \x01(\t\x12\x15\n\rpath_template\x18\x06 \x01(\t\"N\n\tTaskEvent\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0b\n\x03seq\x18\x02 \x01(\x05\x12\x12\n\nevent_type\x18\x03 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x04 \x01(\t\"{\n\nSuggestion\x12\x13\n\x0b\x61\x63tion_type\x18\x01 \x01(\t\x12\x13\n\x0btarget_type\x18\x02 \x01(\t\x12\x11\n\ttarget_id\x18\x03 \x01(\x03\x12\x0e\n\x06params\x18\x04 \x01(\t\x12\x0e\n\x06reason\x18\x05 \x01(\t\x12\x10\n\x08priority\x18\x06 \x01(\t\"}\n\nTaskResult\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\n\n\x02ok\x18\x02 \x01(\x08\x12\x12\n\nconclusion\x18\x03 \x01(\t\x12/\n\x0bsuggestions\x18\x04 \x03(\x0b\x32\x1a.opsagent.agent.Suggestion\x12\r\n\x05\x65rror\x18\x05 \x01(\t\"}\n\x0cTaskDispatch\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x11\n\ttask_type\x18\x02 \x01(\t\x12\x13\n\x0btarget_type\x18\x03 \x01(\t\x12\x11\n\ttarget_id\x18\x04 \x01(\x03\x12\r\n\x05query\x18\x05 \x01(\t\x12\x12\n\ntask_token\x18\x06 \x01(\t\"-\n\nCancelTask\x12\x0f\n\x07task_id\x18\x01 \x01(\t\x12\x0e\n\x06reason\x18\x02 \x01(\t\"y\n\x12\x41uthorizationGrant\x12\x13\n\x0b\x61\x63tion_type\x18\x01 \x01(\t\x12\x13\n\x0btarget_type\x18\x02 \x01(\t\x12\x11\n\ttarget_id\x18\x03 \x01(\x03\x12\x11\n\tgrant_key\x18\x04 \x01(\t\x12\x13\n\x0bttl_seconds\x18\x05 \x01(\x05\"8\n\x0b\x41gentUpdate\x12)\n\x06\x61gents\x18\x01 \x03(\x0b\x32\x19.opsagent.agent.AgentInfo\"\x12\n\x04Ping\x12\n\n\x02ts\x18\x01 \x01(\x03\"\x12\n\x04Pong\x12\n\n\x02ts\x18\x01 \x01(\x03\x32[\n\x0c\x41gentService\x12K\n\x07\x43onnect\x12\x1d.opsagent.agent.ClientMessage\x1a\x1d.opsagent.agent.ServerMessage(\x01\x30\x01\x42.\n\x1e\x63om.opsagent.admin.agent.protoB\nAgentProtoP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -35,31 +35,33 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_CLIENTMESSAGE']._serialized_start=32
   _globals['_CLIENTMESSAGE']._serialized_end=291
   _globals['_SERVERMESSAGE']._serialized_start=294
-  _globals['_SERVERMESSAGE']._serialized_end=513
-  _globals['_AGENTINFO']._serialized_start=515
-  _globals['_AGENTINFO']._serialized_end=566
-  _globals['_REGISTER']._serialized_start=568
-  _globals['_REGISTER']._serialized_end=640
-  _globals['_REGISTERACK']._serialized_start=642
-  _globals['_REGISTERACK']._serialized_end=727
-  _globals['_TOOLSCHEMA']._serialized_start=730
-  _globals['_TOOLSCHEMA']._serialized_end=859
-  _globals['_TASKEVENT']._serialized_start=861
-  _globals['_TASKEVENT']._serialized_end=939
-  _globals['_SUGGESTION']._serialized_start=941
-  _globals['_SUGGESTION']._serialized_end=1064
-  _globals['_TASKRESULT']._serialized_start=1066
-  _globals['_TASKRESULT']._serialized_end=1191
-  _globals['_TASKDISPATCH']._serialized_start=1193
-  _globals['_TASKDISPATCH']._serialized_end=1318
-  _globals['_CANCELTASK']._serialized_start=1320
-  _globals['_CANCELTASK']._serialized_end=1365
-  _globals['_AGENTUPDATE']._serialized_start=1367
-  _globals['_AGENTUPDATE']._serialized_end=1423
-  _globals['_PING']._serialized_start=1425
-  _globals['_PING']._serialized_end=1443
-  _globals['_PONG']._serialized_start=1445
-  _globals['_PONG']._serialized_end=1463
-  _globals['_AGENTSERVICE']._serialized_start=1465
-  _globals['_AGENTSERVICE']._serialized_end=1556
+  _globals['_SERVERMESSAGE']._serialized_end=580
+  _globals['_AGENTINFO']._serialized_start=582
+  _globals['_AGENTINFO']._serialized_end=633
+  _globals['_REGISTER']._serialized_start=635
+  _globals['_REGISTER']._serialized_end=707
+  _globals['_REGISTERACK']._serialized_start=709
+  _globals['_REGISTERACK']._serialized_end=794
+  _globals['_TOOLSCHEMA']._serialized_start=797
+  _globals['_TOOLSCHEMA']._serialized_end=926
+  _globals['_TASKEVENT']._serialized_start=928
+  _globals['_TASKEVENT']._serialized_end=1006
+  _globals['_SUGGESTION']._serialized_start=1008
+  _globals['_SUGGESTION']._serialized_end=1131
+  _globals['_TASKRESULT']._serialized_start=1133
+  _globals['_TASKRESULT']._serialized_end=1258
+  _globals['_TASKDISPATCH']._serialized_start=1260
+  _globals['_TASKDISPATCH']._serialized_end=1385
+  _globals['_CANCELTASK']._serialized_start=1387
+  _globals['_CANCELTASK']._serialized_end=1432
+  _globals['_AUTHORIZATIONGRANT']._serialized_start=1434
+  _globals['_AUTHORIZATIONGRANT']._serialized_end=1555
+  _globals['_AGENTUPDATE']._serialized_start=1557
+  _globals['_AGENTUPDATE']._serialized_end=1613
+  _globals['_PING']._serialized_start=1615
+  _globals['_PING']._serialized_end=1633
+  _globals['_PONG']._serialized_start=1635
+  _globals['_PONG']._serialized_end=1653
+  _globals['_AGENTSERVICE']._serialized_start=1655
+  _globals['_AGENTSERVICE']._serialized_end=1746
 # @@protoc_insertion_point(module_scope)

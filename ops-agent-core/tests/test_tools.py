@@ -1,5 +1,6 @@
 import pytest
 
+from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient, TaskContext
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -69,3 +70,56 @@ def test_http_call_injects_system_headers():
     assert captured["headers"]["Authorization"] == "Bearer tok9"
     assert captured["headers"]["X-Agent-Worker"] == "w1"
     assert captured["headers"]["X-Agent-Task"] == "t9"
+
+
+@pytest.mark.asyncio
+async def test_write_tool_without_grant_skipped():
+    """写工具无授权：不发起请求，返回 403 提示待人工确认。"""
+    http = make_http()
+    called = []
+
+    async def fake_request(method, url, headers=None, json=None, params=None):
+        called.append(url)
+
+    http._http.request = fake_request  # type: ignore[assignment]
+    tool = make_tool("serving_undeploy", "POST", "/api/serving/endpoints/{endpointId}")
+    tool.is_write = True
+    result = await http.call(tool, {"endpointId": 3},
+                             TaskContext(task_id="t1", task_token="tok1"))
+    assert result["status"] == 403
+    assert "approval" in result["body"]
+    assert called == []  # 未发请求
+
+
+@pytest.mark.asyncio
+async def test_write_tool_with_grant_injects_key():
+    """写工具有授权：按 action+targetId 匹配注入 X-Grant-Key。"""
+    http = make_http()
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        text = "{}"
+
+    async def fake_request(method, url, headers=None, json=None, params=None):
+        captured["headers"] = headers
+        return FakeResp()
+
+    http._http.request = fake_request  # type: ignore[assignment]
+    grant = agent_pb2.AuthorizationGrant(
+        action_type="serving_undeploy", target_type="serving_endpoint",
+        target_id=3, grant_key="agent:grant:test-key", ttl_seconds=600)
+    http.grants.add(grant)
+    tool = make_tool("serving_undeploy", "POST", "/api/serving/endpoints/{endpointId}")
+    tool.is_write = True
+    result = await http.call(tool, {"endpointId": 3},
+                             TaskContext(task_id="t1", task_token="tok1"))
+    assert result["status"] == 200
+    assert captured["headers"]["X-Grant-Key"] == "agent:grant:test-key"
+
+
+def test_grant_store_ttl_expiry():
+    """grant 过期后 lookup 返回 None。"""
+    store = GrantStore()
+    store._grants["serving_undeploy"] = {"3": ("k", -1.0)}  # 已过期
+    assert store.lookup("serving_undeploy", ["3"]) is None
