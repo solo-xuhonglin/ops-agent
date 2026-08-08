@@ -3,13 +3,19 @@ package com.opsagent.admin.controller;
 import com.opsagent.admin.common.ApiResponse;
 import com.opsagent.admin.dto.DatasetDto;
 import com.opsagent.admin.service.DatasetService;
+import com.opsagent.admin.service.MinioService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/datasets")
@@ -17,6 +23,8 @@ import org.springframework.web.bind.annotation.*;
 public class DatasetController {
 
     private final DatasetService datasetService;
+
+    private final Optional<MinioService> minioService;
 
     @GetMapping
     @PreAuthorize("hasAuthority('dataset:read')")
@@ -49,5 +57,43 @@ public class DatasetController {
     public ApiResponse<?> delete(@PathVariable Long id) {
         datasetService.delete(id);
         return ApiResponse.ok();
+    }
+
+    @PostMapping("/{id}/file")
+    @PreAuthorize("hasAuthority('dataset:write')")
+    public ApiResponse<?> uploadFile(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
+        MinioService minio = minioService.orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Object storage (MinIO) is not enabled in this environment"));
+        try {
+            String objectKey = "datasets/" + id + "/" + file.getOriginalFilename();
+            minio.upload(objectKey, file);
+            datasetService.updateObjectKey(id, objectKey);
+            return ApiResponse.ok(java.util.Map.of("objectKey", objectKey));
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to upload file to object storage: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/{id}/file/url")
+    @PreAuthorize("hasAuthority('dataset:read')")
+    public ApiResponse<?> fileUrl(@PathVariable Long id, @RequestParam(defaultValue = "30") int expiryMinutes) {
+        MinioService minio = minioService.orElseThrow(
+                () -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Object storage (MinIO) is not enabled in this environment"));
+        try {
+            String objectKey = datasetService.getObjectKey(id);
+            if (objectKey == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Dataset has no uploaded file");
+            }
+            String url = minio.presignedUrl(objectKey, expiryMinutes);
+            return ApiResponse.ok(java.util.Map.of("url", url, "objectKey", objectKey));
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to generate file url: " + e.getMessage());
+        }
     }
 }

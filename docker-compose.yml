@@ -18,6 +18,42 @@ services:
       timeout: 5s
       retries: 5
 
+  # ===== 对象存储（MinIO，S3 兼容）=====
+  minio:
+    image: minio/minio:latest
+    container_name: ops-agent-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "http://localhost:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 初始化 MinIO 桶（datasets / models / artifacts）
+  minio-init:
+    image: minio/mc:latest
+    container_name: ops-agent-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set ops http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+      mc mb -p ops/${MINIO_BUCKET};
+      mc mb -p ops/models;
+      mc mb -p ops/artifacts;
+      echo 'MinIO buckets initialized';
+      "
+
   # ===== 后端（Spring Boot）=====
   admin:
     build:
@@ -28,6 +64,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     environment:
       DB_USERNAME: ${DB_USERNAME}
       DB_PASSWORD: ${DB_PASSWORD}
@@ -35,6 +73,12 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
       APP_INIT_ENABLED: ${APP_INIT_ENABLED:-true}
       SPRING_PROFILES_ACTIVE: docker
+      MINIO_ENABLED: ${MINIO_ENABLED:-true}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      MINIO_PUBLIC_READ: "false"
     ports:
       - "${ADMIN_PORT}:8080"
     # 如需后续动态拉起 training/serving 容器，取消下行注释挂载 docker.sock
@@ -55,3 +99,4 @@ services:
 
 volumes:
   pgdata:
+  minio-data:

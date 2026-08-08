@@ -45,7 +45,8 @@ public class DatasetService {
         Dataset d = new Dataset();
         d.setName(req.name());
         d.setDescription(req.description());
-        d.setObjectKey(req.objectKey());
+        d.setObjectKey(req.objectKey() != null && !req.objectKey().isBlank()
+                ? req.objectKey() : "weather://" + (req.name() == null ? "dataset" : req.name()));
         d.setRegions(req.regions() == null ? new ArrayList<>() : req.regions());
         d.setSource(req.source());
         d.setFileFormat(req.fileFormat());
@@ -81,6 +82,18 @@ public class DatasetService {
     public void delete(Long id) {
         datasetRepository.delete(find(id));
         weatherRepository.deleteByDatasetId(id);
+    }
+
+    @Transactional
+    public void updateObjectKey(Long id, String objectKey) {
+        Dataset d = find(id);
+        d.setObjectKey(objectKey);
+        datasetRepository.save(d);
+    }
+
+    @Transactional(readOnly = true)
+    public String getObjectKey(Long id) {
+        return find(id).getObjectKey();
     }
 
     private void collectWeather(Dataset d) {
