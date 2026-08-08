@@ -51,6 +51,9 @@ python scripts/ssh_deploy.py [选项] [服务...]
 | `--no-deps` | `compose up` 时不连带启动依赖服务 |
 | `--force-train` | 强制重建训练镜像 |
 
+> `front` 依赖 `admin`，`admin` 依赖 `postgres`/`minio`。因此 `ssh_deploy.py front` 会顺带重启后端；
+> 需要严格隔离时加 `--no-deps`。
+
 > 后台任务通过 `setsid` 脱离 SSH 通道。偶尔通道会延迟关闭导致读取超时，
 > `run_detached()` 已对此容错并提示 —— 此时进程仍在运行，用 `ssh_poll.py` 确认即可。
 

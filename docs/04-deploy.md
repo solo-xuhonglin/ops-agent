@@ -111,6 +111,14 @@ chmod +x deploy.sh
 | `--no-deps` | `compose up` 时不连带启动依赖服务（如只重启 admin 不触碰 postgres） |
 | `--force-train` | 强制重建训练镜像（等价 `FORCE_BUILD_TRAIN=1`） |
 
+> ℹ️ **依赖会被连带启动**：compose 的 `depends_on` 决定了 `./deploy.sh front` 也会把 `admin` 纳入启动图（`front` 依赖 `admin`），
+> 因而可能顺带重启后端。这是为了保证依赖确实在跑。若要严格只动目标服务，加 `--no-deps`：
+> ```bash
+> ./deploy.sh --no-deps front          # 重建前端但不碰 admin
+> ./deploy.sh --no-build --no-deps front   # 仅重启前端容器
+> ```
+> 依赖链：`front → admin → postgres, minio`。
+
 > ⚠️ **改动了 `deploy.sh` 自身的提交**：bash 是边读边执行的，运行中脚本被 `git pull` 覆盖会产生难以排查的怪问题。
 > 正确做法是先单独 `git pull`，再用 `--no-pull` 运行：
 > ```bash
