@@ -16,7 +16,7 @@
         @update:options="onOptions"
       >
         <template #item.permissions="{ item }">
-          <v-chip v-for="p in item.permissions" :key="p.id" class="ma-1" size="small" variant="tonal">{{ p.code }}</v-chip>
+          <v-chip v-for="p in item.permissions" :key="p.id" class="ma-1" size="small" variant="tonal">{{ p.description || p.code }}</v-chip>
         </template>
         <template #item.actions="{ item }">
           <v-btn v-if="canWrite" icon="mdi-pencil" size="small" variant="text" @click="openEdit(item)" />
@@ -34,7 +34,7 @@
           <v-select
             v-model="form.permissionIds"
             :items="permOptions"
-            item-title="code"
+            item-title="description"
             item-value="id"
             label="权限"
             multiple

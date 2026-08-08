@@ -45,14 +45,24 @@ public class DataInitializer implements CommandLineRunner {
     }
 
 
-    private static final List<String> PERMISSION_CODES = List.of(
-            "user:read", "user:write",
-            "role:read", "role:write",
-            "permission:read", "permission:write",
-            "dataset:read", "dataset:write",
-            "model:read", "model:write",
-            "training:read", "training:write",
-            "serving:read", "serving:write");
+    /** 权限码 -> 中文描述（缺省与更新均以此为准） */
+    private static final java.util.Map<String, String> PERMISSION_DESCRIPTIONS = java.util.Map.ofEntries(
+            java.util.Map.entry("user:read", "查看用户"),
+            java.util.Map.entry("user:write", "管理用户"),
+            java.util.Map.entry("role:read", "查看角色"),
+            java.util.Map.entry("role:write", "管理角色"),
+            java.util.Map.entry("permission:read", "查看权限"),
+            java.util.Map.entry("permission:write", "管理权限"),
+            java.util.Map.entry("dataset:read", "查看数据集"),
+            java.util.Map.entry("dataset:write", "管理数据集"),
+            java.util.Map.entry("model:read", "查看模型"),
+            java.util.Map.entry("model:write", "管理模型"),
+            java.util.Map.entry("training:read", "查看训练任务"),
+            java.util.Map.entry("training:write", "管理训练任务"),
+            java.util.Map.entry("serving:read", "查看模型服务"),
+            java.util.Map.entry("serving:write", "管理模型服务"));
+
+    private static final List<String> PERMISSION_CODES = List.copyOf(PERMISSION_DESCRIPTIONS.keySet());
 
     /** 业务读写权限（运营人员：不含 user/role/permission 后台管理） */
     private static final List<String> BUSINESS_READ_WRITE_CODES = List.of(
@@ -74,12 +84,16 @@ public class DataInitializer implements CommandLineRunner {
             return;
         }
 
-        // 1. 权限：逐条判断，缺失才插入（支持新增权限码补全）
-        for (String code : PERMISSION_CODES) {
-            if (permissionRepository.findByCode(code).isEmpty()) {
-                Permission p = new Permission();
-                p.setCode(code);
-                p.setDescription(code);
+        // 1. 权限：缺失插入 + 描述对齐（新增权限码补全，既有权限的描述收敛到中文定义）
+        for (java.util.Map.Entry<String, String> e : PERMISSION_DESCRIPTIONS.entrySet()) {
+            Permission p = permissionRepository.findByCode(e.getKey()).orElse(null);
+            if (p == null) {
+                p = new Permission();
+                p.setCode(e.getKey());
+                p.setDescription(e.getValue());
+                permissionRepository.save(p);
+            } else if (!e.getValue().equals(p.getDescription())) {
+                p.setDescription(e.getValue());
                 permissionRepository.save(p);
             }
         }
