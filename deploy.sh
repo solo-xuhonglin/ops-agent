@@ -114,16 +114,8 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
-# 部署凭证落盘路径（含数据库等已有信息），可用 CRED_FILE 环境变量覆盖
+# 部署凭证落盘路径（.env 格式，追加式），可用 CRED_FILE 环境变量覆盖
 CRED_FILE="${CRED_FILE:-/root/ops-agent-credentials.txt}"
-
-# 迁移历史装饰格式（===== 分隔线/冒号）→ .env 格式（KEY=VALUE），仅一次
-if [ -f "$CRED_FILE" ] && grep -q '^=====' "$CRED_FILE" 2>/dev/null; then
-  DS_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$CRED_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-  echo "# ops-agent credentials (.env format; keys are appended, existing values never overwritten)" > "$CRED_FILE"
-  [ -n "$DS_KEY" ] && echo "DEEPSEEK_API_KEY=$DS_KEY" >> "$CRED_FILE"
-  echo "==> 凭证文件已迁移为 .env 格式: $CRED_FILE"
-fi
 [ -f "$CRED_FILE" ] || echo "# ops-agent credentials (.env format; keys are appended, existing values never overwritten)" > "$CRED_FILE"
 
 # 生成/保留一个密钥：若 .env 缺失该键或其值为占位符，则生成随机串并写回 .env
