@@ -40,10 +40,15 @@ public class GrantService {
         return grantKey;
     }
 
+    public long ttlSeconds() {
+        return ttlSeconds;
+    }
+
     /**
-     * 原子消费并校验。返回匹配的 suggestionId；key 不存在（超时/已消费）或 action/target 不匹配返回空。
+     * 原子消费并校验（action + targetId 匹配，targetType 由 action 隐含不作硬比对）。
+     * 返回匹配的 suggestionId；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。
      */
-    public Optional<Long> consumeAndMatch(String grantKey, String actionType, String targetType, Long targetId) {
+    public Optional<Long> consumeAndMatch(String grantKey, String actionType, Long targetId) {
         if (grantKey == null || grantKey.isBlank()) {
             return Optional.empty();
         }
@@ -53,14 +58,12 @@ public class GrantService {
             return Optional.empty();
         }
         GrantMeta meta = GrantMeta.decode(raw);
-        if (meta.actionType().equals(actionType)
-                && meta.targetType().equals(targetType)
-                && meta.targetId().equals(targetId)) {
+        if (meta.actionType().equals(actionType) && meta.targetId().equals(targetId)) {
             log.info("grant consumed: key={} suggestionId={}", grantKey, meta.suggestionId());
             return Optional.of(meta.suggestionId());
         }
-        log.warn("grant mismatch: expected {}/{} got {}/{}", actionType, targetType,
-                meta.actionType(), meta.targetType());
+        log.warn("grant mismatch: expected action={} targetId={} got action={} targetId={}",
+                actionType, targetId, meta.actionType(), meta.targetId());
         return Optional.empty();
     }
 

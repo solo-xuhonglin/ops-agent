@@ -99,9 +99,6 @@ public class AgentToolSeeder implements ApplicationRunner {
                     "{\"type\":\"object\",\"properties\":{\"modelVersionId\":{\"type\":\"integer\"}},\"required\":[\"modelVersionId\"]}"),
             new ToolSpec("serving_undeploy", "Undeploy a serving endpoint (stops container)",
                     "POST", "/api/serving/endpoints/{endpointId}/undeploy", "serving:write", true,
-                    "{\"type\":\"object\",\"properties\":{\"endpointId\":{\"type\":\"integer\"}},\"required\":[\"endpointId\"]}"),
-            new ToolSpec("dataset_collect_weather", "Trigger Open-Meteo weather collection for a dataset",
-                    "GET", "/api/datasets/{datasetId}/weather", "dataset:write", true,
-                    "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"}},\"required\":[\"datasetId\"]}")
+                    "{\"type\":\"object\",\"properties\":{\"endpointId\":{\"type\":\"integer\"}},\"required\":[\"endpointId\"]}")
     );
 }

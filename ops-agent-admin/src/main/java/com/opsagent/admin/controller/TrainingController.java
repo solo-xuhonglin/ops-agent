@@ -36,6 +36,7 @@ public class TrainingController {
 
     @PostMapping
     @PreAuthorize("hasAuthority('training:write')")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
     public ApiResponse<?> create(@RequestBody TrainingRequest req) {
         return ApiResponse.ok(trainingJobService.trigger(req));
     }
@@ -50,6 +51,7 @@ public class TrainingController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('training:write')")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "training_delete", targetType = "training_job", targetParam = "id")
     public ApiResponse<?> delete(@PathVariable Long id) {
         trainingJobService.delete(id);
         return ApiResponse.ok();

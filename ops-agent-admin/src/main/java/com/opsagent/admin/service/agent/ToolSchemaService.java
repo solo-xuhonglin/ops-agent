@@ -17,9 +17,9 @@ public class ToolSchemaService {
 
     private final AgentToolRepository repository;
 
-    /** 注册时下发启用的只读工具（写工具待 M3 grantKey 机制接入） */
+    /** 注册时下发全部启用工具（含写工具；agent 侧对写工具检查 grantKey，无授权不执行） */
     public List<ToolSchema> readToolSchemas() {
-        return repository.findByEnabledTrueAndIsWriteFalseOrderByIdAsc().stream()
+        return repository.findByEnabledTrueOrderByIdAsc().stream()
                 .map(t -> ToolSchema.newBuilder()
                         .setName(t.getName())
                         .setDescription(t.getDescription())
