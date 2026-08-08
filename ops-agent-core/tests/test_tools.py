@@ -16,7 +16,7 @@ def make_http():
 
 def test_render_get_path_and_query():
     http = make_http()
-    tool = make_tool("training.get", "GET", "/api/training/jobs/{jobId}")
+    tool = make_tool("training_get", "GET", "/api/training/jobs/{jobId}")
     path, query, body = http._render(tool, {"jobId": 5, "page": 1})
     assert path == "/api/training/jobs/5"
     assert query == {"page": 1}
@@ -25,7 +25,7 @@ def test_render_get_path_and_query():
 
 def test_render_post_uses_body():
     http = make_http()
-    tool = make_tool("serving.deploy", "POST", "/api/serving/deploy")
+    tool = make_tool("serving_deploy", "POST", "/api/serving/deploy")
     path, query, body = http._render(tool, {"modelVersionId": 2})
     assert path == "/api/serving/deploy"
     assert query == {}
@@ -34,12 +34,12 @@ def test_render_post_uses_body():
 
 def test_registry_schemas_openai_format():
     registry = ToolRegistry()
-    registry.load([make_tool("training.list", "GET", "/api/training/jobs",
+    registry.load([make_tool("training_list", "GET", "/api/training/jobs",
                              '{"type":"object","properties":{"page":{"type":"integer"}},"required":[]}')])
     schemas = registry.schemas()
     assert schemas[0]["type"] == "function"
     fn = schemas[0]["function"]
-    assert fn["name"] == "training.list"
+    assert fn["name"] == "training_list"
     assert "page" in fn["parameters"]["properties"]
 
 
@@ -59,7 +59,7 @@ def test_http_call_injects_system_headers():
         return FakeResp()
 
     http._http.get = fake_get  # type: ignore[assignment]
-    tool = make_tool("training.list", "GET", "/api/training/jobs")
+    tool = make_tool("training_list", "GET", "/api/training/jobs")
 
     import asyncio
     result = asyncio.run(http.call(tool, {}, TaskContext(task_id="t9", task_token="tok9")))

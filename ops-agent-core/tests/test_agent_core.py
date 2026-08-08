@@ -54,7 +54,7 @@ def tool_call_msg(name, call_id="c1", args="{}"):
                             "function": {"name": name, "arguments": args}}]}
 
 
-def make_tool(name="training.list", method="GET", path="/api/training/jobs",
+def make_tool(name="training_list", method="GET", path="/api/training/jobs",
               params='{"type":"object","properties":{},"required":[]}'):
     return agent_pb2.ToolSchema(name=name, description="d", parameters=params,
                                 is_write=False, http_method=method, path_template=path)
@@ -66,7 +66,7 @@ async def test_handle_dispatch_loops_until_converged():
     registry = ToolRegistry()
     registry.load([make_tool()])
     http = FakeHttp()
-    llm = FakeLlm([tool_call_msg("training.list", args='{"page":0}'),
+    llm = FakeLlm([tool_call_msg("training_list", args='{"page":0}'),
                    {"role": "assistant", "content": "系统状态正常"}])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
@@ -74,7 +74,7 @@ async def test_handle_dispatch_loops_until_converged():
     # 事件：1 个 progress + 1 个 tool_call；工具被调用 1 次
     assert client.events[0][1] == "progress"
     assert client.events[1][1] == "tool_call"
-    assert http.calls[0][0] == "training.list"
+    assert http.calls[0][0] == "training_list"
     # 结果 ok + 结论来自 LLM
     task_id, ok, conclusion, _ = client.results[0]
     assert ok is True
@@ -105,7 +105,7 @@ async def test_handle_dispatch_unknown_tool_not_crashed():
     client = FakeClient()
     registry = ToolRegistry()  # 空注册表
     http = FakeHttp()
-    llm = FakeLlm([tool_call_msg("training.get"), {"role": "assistant", "content": "done"}])
+    llm = FakeLlm([tool_call_msg("training_get"), {"role": "assistant", "content": "done"}])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
@@ -131,7 +131,7 @@ async def test_handle_dispatch_llm_error_marks_failed():
 
 
 def test_parse_tool_calls_extracts_id_name_args():
-    msg = tool_call_msg("training.get", call_id="c9", args='{"jobId": 3}')
+    msg = tool_call_msg("training_get", call_id="c9", args='{"jobId": 3}')
     result = parse_tool_calls(msg)
-    assert result == [("c9", "training.get", {"jobId": 3})]
+    assert result == [("c9", "training_get", {"jobId": 3})]
     assert parse_tool_calls({"role": "assistant"}) == []
