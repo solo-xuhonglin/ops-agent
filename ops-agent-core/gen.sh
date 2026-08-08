@@ -2,6 +2,7 @@
 # Generate gRPC/protobuf Python stubs from proto/agent.proto into app/transport/.
 set -e
 cd "$(dirname "$0")"
+mkdir -p app/transport
 python -m grpc_tools.protoc \
   -I proto \
   --python_out=app/transport \

@@ -10,11 +10,10 @@ RUN pip install --no-cache-dir -r requirements.txt \
         -i https://pypi.tuna.tsinghua.edu.cn/simple \
         --timeout 60 --retries 5
 
-# proto → 生成 gRPC stub（容器内生成，保证与 proto 一致）
+# proto → 生成 gRPC stub（放最后：覆盖本地副本，保证与 proto 一致）
+COPY app/ app/
 COPY proto/agent.proto proto/
 COPY gen.sh .
 RUN chmod +x gen.sh && ./gen.sh
-
-COPY app/ app/
 
 CMD ["python", "-m", "app.main"]
