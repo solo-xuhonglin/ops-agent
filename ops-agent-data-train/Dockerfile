@@ -3,9 +3,10 @@ FROM pytorch/pytorch:2.3.1-cpu
 
 WORKDIR /train
 
-# 先装依赖（利用层缓存）
+# 先装依赖（利用层缓存）；使用国内 PyPI 镜像源以适配无国际网络出口的部署环境
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    -i https://mirrors.cloud.tencent.com/pypi/simple
 
 # 训练入口
 COPY train.py .
