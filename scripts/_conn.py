@@ -22,7 +22,9 @@ import os
 import paramiko
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_FILE = os.path.join(PROJECT_ROOT, "deploy-remote.env")
+# 凭据优先放用户主目录 ~/.ops-agent/deploy-remote.env（项目目录内容易被清理/同步覆盖），项目根为兼容兜底
+HOME_CFG = os.path.join(os.path.expanduser("~"), ".ops-agent", "deploy-remote.env")
+ENV_FILE = HOME_CFG if os.path.exists(HOME_CFG) else os.path.join(PROJECT_ROOT, "deploy-remote.env")
 
 
 def _load_env_file(path):
