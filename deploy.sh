@@ -117,6 +117,15 @@ fi
 # 部署凭证落盘路径（含数据库等已有信息），可用 CRED_FILE 环境变量覆盖
 CRED_FILE="${CRED_FILE:-/root/ops-agent-credentials.txt}"
 
+# 迁移历史装饰格式（===== 分隔线/冒号）→ .env 格式（KEY=VALUE），仅一次
+if [ -f "$CRED_FILE" ] && grep -q '^=====' "$CRED_FILE" 2>/dev/null; then
+  DS_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$CRED_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  echo "# ops-agent credentials (.env format; keys are appended, existing values never overwritten)" > "$CRED_FILE"
+  [ -n "$DS_KEY" ] && echo "DEEPSEEK_API_KEY=$DS_KEY" >> "$CRED_FILE"
+  echo "==> 凭证文件已迁移为 .env 格式: $CRED_FILE"
+fi
+[ -f "$CRED_FILE" ] || echo "# ops-agent credentials (.env format; keys are appended, existing values never overwritten)" > "$CRED_FILE"
+
 # 生成/保留一个密钥：若 .env 缺失该键或其值为占位符，则生成随机串并写回 .env
 ensure_secret() {
   local key="$1" current val
@@ -165,33 +174,23 @@ HTTP_PORT_VAL="$(grep -E '^HTTP_PORT=' .env | cut -d= -f2- || true)"
 MINIO_USER="$(grep -E '^MINIO_ROOT_USER=' .env | cut -d= -f2- || true)"
 MINIO_PASS="$(grep -E '^MINIO_ROOT_PASSWORD=' .env | cut -d= -f2- || true)"
 
-cat > "$CRED_FILE" <<EOF
-===== ops-agent 部署凭证（请妥善保管）=====
-生成时间: $(date '+%Y-%m-%d %H:%M:%S')
-服务器IP: $SERV_IP
-
-数据库信息:
-  DB_USERNAME: $DB_USER
-  DB_PASSWORD: $DB_PASSWORD
-  POSTGRES_DB: $PG_DB
-  POSTGRES_PORT: $PG_PORT
-
-JWT密钥:
-  JWT_SECRET: $JWT_SECRET
-
-MinIO 对象存储:
-  MINIO_ROOT_USER: $MINIO_USER
-  MINIO_ROOT_PASSWORD: $MINIO_PASS
-  MINIO_BUCKET: datasets
-  MinIO 控制台: http://$SERV_IP:${MINIO_CONSOLE_PORT:-9001}
-  (后端 admin 通过内部服务名 minio:9000 访问，无需对外暴露)
-
-前端访问: http://$SERV_IP:${HTTP_PORT_VAL:-80}
-后端API:  http://$SERV_IP:${ADM_PORT:-8080}/api
-默认账号: admin / admin123（首次登录后请立即修改）
-============================================
-EOF
-echo "==> 部署凭证已写入 $CRED_FILE"
+# 追加式写入凭证（.env 格式）：已有键不覆盖 —— 手工维护的键（如 DEEPSEEK_API_KEY）永不被部署抹掉
+write_cred() {
+  local key="$1" val="$2"
+  if ! grep -qE "^${key}=" "$CRED_FILE" 2>/dev/null; then
+    printf '%s=%s\n' "$key" "$val" >> "$CRED_FILE"
+  fi
+}
+write_cred DB_USERNAME "$DB_USER"
+write_cred DB_PASSWORD "$DB_PASSWORD"
+write_cred POSTGRES_DB "$PG_DB"
+write_cred POSTGRES_PORT "$PG_PORT"
+write_cred JWT_SECRET "$JWT_SECRET"
+write_cred MINIO_ROOT_USER "$MINIO_USER"
+write_cred MINIO_ROOT_PASSWORD "$MINIO_PASS"
+write_cred MINIO_BUCKET "datasets"
+write_cred DEEPSEEK_API_KEY "$(grep -E '^DEEPSEEK_API_KEY=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
+echo "==> 部署凭证已写入 $CRED_FILE（.env 格式，追加式）"
 
 # ===== 3. 宿主机编译（依赖缓存于本地 node_modules / 项目内 .m2）=====
 # Maven 本地仓库放在项目目录下（已被 .gitignore 忽略，可缓存复用）；产物在 target/（标准位置）
