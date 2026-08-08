@@ -17,6 +17,7 @@ usage() {
 服务（可多选，省略等同 all）:
   all         全部：前端 + 后端 + 训练/推理镜像 + 基础设施
   admin       后端 Spring Boot（mvn package → 重建 admin 镜像 → 重启）
+  agent       AI Agent（Python，构建镜像 → 启动，零端口暴露）
   front       前端 Vue（npm build → 重建 front 镜像 → 重启）
   train       训练镜像 ops-agent-train:latest（仅构建，不启动容器）
   serving     推理镜像 ops-agent-serving:latest（仅构建，不启动容器）
@@ -59,7 +60,7 @@ while [ $# -gt 0 ]; do
     --no-deps)    NO_DEPS=1 ;;
     --force-train) FORCE_BUILD_TRAIN=1 ;;
     --force-serving) FORCE_BUILD_SERVING=1 ;;
-    all|admin|front|train|serving|infra|postgres|minio) TARGETS+=("$1") ;;
+    all|admin|agent|front|train|serving|infra|postgres|minio) TARGETS+=("$1") ;;
     backend)      TARGETS+=("admin") ;;
     frontend)     TARGETS+=("front") ;;
     -*)           echo "ERROR: 未知选项 $1（用 --help 查看用法）" >&2; exit 1 ;;
@@ -272,9 +273,16 @@ build_serving() {
   fi
 }
 
+# AI Agent 镜像（常驻服务，零端口暴露；镜像小，直接构建）
+build_agent() {
+  echo "==> 构建 AI Agent 镜像 ops-agent-core:latest"
+  docker compose --env-file .env build agent
+}
+
 if [ "$DO_BUILD" = "1" ]; then
   if has_target front; then build_front; fi
   if has_target admin; then build_admin; fi
+  if has_target agent; then build_agent; fi
   if has_target train; then build_train; fi
   if has_target serving; then build_serving; fi
 else
