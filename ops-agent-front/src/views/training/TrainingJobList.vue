@@ -30,7 +30,7 @@
           <div class="row-actions">
             <v-btn v-if="canAgent" icon="mdi-robot" size="small" variant="text" color="primary"
                    title="让 Agent 分析" @click="analyze(item)" />
-            <v-btn icon="mdi-file-document-text" size="small" variant="text" color="primary"
+            <v-btn icon="mdi-file-document-outline" size="small" variant="text" color="primary"
                    title="查看日志" :disabled="!item.logKey" @click="openLog(item)" />
             <v-btn v-if="canWrite" icon="mdi-delete" size="small" variant="text" color="error"
                    title="删除" @click="remove(item)" />
