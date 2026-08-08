@@ -5,10 +5,11 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-# 依赖走国内 PyPI 镜像（与 train/serving 模块同套路）
-RUN pip install --no-cache-dir --upgrade pip && \
+# 依赖走国内 PyPI 镜像（阿里云，兼容性最好；带超时重试防网络抖动）
+RUN pip install --no-cache-dir --upgrade pip --timeout 60 --retries 5 && \
     pip install --no-cache-dir -r requirements.txt \
-        -i https://mirrors.cloud.tencent.com/pypi/simple
+        -i https://mirrors.aliyun.com/pypi/simple \
+        --timeout 60 --retries 5
 
 # proto → 生成 gRPC stub（容器内生成，保证与 proto 一致）
 COPY proto/agent.proto proto/
