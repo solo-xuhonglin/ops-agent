@@ -121,6 +121,26 @@ services:
     networks:
       - opsnet
 
+  # ===== AI Agent（常驻，零端口暴露；出站拨号 admin 的 gRPC 双向流）=====
+  agent:
+    build:
+      context: ./ops-agent-core
+      dockerfile: Dockerfile
+    image: ops-agent-core:latest
+    container_name: ops-agent-agent
+    restart: unless-stopped
+    depends_on:
+      - admin
+    environment:
+      WORKER_ID: ops-agent-core-1
+      ADMIN_GRPC_ADDR: admin:9090
+      # LLM 接入（M2 起使用）
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+    networks:
+      - opsnet
+
   # ===== 训练镜像（仅构建，不随 up 启动；由 admin 经 docker-java 动态实例化）=====
   train:
     image: ops-agent-train:latest
