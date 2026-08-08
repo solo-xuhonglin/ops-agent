@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6 list-title">角色管理</h2>
+      <h2 class="text-title-large list-title">角色管理</h2>
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建角色</v-btn>
     </div>
@@ -56,8 +56,10 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
+import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
+const { confirmDialog } = useConfirm()
 const canWrite = computed(() => auth.hasPerm('role:write'))
 
 const headers = [
@@ -113,7 +115,13 @@ async function save() {
 }
 
 async function remove(item) {
-  if (!confirm(`确认删除角色 ${item.name}？`)) return
+  const ok = await confirmDialog({
+    title: '删除角色',
+    message: `确定要删除角色「${item.name}」吗？删除后不可恢复。`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!ok) return
   await api.delete(`/roles/${item.id}`); load()
 }
 

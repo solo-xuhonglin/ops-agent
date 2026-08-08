@@ -2,7 +2,7 @@ import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
 import '@mdi/font/css/materialdesignicons.css'
-import { VDateInput } from 'vuetify/labs/VDateInput'
+import { VDateInput } from 'vuetify/components/VDateInput'
 
 export default createVuetify({
   components: {
@@ -12,6 +12,15 @@ export default createVuetify({
     defaultSet: 'mdi',
     aliases,
     sets: { mdi }
+  },
+  // 恢复 Vuetify 3 的断点阈值，避免 Vuetify 4 默认（md=840 等）改变既有响应式布局
+  display: {
+    thresholds: {
+      md: 960,
+      lg: 1280,
+      xl: 1920,
+      xxl: 2560
+    }
   },
   theme: {
     defaultTheme: 'light',

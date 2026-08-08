@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6 list-title">训练任务</h2>
+      <h2 class="text-title-large list-title">训练任务</h2>
       <v-spacer />
       <v-chip v-if="hasActive" color="info" size="small" class="mr-2">
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中

@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6 list-title">模型管理</h2>
+      <h2 class="text-title-large list-title">模型管理</h2>
       <v-spacer />
     </div>
 
@@ -38,13 +38,13 @@
       <v-card rounded="lg">
         <v-card-title>模型详情 · {{ detailItem?.name }}</v-card-title>
         <v-card-text>
-          <v-row dense>
-            <v-col cols="6"><div class="text-caption text-medium-emphasis">版本</div><div>{{ detailItem?.version }}</div></v-col>
-            <v-col cols="6"><div class="text-caption text-medium-emphasis">算法</div><div>{{ detailItem?.algorithm }}</div></v-col>
-            <v-col cols="6"><div class="text-caption text-medium-emphasis">关联数据集</div><div>#{{ detailItem?.datasetId }}</div></v-col>
-            <v-col cols="6"><div class="text-caption text-medium-emphasis">状态</div><div>{{ statusText(detailItem?.status) }}</div></v-col>
+          <v-row density="compact">
+            <v-col cols="6"><div class="text-body-small text-medium-emphasis">版本</div><div>{{ detailItem?.version }}</div></v-col>
+            <v-col cols="6"><div class="text-body-small text-medium-emphasis">算法</div><div>{{ detailItem?.algorithm }}</div></v-col>
+            <v-col cols="6"><div class="text-body-small text-medium-emphasis">关联数据集</div><div>#{{ detailItem?.datasetId }}</div></v-col>
+            <v-col cols="6"><div class="text-body-small text-medium-emphasis">状态</div><div>{{ statusText(detailItem?.status) }}</div></v-col>
           </v-row>
-          <div class="text-subtitle-2 mt-4 mb-2">训练指标</div>
+          <div class="text-body-large mt-4 mb-2">训练指标</div>
           <div v-if="metricsOf(detailItem)" class="d-flex flex-wrap ga-2">
             <v-chip variant="tonal" color="primary">MAE {{ metricsOf(detailItem).mae }}</v-chip>
             <v-chip variant="tonal" color="primary">RMSE {{ metricsOf(detailItem).rmse }}</v-chip>
@@ -68,8 +68,10 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
+import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
+const { confirmDialog } = useConfirm()
 const canWrite = computed(() => auth.hasPerm('model:write'))
 
 const headers = [
@@ -130,7 +132,13 @@ async function download(item) {
 }
 
 async function remove(item) {
-  if (!confirm(`确认删除模型 ${item.name}？`)) return
+  const ok = await confirmDialog({
+    title: '删除模型',
+    message: `确定要删除模型「${item.name}」吗？对应的模型文件与训练产物将一并清理。`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!ok) return
   try {
     await api.delete(`/models/${item.id}`)
     load()

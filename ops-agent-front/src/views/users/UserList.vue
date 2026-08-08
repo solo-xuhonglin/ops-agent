@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6 list-title">用户管理</h2>
+      <h2 class="text-title-large list-title">用户管理</h2>
       <v-spacer />
       <v-text-field
         v-model="search"
@@ -74,8 +74,10 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
+import { useConfirm } from '../../composables/useConfirm'
 
 const auth = useAuthStore()
+const { confirmDialog } = useConfirm()
 const canWrite = computed(() => auth.hasPerm('user:write'))
 
 const headers = [
@@ -158,7 +160,13 @@ async function save() {
 }
 
 async function remove(item) {
-  if (!confirm(`确认删除用户 ${item.username}？`)) return
+  const ok = await confirmDialog({
+    title: '删除用户',
+    message: `确定要删除用户「${item.username}」吗？删除后不可恢复。`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!ok) return
   await api.delete(`/users/${item.id}`)
   load()
 }

@@ -78,7 +78,7 @@ cp deploy-remote.env.example deploy-remote.env   # 然后填入真实值
 ```
 
 `deploy-remote.env` 已被 `.gitignore` 忽略，**不会**进入版本库。
-这份配置由 `deploy-remote.sh`、`deploy-remote.py`、`scripts/*.py` 三者共用，只需维护一处。
+这份配置由 `scripts/*.py`（经 `_conn.py`）共用，只需维护一处。
 
 ### 临时覆盖（切换目标服务器）
 

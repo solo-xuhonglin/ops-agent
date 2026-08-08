@@ -5,8 +5,8 @@
         <v-avatar color="primary" variant="tonal" size="64" class="mb-4">
           <v-icon size="36">mdi-weather-partly-cloudy</v-icon>
         </v-avatar>
-        <h2 class="text-h5 font-weight-bold">ops-agent 控制台</h2>
-        <p class="text-body-2 text-medium-emphasis mt-1">算法资产平台 · 登录</p>
+        <h2 class="text-headline-small font-weight-bold">ops-agent 控制台</h2>
+        <p class="text-body-medium text-medium-emphasis mt-1">算法资产平台 · 登录</p>
       </div>
       <v-form @submit.prevent="onSubmit" ref="form">
         <v-text-field

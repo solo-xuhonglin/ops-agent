@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="mb-6">
-      <h2 class="text-h5 font-weight-bold mb-1">{{ greeting }}，{{ auth.user?.displayName || auth.user?.username }}</h2>
+      <h2 class="text-headline-small font-weight-bold mb-1">{{ greeting }}，{{ auth.user?.displayName || auth.user?.username }}</h2>
       <p class="text-medium-emphasis">算法资产平台 · 将 LSTM 天气模型工具化、Agent 化、平台化</p>
     </div>
 
@@ -11,8 +11,8 @@
           <v-card-text>
             <div class="d-flex align-center justify-space-between">
               <div>
-                <div class="text-overline text-medium-emphasis">{{ s.title }}</div>
-                <div class="text-h4 font-weight-bold mt-1">{{ s.value }}</div>
+                <div class="text-label-medium text-medium-emphasis">{{ s.title }}</div>
+                <div class="text-headline-large font-weight-bold mt-1">{{ s.value }}</div>
               </div>
               <v-avatar :color="s.color" variant="tonal" size="48">
                 <v-icon size="26">{{ s.icon }}</v-icon>
@@ -26,7 +26,7 @@
     <v-card rounded="lg" class="mt-6">
       <v-card-title class="font-weight-bold pt-4 px-4">快速入口</v-card-title>
       <v-card-text class="pa-4">
-        <v-row dense>
+        <v-row density="compact">
           <v-col cols="6" sm="4" md="3" v-for="m in menus" :key="m.to">
             <v-card
               class="menu-card text-center pa-4"
@@ -37,7 +37,7 @@
               <v-avatar color="primary" variant="tonal" size="40" class="mb-2">
                 <v-icon>{{ m.icon }}</v-icon>
               </v-avatar>
-              <div class="text-body-2 font-weight-medium">{{ m.title }}</div>
+              <div class="text-body-medium font-weight-medium">{{ m.title }}</div>
             </v-card>
           </v-col>
         </v-row>
@@ -107,6 +107,6 @@ onMounted(load)
 }
 .menu-card:hover {
   transform: translateY(-2px);
-  background: rgba(var(--v-theme-primary), 0.05);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, transparent);
 }
 </style>

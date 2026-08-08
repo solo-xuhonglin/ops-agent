@@ -13,8 +13,8 @@
           <v-icon>mdi-brain</v-icon>
         </v-avatar>
         <div v-if="!(rail && mdAndUp)">
-          <div class="text-subtitle-1 font-weight-bold">ops-agent</div>
-          <div class="text-caption text-medium-emphasis">算法资产平台</div>
+          <div class="text-title-small font-weight-bold">ops-agent</div>
+          <div class="text-body-small text-medium-emphasis">算法资产平台</div>
         </div>
       </div>
       <v-divider />
@@ -78,7 +78,7 @@
   border-right: 1px solid rgba(0, 0, 0, 0.06);
 }
 .nav-list :deep(.v-list-item--active) {
-  background: rgba(var(--v-theme-primary), 0.1);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent);
 }
 .nav-list :deep(.v-list-item--active .v-list-item-title) {
   color: rgb(var(--v-theme-primary));

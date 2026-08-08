@@ -1,5 +1,10 @@
 /* 全局列表页与通用样式（实用美化） */
 
+/* Vuetify 4 移除了全局 CSS reset，这里补齐标题/段落默认 margin（项目内标题多用 text-* 类 + 显式 margin 类） */
+h1, h2, h3, h4, h5, h6, p {
+  margin: 0;
+}
+
 /* 列表页标题 */
 .list-title {
   font-weight: 700;
@@ -19,10 +24,10 @@
 
 /* 表格行 hover */
 .data-card .v-table tbody tr:hover {
-  background: rgba(var(--v-theme-primary), 0.04);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
 }
 
 /* 操作按钮 hover 更明确 */
 .v-btn.v-btn--icon:hover {
-  background: rgba(var(--v-theme-primary), 0.08);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
 }

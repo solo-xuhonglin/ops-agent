@@ -1,7 +1,7 @@
 <template>
   <div>
     <div class="d-flex align-center mb-4">
-      <h2 class="text-h6 list-title">数据集管理</h2>
+      <h2 class="text-title-large list-title">数据集管理</h2>
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
     </div>
@@ -122,7 +122,7 @@
               <v-select v-model="trainForm.algorithm" :items="['LSTM']" label="算法" variant="outlined" />
             </v-col>
           </v-row>
-          <div class="text-subtitle-2 mb-2">超参数</div>
+          <div class="text-body-large mb-2">超参数</div>
           <v-row>
             <v-col cols="4"><v-text-field v-model.number="trainForm.seqLen" label="seqLen" type="number" variant="outlined" density="compact" /></v-col>
             <v-col cols="4"><v-text-field v-model.number="trainForm.hiddenSize" label="hiddenSize" type="number" variant="outlined" density="compact" /></v-col>
@@ -147,6 +147,7 @@ import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useAuthStore } from '../../stores/auth'
 import api from '../../plugins/axios'
+import { useConfirm } from '../../composables/useConfirm'
 
 const CITY_OPTIONS = [
   '北京', '上海', '广州', '深圳', '成都', '杭州', '武汉', '西安', '南京', '重庆',
@@ -154,6 +155,7 @@ const CITY_OPTIONS = [
 ]
 
 const auth = useAuthStore()
+const { confirmDialog } = useConfirm()
 const router = useRouter()
 const canWrite = computed(() => auth.hasPerm('dataset:write'))
 const canTrain = computed(() => auth.hasPerm('training:write'))
@@ -209,9 +211,15 @@ async function submitTrain() {
       }
     })
     trainDialog.value = false
-    if (confirm('已提交训练任务，是否前往训练任务页查看进度？')) {
-      router.push('/training/jobs')
-    }
+    const go = await confirmDialog({
+      title: '训练任务已提交',
+      message: '训练任务已提交，是否前往「训练任务」页查看进度？',
+      confirmText: '前往查看',
+      cancelText: '留在本页',
+      color: 'secondary',
+      icon: 'mdi-rocket-launch-outline'
+    })
+    if (go) router.push('/training/jobs')
   } catch (e) {
     alert(e.response?.data?.message || '提交训练失败')
   } finally {
@@ -276,7 +284,13 @@ async function save() {
 }
 
 async function remove(item) {
-  if (!confirm(`确认删除数据集 ${item.name}？`)) return
+  const ok = await confirmDialog({
+    title: '删除数据集',
+    message: `确定要删除数据集「${item.name}」吗？关联的天气数据与文件将一并清理。`,
+    confirmText: '删除',
+    danger: true
+  })
+  if (!ok) return
   await api.delete(`/datasets/${item.id}`); load()
 }
 
