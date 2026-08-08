@@ -108,26 +108,23 @@ else
 fi
 cd "$PROJECT_DIR"
 
-# ===== 2. 准备 .env（自动补全缺失/占位符密钥，并落盘凭据）=====
-if [ ! -f .env ]; then
-  echo "==> 未找到 .env，已从 .env.example 复制"
-  cp .env.example .env
+# ===== 2. 准备部署环境文件（权威配置放 /root，避免随项目目录被清理/同步覆盖）=====
+ENV_FILE="${ENV_FILE:-/root/ops-agent.env}"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "==> 未找到 $ENV_FILE，已从 .env.example 复制"
+  cp .env.example "$ENV_FILE"
 fi
 
-# 部署凭证落盘路径（.env 格式，追加式），可用 CRED_FILE 环境变量覆盖
-CRED_FILE="${CRED_FILE:-/root/ops-agent-credentials.txt}"
-[ -f "$CRED_FILE" ] || echo "# ops-agent credentials (.env format; keys are appended, existing values never overwritten)" > "$CRED_FILE"
-
-# 生成/保留一个密钥：若 .env 缺失该键或其值为占位符，则生成随机串并写回 .env
+# 生成/保留一个密钥：若 ENV_FILE 缺失该键或其值为占位符，则生成随机串并写回
 ensure_secret() {
   local key="$1" current val
-  current="$(grep -E "^${key}=" .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
+  current="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)"
   if [ -z "$current" ] || printf '%s' "$current" | grep -qi "CHANGE_ME"; then
     val="$(openssl rand -base64 24 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 32 || true)"
-    if grep -qE "^${key}=" .env; then
-      sed -i "s|^${key}=.*|${key}=${val}|" .env
+    if grep -qE "^${key}=" "$ENV_FILE"; then
+      sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
     else
-      printf '%s=%s\n' "$key" "$val" >> .env
+      printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
     fi
     echo "$val"
   else
@@ -138,8 +135,8 @@ ensure_secret() {
 # 确保某键存在（带默认值），不覆盖已有值
 ensure_present() {
   local key="$1" val="$2"
-  if ! grep -qE "^${key}=" .env; then
-    printf '%s=%s\n' "$key" "$val" >> .env
+  if ! grep -qE "^${key}=" "$ENV_FILE"; then
+    printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
   fi
 }
 
@@ -153,36 +150,18 @@ ensure_present MINIO_LOG_BUCKET logs
 ensure_present MINIO_PORT 9000
 ensure_present MINIO_CONSOLE_PORT 9001
 
-# 读取最终值用于写凭据文件
-SERV_IP="$(grep -E '^SERVER_IP=' .env | cut -d= -f2- || true)"
-# 未在 .env 指定时自动探测本机地址，不硬编码任何 IP
+# 读取最终值（供 compose 与提示输出）
+SERV_IP="$(grep -E '^SERVER_IP=' "$ENV_FILE" | cut -d= -f2- || true)"
+# 未指定时自动探测本机地址，不硬编码任何 IP
 [ -z "$SERV_IP" ] && SERV_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [ -z "$SERV_IP" ] && SERV_IP="unknown"
-DB_USER="$(grep -E '^DB_USERNAME=' .env | cut -d= -f2- || true)"
-PG_DB="$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2- || true)"
-PG_PORT="$(grep -E '^POSTGRES_PORT=' .env | cut -d= -f2- || true)"
-ADM_PORT="$(grep -E '^ADMIN_PORT=' .env | cut -d= -f2- || true)"
-HTTP_PORT_VAL="$(grep -E '^HTTP_PORT=' .env | cut -d= -f2- || true)"
-MINIO_USER="$(grep -E '^MINIO_ROOT_USER=' .env | cut -d= -f2- || true)"
-MINIO_PASS="$(grep -E '^MINIO_ROOT_PASSWORD=' .env | cut -d= -f2- || true)"
-
-# 追加式写入凭证（.env 格式）：已有键不覆盖 —— 手工维护的键（如 DEEPSEEK_API_KEY）永不被部署抹掉
-write_cred() {
-  local key="$1" val="$2"
-  if ! grep -qE "^${key}=" "$CRED_FILE" 2>/dev/null; then
-    printf '%s=%s\n' "$key" "$val" >> "$CRED_FILE"
-  fi
-}
-write_cred DB_USERNAME "$DB_USER"
-write_cred DB_PASSWORD "$DB_PASSWORD"
-write_cred POSTGRES_DB "$PG_DB"
-write_cred POSTGRES_PORT "$PG_PORT"
-write_cred JWT_SECRET "$JWT_SECRET"
-write_cred MINIO_ROOT_USER "$MINIO_USER"
-write_cred MINIO_ROOT_PASSWORD "$MINIO_PASS"
-write_cred MINIO_BUCKET "datasets"
-write_cred DEEPSEEK_API_KEY "$(grep -E '^DEEPSEEK_API_KEY=' .env 2>/dev/null | head -1 | cut -d= -f2- || true)"
-echo "==> 部署凭证已写入 $CRED_FILE（.env 格式，追加式）"
+DB_USER="$(grep -E '^DB_USERNAME=' "$ENV_FILE" | cut -d= -f2- || true)"
+PG_DB="$(grep -E '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- || true)"
+PG_PORT="$(grep -E '^POSTGRES_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
+ADM_PORT="$(grep -E '^ADMIN_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
+HTTP_PORT_VAL="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2- || true)"
+MINIO_USER="$(grep -E '^MINIO_ROOT_USER=' "$ENV_FILE" | cut -d= -f2- || true)"
+MINIO_PASS="$(grep -E '^MINIO_ROOT_PASSWORD=' "$ENV_FILE" | cut -d= -f2- || true)"
 
 # ===== 3. 宿主机编译（依赖缓存于本地 node_modules / 项目内 .m2）=====
 # Maven 本地仓库放在项目目录下（已被 .gitignore 忽略，可缓存复用）；产物在 target/（标准位置）
@@ -235,7 +214,7 @@ build_train() {
     echo "==> 训练镜像 $TRAIN_IMAGE 已是最新，跳过构建（强制重建：./deploy.sh --force-train）"
   else
     echo "==> 构建训练镜像 $TRAIN_IMAGE（首次部署或训练代码/依赖有变更）"
-    docker compose --env-file .env --profile tools build train
+    docker compose --env-file "$ENV_FILE" --profile tools build train
     printf '%s' "$TRAIN_HASH" > "$TRAIN_STAMP"
   fi
 }
@@ -259,7 +238,7 @@ build_serving() {
     echo "==> 推理镜像 $SERVING_IMAGE 已是最新，跳过构建（强制重建：./deploy.sh --force-serving）"
   else
     echo "==> 构建推理镜像 $SERVING_IMAGE（首次部署或推理代码/依赖有变更）"
-    docker compose --env-file .env --profile tools build serving
+    docker compose --env-file "$ENV_FILE" --profile tools build serving
     printf '%s' "$SERVING_HASH" > "$SERVING_STAMP"
   fi
 }
@@ -267,7 +246,7 @@ build_serving() {
 # AI Agent 镜像（常驻服务，零端口暴露；镜像小，直接构建）
 build_agent() {
   echo "==> 构建 AI Agent 镜像 ops-agent-core:latest"
-  docker compose --env-file .env build agent
+  docker compose --env-file "$ENV_FILE" build agent
 }
 
 if [ "$DO_BUILD" = "1" ]; then
@@ -297,8 +276,8 @@ fi
 if [ "$DO_UP" != "1" ]; then
   echo "==> 跳过 compose up（--build-only）"
 elif [ "$UP_ALL" = "1" ]; then
-  echo "==> 加载 .env，构建轻量镜像并启动（全部服务）"
-  docker compose --env-file .env up -d --build
+  echo "==> 加载 $ENV_FILE，构建轻量镜像并启动（全部服务）"
+  docker compose --env-file "$ENV_FILE" up -d --build
 elif [ ${#UP_SERVICES[@]} -eq 0 ]; then
   echo "==> 无需启动的服务（目标仅含 train/serving，工具镜像只构建不常驻）"
 else
@@ -306,7 +285,7 @@ else
   [ "$DO_BUILD" = "1" ] && UP_FLAGS+=(--build)
   [ "$NO_DEPS" = "1" ] && UP_FLAGS+=(--no-deps)
   echo "==> 启动指定服务: ${UP_SERVICES[*]}（flags: ${UP_FLAGS[*]}）"
-  docker compose --env-file .env up "${UP_FLAGS[@]}" "${UP_SERVICES[@]}"
+  docker compose --env-file "$ENV_FILE" up "${UP_FLAGS[@]}" "${UP_SERVICES[@]}"
 fi
 
 if [ "$DO_UP" = "1" ]; then
