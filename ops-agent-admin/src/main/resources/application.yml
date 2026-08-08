@@ -57,3 +57,7 @@ serving:
 grpc:
   server:
     port: ${AGENT_GRPC_PORT:9090}
+    # 内网长连接，鉴权在 HTTP 层（scoped taskToken）+ 注册机制；
+    # 禁用 grpc starter 的 spring-security 自动配置（否则因缺 GrpcAuthenticationReader 启动失败）
+    security:
+      enabled: false
