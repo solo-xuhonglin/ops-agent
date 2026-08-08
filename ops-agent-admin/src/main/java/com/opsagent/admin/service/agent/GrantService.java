@@ -44,6 +44,12 @@ public class GrantService {
         return ttlSeconds;
     }
 
+    /** 探活（不消费）：key 是否仍在 Redis（未过期、未消费）。供过期扫描判定。 */
+    public boolean exists(String grantKey) {
+        return grantKey != null && !grantKey.isBlank()
+                && Boolean.TRUE.equals(redis.hasKey(grantKey));
+    }
+
     /**
      * 原子消费并校验（action + targetId 匹配，targetType 由 action 隐含不作硬比对）。
      * 返回匹配的 suggestionId；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。

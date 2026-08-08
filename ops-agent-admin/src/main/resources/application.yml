@@ -71,3 +71,5 @@ agent:
   grant:
     ttl-seconds: ${AGENT_GRANT_TTL_SECONDS:600}
     key-prefix: "agent:grant:"
+  task:
+    timeout-seconds: ${AGENT_TASK_TIMEOUT_SECONDS:300}

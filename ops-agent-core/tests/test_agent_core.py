@@ -73,6 +73,27 @@ def make_tool(name="training_list", method="GET", path="/api/training/jobs",
                                 is_write=False, http_method=method, path_template=path)
 
 
+class CancelLlm(FakeLlm):
+    """LLM 调用点抛 CancelledError（模拟 admin CancelTask → task.cancel()）。"""
+
+    async def ainvoke(self, messages):
+        raise asyncio.CancelledError
+
+
+@pytest.mark.asyncio
+async def test_handle_dispatch_cancelled_no_result():
+    """admin 取消：异常传播（LangGraph 包装为 NodeCancelledError）且不回发 result（避免覆盖 admin 侧 CANCELLED）。"""
+    from langgraph.errors import NodeCancelledError
+
+    client = FakeClient()
+    registry = ToolRegistry()
+    llm = CancelLlm([])
+    http = FakeHttp()
+    with pytest.raises(NodeCancelledError):
+        await core.handle_dispatch(client, registry, llm, http, make_dispatch())
+    assert client.results == []  # 未发 TaskResult
+
+
 @pytest.mark.asyncio
 async def test_handle_dispatch_loops_until_converged():
     client = FakeClient()

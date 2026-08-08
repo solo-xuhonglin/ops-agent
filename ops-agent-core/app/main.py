@@ -3,6 +3,7 @@ import asyncio
 import logging
 
 from langchain_openai import ChatOpenAI
+from langgraph.errors import NodeCancelledError
 
 from app.agent import core
 from app.config import Config
@@ -22,6 +23,9 @@ AGENTS = [
     ("ops-core", ["diagnose_training", "diagnose_serving",
                   "diagnose_dataset", "model_review", "question"]),
 ]
+
+# 执行中的任务：task_id -> asyncio.Task（供 CancelTask 精确取消）
+active_tasks: dict[str, asyncio.Task] = {}
 
 
 async def amain() -> None:
@@ -44,6 +48,7 @@ async def amain() -> None:
     client.on("register_ack", lambda m: _load_tools(registry, m))
     client.on("authorization_grant", lambda m: _on_grant(grants, m))
     client.on("task_dispatch", lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds))
+    client.on("cancel_task", lambda m: _on_cancel(m))
 
     log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s",
              cfg.worker_id, cfg.admin_grpc_addr, cfg.deepseek_base_url, cfg.deepseek_model)
@@ -64,7 +69,25 @@ async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
 
 async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: ChatOpenAI,
                     http: AdminHttpClient, msg: agent_pb2.ServerMessage, max_rounds: int) -> None:
-    await core.handle_dispatch(client, registry, llm, http, msg, max_rounds)
+    task_id = msg.task_dispatch.task_id
+    active_tasks[task_id] = asyncio.current_task()  # 记录以便 CancelTask 精确取消
+    try:
+        await core.handle_dispatch(client, registry, llm, http, msg, max_rounds)
+    except NodeCancelledError:
+        # admin 取消：core 已打日志，吞掉避免 asyncio "Task exception was never retrieved" 告警
+        pass
+    finally:
+        active_tasks.pop(task_id, None)
+
+
+async def _on_cancel(msg: agent_pb2.ServerMessage) -> None:
+    task_id = msg.cancel_task.task_id
+    task = active_tasks.get(task_id)
+    if task and not task.done():
+        log.info("cancelling task %s (reason=%s)", task_id, msg.cancel_task.reason)
+        task.cancel()
+    else:
+        log.info("cancel for unknown/inactive task %s (reason=%s)", task_id, msg.cancel_task.reason)
 
 
 if __name__ == "__main__":

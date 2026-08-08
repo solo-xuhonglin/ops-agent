@@ -5,12 +5,14 @@
 收敛后解析结论 + suggestions(JSON 代码块) → TaskResult。
 对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
 """
+import asyncio
 import json
 import logging
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langgraph.errors import NodeCancelledError
 
 from app.agent.context import TaskContext
 from app.agent.graph import build_graph, run_graph
@@ -72,6 +74,10 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  suggestions=_to_proto_suggestions(suggestions))
         log.info("task done: %s suggestions=%s", ctx.task_id, len(suggestions))
+    except (asyncio.CancelledError, NodeCancelledError):
+        # admin 超时/手动取消：不回发 result（admin 已置 CANCELLED，避免覆盖状态）
+        log.info("task cancelled by admin: %s", ctx.task_id)
+        raise
     except Exception as e:  # noqa: BLE001 - 单任务失败不拖垮 worker
         log.error("task failed: %s", e, exc_info=True)
         await client.send_result(ctx.task_id, ok=False,

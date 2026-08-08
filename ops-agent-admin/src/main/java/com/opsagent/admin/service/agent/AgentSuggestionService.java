@@ -11,10 +11,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 
 /**
  * 处置建议闭环：建议落库(PENDING) → 人工确认(approve)签发 grantKey 推 agent → 忽略(reject)。
@@ -105,5 +107,33 @@ public class AgentSuggestionService {
                 .map(AgentTask::getWorkerId)
                 .flatMap(workerRegistry::get)
                 .orElse(null);
+    }
+
+    /**
+     * 定时过期扫描：APPROVED 且 grantKey 已不在 Redis（TTL 到期未执行 / 已消费但执行任务未回写）且
+     * 关联 execute_suggestion 任务不在执行中 → 置 EXPIRED（设计状态流转：APPROVED ──key 过期──► EXPIRED）。
+     */
+    @Scheduled(fixedDelay = 60_000)
+    @Transactional
+    public void expireScan() {
+        for (AgentSuggestion s : suggestionRepository.findByStatus("APPROVED")) {
+            if (s.getGrantKey() == null || grantService.exists(s.getGrantKey())) {
+                continue; // key 仍有效（未过期）
+            }
+            if (executeTaskRunning(s)) {
+                continue; // execute 任务仍在执行，等它回写（避免误置）
+            }
+            s.setStatus("EXPIRED");
+            suggestionRepository.save(s);
+            log.info("suggestion expired: id={} key={}", s.getId(), s.getGrantKey());
+        }
+    }
+
+    /** 该建议的 execute_suggestion 任务是否还在执行（RUNNING/DISPATCHED）。 */
+    private boolean executeTaskRunning(AgentSuggestion s) {
+        String fragment = "\"suggestionId\":" + s.getId();
+        return !taskRepository.findByTaskTypeAndQueryContainingAndStatusIn(
+                "execute_suggestion", fragment,
+                List.of("DISPATCHED", "RUNNING")).isEmpty();
     }
 }

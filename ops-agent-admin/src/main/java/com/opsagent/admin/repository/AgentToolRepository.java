@@ -15,4 +15,7 @@ public interface AgentToolRepository extends JpaRepository<AgentTool, Long> {
 
     /** 下发全部启用工具（含写工具；agent 侧无 grantKey 时不执行写操作） */
     List<AgentTool> findByEnabledTrueOrderByIdAsc();
+
+    /** 管理面列表（人用） */
+    List<AgentTool> findAllByOrderByIdAsc();
 }

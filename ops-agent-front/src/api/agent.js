@@ -30,3 +30,12 @@ export function approveSuggestion(id) {
 export function rejectSuggestion(id) {
   return api.post(`/agent/suggestions/${id}/reject`)
 }
+
+// 工具注册表（人用）：列表 + 启停（能力=数据，改库即生效，下次注册下发）
+export function listTools() {
+  return api.get('/agent/tools')
+}
+
+export function setToolEnabled(id, enabled) {
+  return api.put(`/agent/tools/${id}/enabled`, { enabled })
+}
