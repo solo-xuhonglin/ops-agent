@@ -36,10 +36,8 @@ async def amain() -> None:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
     client.on("register_ack", lambda m: _load_tools(registry, m))
-    client.on("authorization_grant", lambda m: grants.add(m.authorization_grant))
-    client.on("task_dispatch",
-              lambda m: asyncio.create_task(
-                  core.handle_dispatch(client, registry, llm, http, m, cfg.max_tool_rounds)))
+    client.on("authorization_grant", lambda m: _on_grant(grants, m))
+    client.on("task_dispatch", lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds))
 
     log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s",
              cfg.worker_id, cfg.admin_grpc_addr, cfg.deepseek_base_url, cfg.deepseek_model)
@@ -52,6 +50,15 @@ async def amain() -> None:
 
 async def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> None:
     registry.load(list(msg.register_ack.tools))
+
+
+async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
+    grants.add(msg.authorization_grant)
+
+
+async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: DeepSeekClient,
+                    http: AdminHttpClient, msg: agent_pb2.ServerMessage, max_rounds: int) -> None:
+    await core.handle_dispatch(client, registry, llm, http, msg, max_rounds)
 
 
 if __name__ == "__main__":
