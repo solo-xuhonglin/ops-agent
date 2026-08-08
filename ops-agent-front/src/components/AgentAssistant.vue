@@ -14,17 +14,24 @@
                        :width="drawerWidth" class="agent-drawer">
       <!-- 左缘拖拽手柄：横向拖动调整抽屉宽度 -->
       <div class="drawer-resizer" @pointerdown="startResize" />
-      <!-- 头部：标题 + 历史/对话切换 + 关闭 -->
+      <!-- 头部：标题 + 处置建议/历史任务入口 + 关闭 -->
       <template #prepend>
         <div class="d-flex align-center px-4 py-3">
           <v-icon color="primary">mdi-robot</v-icon>
           <span class="text-title-medium font-weight-bold ml-2">Agent 助手</span>
           <v-spacer />
-          <v-tooltip text="历史记录" location="bottom">
+          <v-tooltip text="处置建议" location="bottom">
+            <template #activator="{ props }">
+              <v-btn v-bind="props" icon="mdi-clipboard-text-outline" variant="text" size="small"
+                     :color="store.activeView === 'history' && historyTab === 'suggestions' ? 'primary' : ''"
+                     @click="switchList('suggestions')" />
+            </template>
+          </v-tooltip>
+          <v-tooltip text="历史任务" location="bottom">
             <template #activator="{ props }">
               <v-btn v-bind="props" icon="mdi-history" variant="text" size="small"
-                     :color="store.activeView === 'history' ? 'primary' : ''"
-                     @click="store.setView(store.activeView === 'history' ? 'chat' : 'history')" />
+                     :color="store.activeView === 'history' && historyTab === 'tasks' ? 'primary' : ''"
+                     @click="switchList('tasks')" />
             </template>
           </v-tooltip>
           <v-btn icon="mdi-close" variant="text" size="small" @click="store.closeDrawer()" />
@@ -111,65 +118,57 @@
           </div>
         </div>
 
-        <!-- 历史视图 -->
+        <!-- 历史视图：处置建议 / 历史任务，由头部两个图标切换 -->
         <div v-else class="d-flex flex-column fill-height">
-          <v-tabs v-model="historyTab" density="compact" class="px-2">
-            <v-tab value="suggestions">处置建议</v-tab>
-            <v-tab value="tasks">历史任务</v-tab>
-          </v-tabs>
-          <v-window v-model="historyTab" class="flex-grow-1 overflow-y-auto">
+          <div class="flex-grow-1 overflow-y-auto">
             <!-- 建议列表 -->
-            <v-window-item value="suggestions">
-              <div class="pa-2">
-                <div v-for="s in store.suggestions" :key="s.id"
-                     class="history-item mb-1" :class="{ 'history-item--pending': s.status === 'PENDING' }">
-                  <div class="history-item__head">
-                    <v-avatar :color="priorityColor(s.priority)" size="28" variant="tonal">
-                      <v-icon size="16" :color="priorityColor(s.priority)">{{ actionIcon(s.actionType) }}</v-icon>
-                    </v-avatar>
-                    <span class="history-item__title">{{ actionText(s.actionType) }}</span>
-                    <v-chip size="x-small" :color="sugColor(s.status)">{{ sugText(s.status) }}</v-chip>
-                    <span class="history-item__time">{{ fmtDateTime(s.createdAt) }}</span>
-                  </div>
-                  <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
-                  <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis history-item__clamp-2" :title="s.reason">{{ s.reason }}</div>
-                  <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
-                    <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
-                    <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
-                  </div>
-                  <div v-else-if="s.status === 'EXECUTED' && s.result"
-                       class="history-item__body text-caption text-success history-item__clamp-3" :title="s.result">{{ s.result }}</div>
+            <div v-if="historyTab === 'suggestions'" class="pa-2">
+              <div v-for="s in store.suggestions" :key="s.id"
+                   class="history-item mb-1" :class="{ 'history-item--pending': s.status === 'PENDING' }">
+                <div class="history-item__head">
+                  <v-avatar :color="priorityColor(s.priority)" size="28" variant="tonal">
+                    <v-icon size="16" :color="priorityColor(s.priority)">{{ actionIcon(s.actionType) }}</v-icon>
+                  </v-avatar>
+                  <span class="history-item__title">{{ actionText(s.actionType) }}</span>
+                  <v-chip size="x-small" :color="sugColor(s.status)">{{ sugText(s.status) }}</v-chip>
+                  <span class="history-item__time">{{ fmtDateTime(s.createdAt) }}</span>
                 </div>
-                <div v-if="!store.suggestions.length" class="empty-hint">
-                  <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
-                  <div class="text-body-medium text-medium-emphasis">暂无处置建议</div>
+                <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
+                <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis history-item__clamp-2" :title="s.reason">{{ s.reason }}</div>
+                <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
+                  <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
+                  <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
                 </div>
+                <div v-else-if="s.status === 'EXECUTED' && s.result"
+                     class="history-item__body text-caption text-success history-item__clamp-3" :title="s.result">{{ s.result }}</div>
               </div>
-            </v-window-item>
+              <div v-if="!store.suggestions.length" class="empty-hint">
+                <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
+                <div class="text-body-medium text-medium-emphasis">暂无处置建议</div>
+              </div>
+            </div>
             <!-- 任务列表 -->
-            <v-window-item value="tasks">
-              <div class="pa-2">
-                <div v-for="t in store.tasks" :key="t.taskId"
-                     class="history-item history-item--compact history-item--clickable mb-1"
-                     :class="{ 'history-item--active': store.currentTask?.taskId === t.taskId }"
-                     @click="store.selectTask(t.taskId)">
-                  <div class="history-item__head">
-                    <v-avatar color="primary" size="24" variant="tonal">
-                      <v-icon size="14">mdi-robot</v-icon>
-                    </v-avatar>
-                    <span class="history-item__title">{{ taskTypeText(t.taskType) }}</span>
-                    <v-chip size="x-small" :color="taskColor(t.status)">{{ taskText(t.status) }}</v-chip>
-                    <span class="history-item__time">{{ fmtDateTime(t.createdAt) }}</span>
-                  </div>
-                  <div class="history-item__body">{{ t.query || targetText(t) }}</div>
+            <div v-else class="pa-2">
+              <div v-for="t in store.tasks" :key="t.taskId"
+                   class="history-item history-item--compact history-item--clickable mb-1"
+                   :class="{ 'history-item--active': store.currentTask?.taskId === t.taskId }"
+                   @click="store.selectTask(t.taskId)">
+                <div class="history-item__head">
+                  <v-avatar color="primary" size="24" variant="tonal">
+                    <v-icon size="14">mdi-robot</v-icon>
+                  </v-avatar>
+                  <span class="history-item__title">{{ taskTypeText(t.taskType) }}</span>
+                  <v-chip size="x-small" :color="taskColor(t.status)">{{ taskText(t.status) }}</v-chip>
+                  <span class="history-item__time">{{ fmtDateTime(t.createdAt) }}</span>
                 </div>
-                <div v-if="!store.tasks.length" class="empty-hint">
-                  <v-icon icon="mdi-history" size="40" class="mb-2" />
-                  <div class="text-body-medium text-medium-emphasis">暂无历史任务</div>
-                </div>
+                <div class="history-item__body">{{ t.query || targetText(t) }}</div>
               </div>
-            </v-window-item>
-          </v-window>
+              <div v-if="!store.tasks.length" class="empty-hint">
+                <v-icon icon="mdi-history" size="40" class="mb-2" />
+                <div class="text-body-medium text-medium-emphasis">暂无历史任务</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </v-navigation-drawer>
@@ -194,6 +193,17 @@ const canWrite = computed(() => auth.hasPerm('agent:write'))
 const input = ref('')
 const sending = ref(false)
 const historyTab = ref('suggestions')
+
+// 头部两个图标：切到对应列表；再次点击当前列表图标回到对话视图
+function switchList(tab) {
+  if (store.activeView === 'history' && historyTab.value === tab) {
+    store.activeView = 'chat'
+  } else {
+    store.activeView = 'history'
+    historyTab.value = tab
+    store.refreshAll()
+  }
+}
 
 // ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
 const MIN_W = 320
