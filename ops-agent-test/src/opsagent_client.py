@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_BASE_URL = os.getenv("BASE_URL", "http://118.195.145.247:8080/api")
+DEFAULT_BASE_URL = os.getenv("BASE_URL", "http://localhost:8080/api")
 DEFAULT_USER = os.getenv("ADMIN_USERNAME", "admin")
 DEFAULT_PASS = os.getenv("ADMIN_PASSWORD", "admin123")
 

@@ -11,14 +11,17 @@
 #   SSHPASS=xxx ./deploy-remote.sh     # password auth via sshpass
 #   REMOTE_HOST=1.2.3.4 ./deploy-remote.sh
 #
-# Env overrides:
-#   LOCAL_DIR      project root (default: this script's dir)
-#   REMOTE_HOST    remote IP/host   (default 118.195.145.247)
+# Config (env vars, or deploy-remote.env in the project root — gitignored):
+#   REMOTE_HOST    remote IP/host   (REQUIRED, no default)
+#   SSHPASS        ssh password; if set, sshpass is used (key auth otherwise)
+#   LOCAL_DIR      project root     (default: this script's dir)
 #   REMOTE_USER    remote ssh user  (default root)
 #   REMOTE_PORT    ssh port         (default 22)
 #   REMOTE_DIR     remote path      (default /opt/ops-agent)
 #   MAVEN_REPO     local maven repo (default D:/XuDevOps/maven-repository)
-#   SSHPASS        ssh password; if set, sshpass is used (key auth otherwise)
+#
+# Copy deploy-remote.env.example to deploy-remote.env and fill in real values.
+# Never hardcode hosts or passwords in this script.
 set -euo pipefail
 
 LOCAL_DIR="${LOCAL_DIR:-$(cd "$(dirname "$0")" && pwd)}"
@@ -28,7 +31,11 @@ if [ -f "$LOCAL_DIR/deploy-remote.env" ]; then
   # shellcheck disable=SC1090
   . "$LOCAL_DIR/deploy-remote.env"
 fi
-REMOTE_HOST="${REMOTE_HOST:-118.195.145.247}"
+if [ -z "${REMOTE_HOST:-}" ]; then
+  echo "ERROR: REMOTE_HOST is not set. Put it in deploy-remote.env (copy from" >&2
+  echo "       deploy-remote.env.example) or export it before running." >&2
+  exit 1
+fi
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_PORT="${REMOTE_PORT:-22}"
 REMOTE_DIR="${REMOTE_DIR:-/opt/ops-agent}"

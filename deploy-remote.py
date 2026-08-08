@@ -26,8 +26,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def load_config():
+    # No host/credential defaults here on purpose: they come from
+    # deploy-remote.env (gitignored) or environment variables.
     cfg = {
-        "REMOTE_HOST": "118.195.145.247",
+        "REMOTE_HOST": "",
         "REMOTE_USER": "root",
         "REMOTE_PORT": "22",
         "REMOTE_DIR": "/opt/ops-agent",
@@ -99,9 +101,14 @@ def remote_exec(client, cmd):
 def main():
     do_front = "--front" in sys.argv
     cfg = load_config()
-    if not cfg["SSHPASS"]:
-        print("ERROR: SSHPASS not set (deploy-remote.env or env).", file=sys.stderr)
-        sys.exit(1)
+    for required in ("REMOTE_HOST", "SSHPASS"):
+        if not cfg[required]:
+            print(
+                f"ERROR: {required} not set. Put it in deploy-remote.env "
+                f"(copy from deploy-remote.env.example) or export it as an env var.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     local_admin = os.path.join(HERE, "ops-agent-admin")
     jar = os.path.join(local_admin, "target", "ops-agent-admin-0.0.1-SNAPSHOT.jar")

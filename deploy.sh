@@ -66,7 +66,9 @@ ensure_present MINIO_CONSOLE_PORT 9001
 
 # 读取最终值用于写凭据文件
 SERV_IP="$(grep -E '^SERVER_IP=' .env | cut -d= -f2- || true)"
-[ -z "$SERV_IP" ] && SERV_IP="118.195.145.247"
+# 未在 .env 指定时自动探测本机地址，不硬编码任何 IP
+[ -z "$SERV_IP" ] && SERV_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -z "$SERV_IP" ] && SERV_IP="unknown"
 DB_USER="$(grep -E '^DB_USERNAME=' .env | cut -d= -f2- || true)"
 PG_DB="$(grep -E '^POSTGRES_DB=' .env | cut -d= -f2- || true)"
 PG_PORT="$(grep -E '^POSTGRES_PORT=' .env | cut -d= -f2- || true)"

@@ -29,8 +29,8 @@ cd ops-agent-test
 cp .env.example .env          # 填入 BASE_URL / ADMIN_USERNAME / ADMIN_PASSWORD
 ```
 
-- `BASE_URL`：后端 API 基址，默认 `http://118.195.145.247:8080/api`。
-  本地联调改为 `http://localhost:8080/api`。
+- `BASE_URL`：后端 API 基址，默认 `http://localhost:8080/api`。
+  连测试服务器时在 `.env` 里改为 `http://<服务器IP>:8080/api`。
 - 账号需具备 `dataset:read` 与 `dataset:write`（admin 默认具备）。
 
 ## 3. 安装与运行
