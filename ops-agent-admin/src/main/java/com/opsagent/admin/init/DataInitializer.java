@@ -54,6 +54,17 @@ public class DataInitializer implements CommandLineRunner {
             "training:read", "training:write",
             "serving:read", "serving:write");
 
+    /** 业务读写权限（运营人员：不含 user/role/permission 后台管理） */
+    private static final List<String> BUSINESS_READ_WRITE_CODES = List.of(
+            "dataset:read", "dataset:write",
+            "model:read", "model:write",
+            "training:read", "training:write",
+            "serving:read", "serving:write");
+
+    /** 业务只读权限（只读用户 / 未来 agent 继承用户权限） */
+    private static final List<String> BUSINESS_READ_CODES = List.of(
+            "dataset:read", "model:read", "training:read", "serving:read");
+
     @Override
     @Transactional
     public void run(String... args) {
@@ -73,9 +84,8 @@ public class DataInitializer implements CommandLineRunner {
             }
         }
 
-        // 2. 角色：按名判断，缺失才插入；已存在则取出用于用户绑定。
-        //    对 ADMIN/OPERATOR 做增量补全：新增权限码（如 serving:*）后自动同步给既有角色，
-        //    避免升级后旧角色拿不到新权限。
+        // 2. 角色：按名判断，缺失才插入；已存在则收敛权限到目标集合
+        //    （既补全新增权限码，也移除不再属于该角色的权限，保证与常量定义一致）。
         Role admin = roleRepository.findByName("ADMIN").orElseGet(() -> {
             Role r = new Role();
             r.setName("ADMIN");
@@ -83,26 +93,25 @@ public class DataInitializer implements CommandLineRunner {
             r.setPermissions(Set.copyOf(permissionRepository.findAll()));
             return roleRepository.save(r);
         });
-        syncAllPermissions(admin);
+        syncPermissions(admin, PERMISSION_CODES);
 
         Role operator = roleRepository.findByName("OPERATOR").orElseGet(() -> {
             Role r = new Role();
             r.setName("OPERATOR");
-            r.setDescription("运营人员");
+            r.setDescription("运营人员（业务读写，无后台管理）");
             r.setPermissions(Set.copyOf(permissionRepository.findAll()));
             return roleRepository.save(r);
         });
-        syncAllPermissions(operator);
+        syncPermissions(operator, BUSINESS_READ_WRITE_CODES);
 
-        Role user = roleRepository.findByName("USER").orElseGet(() -> {
+        Role readOnly = roleRepository.findByName("READONLY").orElseGet(() -> {
             Role r = new Role();
-            r.setName("USER");
-            r.setDescription("普通用户（仅对话）");
-            r.setPermissions(Set.of(
-                    permissionRepository.findByCode("dataset:read").orElseThrow(),
-                    permissionRepository.findByCode("model:read").orElseThrow()));
+            r.setName("READONLY");
+            r.setDescription("只读用户（业务只读，供 agent 继承权限）");
+            r.setPermissions(Set.copyOf(permissionRepository.findAll()));
             return roleRepository.save(r);
         });
+        syncPermissions(readOnly, BUSINESS_READ_CODES);
 
         // 3. 初始管理员
         if (userRepository.findByUsername("admin").isEmpty()) {
@@ -116,29 +125,33 @@ public class DataInitializer implements CommandLineRunner {
             userRepository.save(adminUser);
         }
 
-        // 4. 演示普通用户
+        // 4. 演示运营人员（业务读写，无后台管理）
         if (userRepository.findByUsername("user").isEmpty()) {
             User demoUser = new User();
             demoUser.setUsername("user");
             demoUser.setPasswordHash(passwordEncoder.encode("user123"));
-            demoUser.setDisplayName("演示用户");
+            demoUser.setDisplayName("运营人员");
             demoUser.setEmail("user@opsagent.local");
             demoUser.setStatus("ACTIVE");
-            demoUser.setRoles(Set.of(user));
+            demoUser.setRoles(Set.of(operator));
             userRepository.save(demoUser);
         }
     }
 
-    /** 将角色权限补齐为当前全部权限（仅当缺失时写库，避免每次启动无谓更新）。 */
-    private void syncAllPermissions(Role role) {
-        Set<Long> allIds = permissionRepository.findAll().stream()
+    /** 将角色权限收敛为目标权限码集合（仅当集合不一致时写库，幂等）。 */
+    private void syncPermissions(Role role, List<String> expectedCodes) {
+        Set<String> expectedSet = Set.copyOf(expectedCodes);
+        Set<Long> expectedIds = permissionRepository.findAll().stream()
+                .filter(p -> expectedSet.contains(p.getCode()))
                 .map(Permission::getId)
                 .collect(java.util.stream.Collectors.toSet());
-        Set<Long> roleIds = role.getPermissions().stream()
+        Set<Long> currentIds = role.getPermissions().stream()
                 .map(Permission::getId)
                 .collect(java.util.stream.Collectors.toSet());
-        if (!roleIds.containsAll(allIds)) {
-            role.setPermissions(Set.copyOf(permissionRepository.findAll()));
+        if (!currentIds.equals(expectedIds)) {
+            role.setPermissions(Set.copyOf(permissionRepository.findAll()).stream()
+                    .filter(p -> expectedSet.contains(p.getCode()))
+                    .collect(java.util.stream.Collectors.toSet()));
             roleRepository.save(role);
         }
     }

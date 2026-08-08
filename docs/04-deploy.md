@@ -51,7 +51,7 @@
 - `JWT_SECRET` —— 至少 32 位随机串，可用 `openssl rand -base64 48` 生成
 - `SERVER_IP` / `CORS_ALLOWED_ORIGINS` —— 改成你的服务器公网 IP
 
-> 演示账号由后端 `DataInitializer` 写入：`admin / admin123`（管理员）、`user / user123`（普通用户）。本系统为演示用途，无需修改默认密码。
+> 演示账号由后端 `DataInitializer` 写入：`admin / admin123`（管理员，全部权限）、`user / user123`（运营人员，业务读写）。本系统为演示用途，无需修改默认密码。
 
 ## 三、部署（全程服务器内：拉取 → 编译 → 构建 → 启动）
 

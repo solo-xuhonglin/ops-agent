@@ -70,8 +70,15 @@
 | 训练 | `training:read` | `training:write` |
 | 部署 | `serving:read` | `serving:write` |
 
-**内置角色**：`ADMIN`（全部权限）、`OPERATOR`（全部权限）、`USER`（仅 `dataset:read`/`model:read`，面向对话）。
-**初始账号**：`admin / admin123`（首次启动由 `DataInitializer` 写入，请上线前修改）。
+**内置角色**：
+
+| 角色 | 权限 | 说明 |
+|------|------|------|
+| `ADMIN` | 全部 14 个权限 | 超级管理员 |
+| `OPERATOR` | 业务读写 8 个（dataset/model/training/serving 的 read+write），**不含** user/role/permission 后台管理 | 运营人员 |
+| `READONLY` | 业务只读 4 个（dataset/model/training/serving 的 read） | 只读用户；未来 agent 智能体的权限继承用户（按用户权限调用工具），故不再设"仅对话"角色 |
+
+**初始账号**：`admin / admin123`（ADMIN）、`user / user123`（OPERATOR，演示运营人员；首次启动由 `DataInitializer` 写入，请上线前修改）。
 
 ## 5. 核心数据流（闭环）
 
