@@ -9,11 +9,12 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * agent_tools 种子数据：admin 现有 REST API 子集（能力=数据，不新开发接口）。
- * 幂等：按 name 缺省插入，已有则不动（schema 变更需手工更新或清表重种）。
+ * 幂等：按 name 缺省插入，已有则不动。
+ * 注意：本类只负责"种"，不做任何清理/迁移（保持代码简单）；
+ *       历史脏数据（旧工具名、已移除工具）由 scripts/cleanup-agent-data.sql 按需手动清理。
  */
 @Component
 @RequiredArgsConstructor
@@ -27,24 +28,6 @@ public class AgentToolSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        // 自愈①：清理历史遗留的非法工具名（含点号，DeepSeek 工具名仅允许 [a-zA-Z0-9_-]）
-        List<AgentTool> stale = repository.findAll().stream()
-                .filter(t -> t.getName().contains("."))
-                .toList();
-        if (!stale.isEmpty()) {
-            repository.deleteAll(stale);
-            log.info("cleaned {} stale tools with dotted names", stale.size());
-        }
-        // 自愈②：清理已从 SEED 移除的工具行（如 dataset_collect_weather 无真实采集端点被移除）
-        List<String> seedNames = SEED.stream().map(ToolSpec::name).toList();
-        List<AgentTool> orphans = repository.findAll().stream()
-                .filter(t -> !seedNames.contains(t.getName()))
-                .toList();
-        if (!orphans.isEmpty()) {
-            repository.deleteAll(orphans);
-            log.info("cleaned {} orphan tools not in seed: {}",
-                    orphans.size(), orphans.stream().map(AgentTool::getName).collect(Collectors.joining(",")));
-        }
         for (ToolSpec t : SEED) {
             if (repository.findByName(t.name()).isEmpty()) {
                 AgentTool tool = new AgentTool();
