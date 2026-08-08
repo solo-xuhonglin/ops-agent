@@ -1,8 +1,8 @@
-"""Agent 决策循环（M3）：function-calling + 处置建议产出/执行。
+"""Agent 决策入口（M3.5，核心已替换为 LangGraph）。
 
-收到 TaskDispatch → 组装 messages → 循环调 LLM(tools=schema)：
-  LLM 返回 tool_call → 查 registry → 执行（HTTP 直调 admin，系统参数由 http_client 注入）→ 回填 → 再问
-  无 tool_call → 收敛 → 解析结论 + suggestions(JSON 代码块) → TaskResult
+收到 TaskDispatch → 组装初始消息 → 交给 graph.run_graph 执行决策图
+（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用哪些工具）→
+收敛后解析结论 + suggestions(JSON 代码块) → TaskResult。
 对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
 """
 import json
@@ -10,7 +10,8 @@ import logging
 import re
 
 from app.agent.context import TaskContext
-from app.llm.deepseek import DeepSeekClient, parse_tool_calls
+from app.agent.graph import build_graph, run_graph
+from app.llm.deepseek import DeepSeekClient
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -60,31 +61,15 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     ]
 
     try:
-        rounds = 0
-        while rounds < max_rounds:
-            resp = await llm.chat(messages, tools=registry.schemas())
-            messages.append(resp)  # assistant message（原样回传，含 tool_calls 结构）
-            tool_calls = parse_tool_calls(resp)
-            if not tool_calls:
-                break
-            rounds += 1
-            for call_id, name, args in tool_calls:
-                await client.send_event(ctx.task_id, "tool_call",
-                                        f"{name}({json.dumps(args, ensure_ascii=False)})")
-                tool = registry.get(name)
-                if tool is None:
-                    result = {"status": 0, "body": f"unknown tool: {name}"}
-                else:
-                    result = await http.call(tool, args, ctx)
-                messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
-                                 "content": json.dumps(result, ensure_ascii=False)})
+        graph = build_graph(llm=llm, http=http, registry=registry, client=client)
+        final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
-        content = _extract_conclusion(messages)
+        content = _extract_conclusion(final_messages)
         suggestions = _parse_suggestions(content)
         conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  suggestions=_to_proto_suggestions(suggestions))
-        log.info("task done: %s rounds=%s suggestions=%s", ctx.task_id, rounds, len(suggestions))
+        log.info("task done: %s suggestions=%s", ctx.task_id, len(suggestions))
     except Exception as e:  # noqa: BLE001 - 单任务失败不拖垮 worker
         log.error("task failed: %s", e, exc_info=True)
         await client.send_result(ctx.task_id, ok=False,
