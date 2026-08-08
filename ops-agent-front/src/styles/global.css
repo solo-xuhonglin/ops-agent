@@ -140,3 +140,33 @@ h1, h2, h3, h4, h5, h6, p {
   padding-left: 36px; /* 与头像对齐 */
   word-break: break-word;
 }
+/* 长文本（原因、执行结果）2~3 行截断 + 悬停看完整，避免绘制过宽 */
+.history-item__clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.history-item__clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 历史任务列表：信息密度更大、字号更小，贴近「参考性列表」语义 */
+.history-item--compact {
+  padding: 6px 10px;
+}
+.history-item--compact .history-item__title {
+  font-size: 13px;
+  font-weight: 500;
+}
+.history-item--compact .history-item__body {
+  padding-left: 28px;
+  font-size: 11px;
+  margin-top: 2px;
+  color: rgba(0, 0, 0, 0.55);
+}
+.history-item--compact .history-item__time {
+  font-size: 11px;
+}

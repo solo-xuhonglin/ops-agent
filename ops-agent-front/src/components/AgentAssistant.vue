@@ -1,15 +1,19 @@
 <template>
-  <!-- 全局 AI 助手浮窗：右下 FAB + 右侧抽屉，跨路由常驻（挂在 App.vue） -->
-  <div v-if="visible">
+  <!-- 全局 AI 助手浮窗：右下 FAB + 右侧抽屉，跨路由常驻（挂在 App.vue）。
+       抽屉打开时 FAB 隐藏，避免遮挡抽屉内容 -->
+  <div v-if="visible && !store.drawerOpen">
     <!-- FAB：未读建议红点角标 -->
     <v-badge :content="store.pendingCount" :model-value="store.pendingCount > 0" color="error">
       <v-btn class="agent-fab" color="primary" size="large" elevation="4"
-             :icon="store.drawerOpen ? 'mdi-robot' : 'mdi-robot-outline'"
+             icon="mdi-robot-outline"
              @click="store.toggleDrawer()" />
     </v-badge>
+  </div>
 
-    <v-navigation-drawer v-model="store.drawerOpen" location="right" temporary
-                         width="430" class="agent-drawer">
+  <v-navigation-drawer v-if="visible" v-model="store.drawerOpen" location="right" temporary
+                       :width="drawerWidth" class="agent-drawer">
+      <!-- 左缘拖拽手柄：横向拖动调整抽屉宽度 -->
+      <div class="drawer-resizer" @pointerdown="startResize" />
       <!-- 头部：标题 + 历史/对话切换 + 关闭 -->
       <template #prepend>
         <div class="d-flex align-center px-4 py-3">
@@ -89,17 +93,21 @@
             </template>
           </div>
 
-          <!-- 底部输入框：自然语言问询 -->
+          <!-- 底部输入框：自然语言问询（多行，回车发送，Shift+回车换行） -->
           <div class="pa-3">
-            <v-text-field v-model="input" density="compact" hide-details
-                          placeholder="询问系统状态，如：最近有哪些异常？"
-                          :disabled="sending"
-                          :append-inner-icon="sending ? '' : 'mdi-send'"
-                          @click:append-inner="send" @keydown.enter="send">
-              <template v-if="sending" #append-inner>
-                <v-progress-circular indeterminate size="18" width="2" />
+            <v-textarea v-model="input" density="compact" hide-details rows="1" max-rows="3"
+                        auto-grow
+                        placeholder="询问系统状态，如：最近有哪些异常？"
+                        :disabled="sending"
+                        @keydown.enter.exact.prevent="send">
+              <template #append-inner>
+                <v-btn :icon="sending ? undefined : 'mdi-send'"
+                       :loading="sending"
+                       :disabled="!input.trim()"
+                       variant="text" size="small" @click="send" />
               </template>
-            </v-text-field>
+            </v-textarea>
+            <div class="text-caption text-medium-emphasis mt-1 px-1">Enter 发送 · Shift+Enter 换行</div>
           </div>
         </div>
 
@@ -124,13 +132,13 @@
                     <span class="history-item__time">{{ fmtDateTime(s.createdAt) }}</span>
                   </div>
                   <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
-                  <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis">{{ s.reason }}</div>
+                  <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis history-item__clamp-2" :title="s.reason">{{ s.reason }}</div>
                   <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
                     <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
                     <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
                   </div>
                   <div v-else-if="s.status === 'EXECUTED' && s.result"
-                       class="history-item__body text-caption text-success">{{ s.result.slice(0, 80) }}</div>
+                       class="history-item__body text-caption text-success history-item__clamp-3" :title="s.result">{{ s.result }}</div>
                 </div>
                 <div v-if="!store.suggestions.length" class="empty-hint">
                   <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
@@ -142,18 +150,18 @@
             <v-window-item value="tasks">
               <div class="pa-2">
                 <div v-for="t in store.tasks" :key="t.taskId"
-                     class="history-item history-item--clickable mb-1"
+                     class="history-item history-item--compact history-item--clickable mb-1"
                      :class="{ 'history-item--active': store.currentTask?.taskId === t.taskId }"
                      @click="store.selectTask(t.taskId)">
                   <div class="history-item__head">
-                    <v-avatar color="primary" size="28" variant="tonal">
-                      <v-icon size="16">mdi-robot</v-icon>
+                    <v-avatar color="primary" size="24" variant="tonal">
+                      <v-icon size="14">mdi-robot</v-icon>
                     </v-avatar>
                     <span class="history-item__title">{{ taskTypeText(t.taskType) }}</span>
                     <v-chip size="x-small" :color="taskColor(t.status)">{{ taskText(t.status) }}</v-chip>
                     <span class="history-item__time">{{ fmtDateTime(t.createdAt) }}</span>
                   </div>
-                  <div class="history-item__body text-caption text-medium-emphasis">{{ t.query || targetText(t) }}</div>
+                  <div class="history-item__body">{{ t.query || targetText(t) }}</div>
                 </div>
                 <div v-if="!store.tasks.length" class="empty-hint">
                   <v-icon icon="mdi-history" size="40" class="mb-2" />
@@ -165,7 +173,6 @@
         </div>
       </div>
     </v-navigation-drawer>
-  </div>
 </template>
 
 <script setup>
@@ -187,6 +194,32 @@ const canWrite = computed(() => auth.hasPerm('agent:write'))
 const input = ref('')
 const sending = ref(false)
 const historyTab = ref('suggestions')
+
+// ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
+const MIN_W = 320
+const MAX_W = 760
+const drawerWidth = ref(Number(localStorage.getItem('agentDrawerWidth')) || 430)
+
+function startResize(e) {
+  e.preventDefault()
+  const startX = e.clientX
+  const startW = drawerWidth.value
+  const onMove = (ev) => {
+    // 抽屉在右侧：手柄向左拖 → 宽度增大
+    drawerWidth.value = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)))
+  }
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    localStorage.setItem('agentDrawerWidth', String(drawerWidth.value))
+  }
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
 
 // ===== 轮询：抽屉打开时 3s 刷新建议/任务/当前任务，关闭即停 =====
 let timer = null
@@ -308,6 +341,20 @@ function eventColor(t) { return { progress: 'primary', tool_call: 'info', error:
 }
 .agent-drawer {
   border-left: 1px solid rgba(0, 0, 0, 0.06);
+}
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 20;
+  transition: background 0.15s ease;
+}
+.drawer-resizer:hover,
+.drawer-resizer:active {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
 }
 .suggestion-card {
   border-left: 3px solid rgb(var(--v-theme-warning));
