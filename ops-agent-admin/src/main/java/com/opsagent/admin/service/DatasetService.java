@@ -127,7 +127,7 @@ public class DatasetService {
             while (br.readLine() != null) lines++;
             return Math.max(0, lines - 1);
         } catch (Exception e) {
-            log.warn("统计文件行数失败 error={}", e.getMessage());
+            log.warn("Failed to count file rows error={}", e.getMessage());
             return null;
         }
     }
@@ -143,7 +143,7 @@ public class DatasetService {
             d.setRowCount(rows);
             d.setStatus(rows > 0 ? "READY" : "INVALID");
         } catch (Exception e) {
-            log.warn("天气采集异常 datasetId={} error={}", d.getId(), e.getMessage());
+            log.warn("Weather collection error datasetId={} error={}", d.getId(), e.getMessage());
             d.setStatus("INVALID");
         }
     }

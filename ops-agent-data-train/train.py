@@ -42,14 +42,14 @@ def get_client():
 
 
 def download_csv(client, bucket, key):
-    log.info("下载数据集 %s/%s", bucket, key)
+    log.info("Downloading dataset %s/%s", bucket, key)
     obj = client.get_object(Bucket=bucket, Key=key)
     data = obj["Body"].read().decode("utf-8")
     reader = csv.DictReader(io.StringIO(data))
     rows = []
     for r in reader:
         rows.append(r)
-    log.info("数据集行数: %d", len(rows))
+    log.info("Dataset rows: %d", len(rows))
     return rows
 
 
@@ -120,21 +120,21 @@ def main():
     lr = float(env("LR", "0.001"))
 
     if not dataset_key or not model_version_id:
-        raise SystemExit("缺少 DATASET_OBJECT_KEY 或 MODEL_VERSION_ID 环境变量")
+        raise SystemExit("Missing DATASET_OBJECT_KEY or MODEL_VERSION_ID environment variable")
 
-    log.info("超参数: seq_len=%d hidden=%d epochs=%d batch=%d lr=%.4f",
+    log.info("Hyperparameters: seq_len=%d hidden=%d epochs=%d batch=%d lr=%.4f",
              seq_len, hidden_size, epochs, batch_size, lr)
 
     client = get_client()
     rows = download_csv(client, bucket, dataset_key)
     series_map = build_series(rows)
     if not series_map:
-        raise SystemExit("未从数据集中解析出任何气温序列，无法训练")
+        raise SystemExit("No temperature series parsed from dataset, cannot train")
 
     xs, ys = make_windows(series_map, seq_len)
     if len(xs) == 0:
-        raise SystemExit("样本数不足（数据量需大于 seq_len=%d），无法训练" % seq_len)
-    log.info("构造训练样本数: %d", len(xs))
+        raise SystemExit("Not enough samples (need more than seq_len=%d), cannot train" % seq_len)
+    log.info("Built training samples: %d", len(xs))
 
     # 标准化（基于训练集均值/方差），推理时反向还原
     mean = sum(sum(x) for x in xs) / max(1, sum(len(x) for x in xs))
@@ -147,7 +147,7 @@ def main():
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log.info("使用设备: %s", device)
+    log.info("Using device: %s", device)
     model = LSTMModel(hidden_size).to(device)
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -183,7 +183,7 @@ def main():
     train_loss = total_loss / max(1, total_n)
     mae = total_mae / max(1, total_n)
     rmse = train_loss ** 0.5
-    log.info("评估完成  train_loss=%.6f  MAE=%.6f  RMSE=%.6f", train_loss, mae, rmse)
+    log.info("Evaluation done  train_loss=%.6f  MAE=%.6f  RMSE=%.6f", train_loss, mae, rmse)
 
     # 保存模型（含归一化参数，便于推理还原）
     model_payload = {
@@ -200,7 +200,7 @@ def main():
     torch.save(model_payload, buf)
     buf.seek(0)
     client.put_object(Bucket=bucket, Key=model_key, Body=buf.getvalue())
-    log.info("模型已上传 %s", model_key)
+    log.info("Model uploaded %s", model_key)
 
     metrics = {
         "mae": round(float(mae), 6),
@@ -213,8 +213,8 @@ def main():
     metrics_key = f"models/{model_version_id}/metrics.json"
     client.put_object(Bucket=bucket, Key=metrics_key,
                       Body=json.dumps(metrics, ensure_ascii=False).encode("utf-8"))
-    log.info("指标已上传 %s  %s", metrics_key, json.dumps(metrics))
-    log.info("训练任务完成 jobId=%s", job_id)
+    log.info("Metrics uploaded %s  %s", metrics_key, json.dumps(metrics))
+    log.info("Training job finished jobId=%s", job_id)
 
 
 if __name__ == "__main__":

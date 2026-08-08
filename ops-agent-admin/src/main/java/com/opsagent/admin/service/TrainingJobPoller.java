@@ -51,7 +51,7 @@ public class TrainingJobPoller {
             try {
                 process(job);
             } catch (Exception e) {
-                log.warn("训练任务巡检异常 jobId={} error={}", job.getId(), e.getMessage());
+                log.warn("Training job polling error jobId={} error={}", job.getId(), e.getMessage());
             }
         }
     }
@@ -71,7 +71,7 @@ public class TrainingJobPoller {
             } catch (Exception e) {
                 // 容器已被外部移除：若已经写过日志则视为已终态，否则判失败
                 if (job.getLogKey() == null) {
-                    finalizeFailed(job, "容器不存在（可能已被移除）");
+                    finalizeFailed(job, "Container missing (possibly removed externally)");
                 }
                 return;
             }
@@ -86,7 +86,7 @@ public class TrainingJobPoller {
                     } catch (Exception ignore) {
                     }
                     collectLogsAndRemove(client, job);
-                    finalizeFailed(job, "训练超时（>" + trainProperties.getTimeoutMinutes() + "分钟）被强杀");
+                    finalizeFailed(job, "Training timeout (> " + trainProperties.getTimeoutMinutes() + " min), force killed");
                 } else {
                     trainingJobRepository.save(job);
                 }
@@ -99,7 +99,7 @@ public class TrainingJobPoller {
             if (exitCode != null && exitCode == 0) {
                 finalizeSucceeded(job);
             } else {
-                finalizeFailed(job, "训练容器退出码=" + exitCode);
+                finalizeFailed(job, "Training container exit code=" + exitCode);
             }
         } finally {
             try {
@@ -118,7 +118,7 @@ public class TrainingJobPoller {
                     String metricsJson = new String(is.readAllBytes(), StandardCharsets.UTF_8);
                     mv.setMetrics(metricsJson);
                 } catch (Exception e) {
-                    log.warn("读取训练指标失败 mvId={} error={}", mv.getId(), e.getMessage());
+                    log.warn("Failed to read training metrics mvId={} error={}", mv.getId(), e.getMessage());
                 }
             });
             mv.setArtifactKey(MODEL_PREFIX + mv.getId() + "/model.pt");
@@ -128,7 +128,7 @@ public class TrainingJobPoller {
         job.setStatus("SUCCEEDED");
         job.setFinishedAt(OffsetDateTime.now());
         trainingJobRepository.save(job);
-        log.info("训练任务成功 jobId={} modelVersionId={}", job.getId(), job.getModelVersionId());
+        log.info("Training job succeeded jobId={} modelVersionId={}", job.getId(), job.getModelVersionId());
     }
 
     private void finalizeFailed(TrainingJob job, String reason) {
@@ -149,12 +149,12 @@ public class TrainingJobPoller {
                             reason.getBytes(StandardCharsets.UTF_8).length, "text/plain");
                     job.setLogKey(key);
                 } catch (Exception e) {
-                    log.warn("写入失败原因日志失败 jobId={} error={}", job.getId(), e.getMessage());
+                    log.warn("Failed to write failure-reason log jobId={} error={}", job.getId(), e.getMessage());
                 }
             });
         }
         trainingJobRepository.save(job);
-        log.warn("训练任务失败 jobId={} reason={}", job.getId(), reason);
+        log.warn("Training job failed jobId={} reason={}", job.getId(), reason);
     }
 
     private void collectLogsAndRemove(DockerClient client, TrainingJob job) {
@@ -171,10 +171,10 @@ public class TrainingJobPoller {
                         }
                     }).awaitCompletion();
         } catch (Exception e) {
-            log.warn("抓取训练日志失败 jobId={} error={}", job.getId(), e.getMessage());
+            log.warn("Failed to capture training logs jobId={} error={}", job.getId(), e.getMessage());
         }
         String key = ARTIFACT_PREFIX + job.getId() + "/logs.txt";
-        final String logText = sb.length() > 0 ? sb.toString() : "(无日志输出)";
+        final String logText = sb.length() > 0 ? sb.toString() : "(no log output)";
         minioService.ifPresent(minio -> {
             try {
                 minio.upload(key,
@@ -182,13 +182,13 @@ public class TrainingJobPoller {
                         logText.getBytes(StandardCharsets.UTF_8).length, "text/plain");
                 job.setLogKey(key);
             } catch (Exception e) {
-                log.warn("上传训练日志失败 jobId={} error={}", job.getId(), e.getMessage());
+                log.warn("Failed to upload training logs jobId={} error={}", job.getId(), e.getMessage());
             }
         });
         try {
             client.removeContainerCmd(job.getContainerId()).withForce(true).exec();
         } catch (Exception e) {
-            log.warn("移除训练容器失败 jobId={} error={}", job.getId(), e.getMessage());
+            log.warn("Failed to remove training container jobId={} error={}", job.getId(), e.getMessage());
         }
     }
 

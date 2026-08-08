@@ -44,7 +44,7 @@ public class WeatherService {
     public long collect(Long datasetId, List<String> regions, LocalDate start, LocalDate end) {
         if (regions == null || regions.isEmpty() || start == null || end == null) return 0;
         if (minioService.isEmpty()) {
-            log.warn("MinIO 未启用，跳过天气采集 datasetId={}", datasetId);
+            log.warn("MinIO disabled, skipping weather collection datasetId={}", datasetId);
             return 0;
         }
         List<String[]> rows = new ArrayList<>();
@@ -58,10 +58,10 @@ public class WeatherService {
         try (ByteArrayInputStream is = new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8))) {
             minioService.get().upload(objectKey, is, csv.getBytes(StandardCharsets.UTF_8).length, "text/csv");
         } catch (Exception e) {
-            log.warn("天气 CSV 上传 MinIO 失败 datasetId={} error={}", datasetId, e.getMessage());
+            log.warn("Failed to upload weather CSV to MinIO datasetId={} error={}", datasetId, e.getMessage());
             return 0;
         }
-        log.info("天气采集完成 datasetId={} 行数={}", datasetId, rows.size());
+        log.info("Weather collection finished datasetId={} rows={}", datasetId, rows.size());
         return rows.size();
     }
 
@@ -77,7 +77,7 @@ public class WeatherService {
         try {
             ResponseEntity<String> resp = restTemplate.getForEntity(url, String.class);
             if (!resp.getStatusCode().is2xxSuccessful() || resp.getBody() == null) {
-                log.warn("天气接口返回异常 region={} status={}", region, resp.getStatusCode());
+                log.warn("Weather API abnormal response region={} status={}", region, resp.getStatusCode());
                 return;
             }
             OpenMeteoResponse data = objectMapper.readValue(resp.getBody(), OpenMeteoResponse.class);
@@ -90,7 +90,7 @@ public class WeatherService {
                 rows.add(new String[]{region, t.toString(), temp, precip});
             }
         } catch (Exception e) {
-            log.warn("天气采集失败 region={} error={}", region, e.getMessage());
+            log.warn("Weather collection failed region={} error={}", region, e.getMessage());
         }
     }
 

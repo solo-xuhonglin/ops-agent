@@ -65,7 +65,7 @@ public class TrainingLauncher {
                     .exec();
             String containerId = resp.getId();
             client.startContainerCmd(containerId).exec();
-            log.info("训练容器已启动 jobId={} containerId={} image={}", jobId, containerId, trainProperties.getImage());
+            log.info("Training container started jobId={} containerId={} image={}", jobId, containerId, trainProperties.getImage());
             return containerId;
         } finally {
             try {
@@ -81,7 +81,7 @@ public class TrainingLauncher {
         try {
             client.removeContainerCmd(name).withForce(true).exec();
         } catch (Exception e) {
-            log.warn("清理训练容器失败 jobId={} error={}", jobId, e.getMessage());
+            log.warn("Failed to clean up training container jobId={} error={}", jobId, e.getMessage());
         } finally {
             try {
                 client.close();
