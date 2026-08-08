@@ -1,4 +1,4 @@
-# 基础镜像 pytorch/pytorch:*-cpu 已自带 torch，无需在此安装
+# 训练运行时依赖（torch 已在 Dockerfile 中从 CPU 源单独安装）
 pandas
 numpy
 boto3
