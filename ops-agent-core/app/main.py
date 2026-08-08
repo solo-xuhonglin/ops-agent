@@ -2,9 +2,10 @@
 import asyncio
 import logging
 
+from langchain_openai import ChatOpenAI
+
 from app.agent import core
 from app.config import Config
-from app.llm.deepseek import DeepSeekClient
 from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -29,8 +30,13 @@ async def amain() -> None:
 
     registry = ToolRegistry()
     grants = GrantStore()
-    llm = DeepSeekClient(cfg.deepseek_api_key, cfg.deepseek_base_url,
-                         cfg.deepseek_model, cfg.llm_timeout_s)
+    llm = ChatOpenAI(
+        base_url=cfg.deepseek_base_url,
+        api_key=cfg.deepseek_api_key,
+        model=cfg.deepseek_model,
+        timeout=cfg.llm_timeout_s,
+        temperature=0.3,
+    )
     http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id, grants)
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
@@ -44,7 +50,7 @@ async def amain() -> None:
     try:
         await client.run()
     finally:
-        await llm.close()
+        await llm.aclose()
         await http.close()
 
 
@@ -56,7 +62,7 @@ async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
     grants.add(msg.authorization_grant)
 
 
-async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: DeepSeekClient,
+async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: ChatOpenAI,
                     http: AdminHttpClient, msg: agent_pb2.ServerMessage, max_rounds: int) -> None:
     await core.handle_dispatch(client, registry, llm, http, msg, max_rounds)
 

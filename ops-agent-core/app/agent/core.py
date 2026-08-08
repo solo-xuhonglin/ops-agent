@@ -1,7 +1,7 @@
-"""Agent 决策入口（M3.5，核心已替换为 LangGraph）。
+"""Agent 决策入口（M3.5+，核心为 LangGraph + 标准 LangChain 生态）。
 
-收到 TaskDispatch → 组装初始消息 → 交给 graph.run_graph 执行决策图
-（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用哪些工具）→
+收到 TaskDispatch → 组装初始消息（SystemMessage/HumanMessage）→ 交给 graph.run_graph
+执行决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用哪些工具）→
 收敛后解析结论 + suggestions(JSON 代码块) → TaskResult。
 对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
 """
@@ -9,9 +9,11 @@ import json
 import logging
 import re
 
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
 from app.agent.context import TaskContext
 from app.agent.graph import build_graph, run_graph
-from app.llm.deepseek import DeepSeekClient
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -47,7 +49,7 @@ def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
 
 
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
-                          llm: DeepSeekClient, http: AdminHttpClient,
+                          llm: ChatOpenAI, http: AdminHttpClient,
                           msg: agent_pb2.ServerMessage, max_rounds: int = 10) -> None:
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
@@ -55,9 +57,9 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_type}]")
 
     hint, user_prompt = _build_prompt(d)
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT + hint},
-        {"role": "user", "content": user_prompt},
+    messages: list = [
+        SystemMessage(content=SYSTEM_PROMPT + hint),
+        HumanMessage(content=user_prompt),
     ]
 
     try:
@@ -76,11 +78,11 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                                  conclusion=f"task failed: {e}", error=str(e))
 
 
-def _extract_conclusion(messages: list[dict]) -> str:
-    """取最后一条 assistant content（有内容才用），否则提示未收敛。"""
+def _extract_conclusion(messages: list) -> str:
+    """取最后一条 assistant 消息（有内容才用），否则提示未收敛。"""
     for m in reversed(messages):
-        if m.get("role") == "assistant" and m.get("content"):
-            return m["content"]
+        if getattr(m, "type", "") == "ai" and getattr(m, "content", None):
+            return m.content
     return "no conclusion produced (max tool rounds reached)"
 
 

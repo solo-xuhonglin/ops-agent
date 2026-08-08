@@ -1,22 +1,14 @@
 import asyncio
-from types import SimpleNamespace
 
 import pytest
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agent import core
-from app.llm.deepseek import parse_tool_calls
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
 
 
 class FakeClient:
-    def __init__(self):
-        self.events = []
-        self.results = []
-
-    async def send_event(self, task_id, event_type, content):
-        self.events.append((task_id, event_type, content))
-
     def __init__(self):
         self.events = []
         self.results = []
@@ -42,14 +34,18 @@ class FakeHttp:
 
 
 class FakeLlm:
-    """按序列返回预设响应：assistant(tool_call) → assistant(conclusion)。"""
+    """按序列返回预设 AIMessage：assistant(tool_call) → assistant(conclusion)。"""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
 
-    async def chat(self, messages, tools=None):
-        self.calls.append({"messages": list(messages), "tools": tools})
+    def bind_tools(self, tools):
+        self.last_tools = tools
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls.append({"messages": list(messages), "tools": getattr(self, "last_tools", None)})
         return self.responses.pop(0)
 
 
@@ -59,9 +55,16 @@ def make_dispatch(task_type="question", query="how are you", task_id="t-1", toke
 
 
 def tool_call_msg(name, call_id="c1", args="{}"):
-    return {"role": "assistant", "content": None,
-            "tool_calls": [{"id": call_id, "type": "function",
-                            "function": {"name": name, "arguments": args}}]}
+    return AIMessage(content="", tool_calls=[
+        {"name": name, "args": _parse_args(args), "id": call_id, "type": "tool_call"}])
+
+
+def _parse_args(args: str) -> dict:
+    import json
+    try:
+        return json.loads(args or "{}")
+    except json.JSONDecodeError:
+        return {}
 
 
 def make_tool(name="training_list", method="GET", path="/api/training/jobs",
@@ -77,7 +80,7 @@ async def test_handle_dispatch_loops_until_converged():
     registry.load([make_tool()])
     http = FakeHttp()
     llm = FakeLlm([tool_call_msg("training_list", args='{"page":0}'),
-                   {"role": "assistant", "content": "系统状态正常"}])
+                   AIMessage(content="系统状态正常")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
@@ -91,8 +94,8 @@ async def test_handle_dispatch_loops_until_converged():
     assert conclusion == "系统状态正常"
     # LLM 被调 2 次，且第二次带上了 tool 回填
     assert len(llm.calls) == 2
-    roles = [m["role"] for m in llm.calls[1]["messages"]]
-    assert "tool" in roles
+    types = [m.type for m in llm.calls[1]["messages"]]
+    assert "tool" in types
 
 
 @pytest.mark.asyncio
@@ -100,7 +103,7 @@ async def test_handle_dispatch_no_tool_calls_returns_direct_answer():
     client = FakeClient()
     registry = ToolRegistry()
     http = FakeHttp()
-    llm = FakeLlm([{"role": "assistant", "content": "你好，我是运维助手"}])
+    llm = FakeLlm([AIMessage(content="你好，我是运维助手")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
@@ -115,7 +118,7 @@ async def test_handle_dispatch_unknown_tool_not_crashed():
     client = FakeClient()
     registry = ToolRegistry()  # 空注册表
     http = FakeHttp()
-    llm = FakeLlm([tool_call_msg("training_get"), {"role": "assistant", "content": "done"}])
+    llm = FakeLlm([tool_call_msg("training_get"), AIMessage(content="done")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
@@ -129,7 +132,10 @@ async def test_handle_dispatch_llm_error_marks_failed():
     client = FakeClient()
 
     class BoomLlm:
-        async def chat(self, messages, tools=None):
+        def bind_tools(self, tools):
+            return self
+
+        async def ainvoke(self, messages):
             raise RuntimeError("llm down")
 
     registry = ToolRegistry()
@@ -138,13 +144,6 @@ async def test_handle_dispatch_llm_error_marks_failed():
     task_id, ok, conclusion, error = client.results[0]
     assert ok is False
     assert "llm down" in error
-
-
-def test_parse_tool_calls_extracts_id_name_args():
-    msg = tool_call_msg("training_get", call_id="c9", args='{"jobId": 3}')
-    result = parse_tool_calls(msg)
-    assert result == [("c9", "training_get", {"jobId": 3})]
-    assert parse_tool_calls({"role": "assistant"}) == []
 
 
 def test_parse_suggestions_extracts_json_block():
@@ -170,7 +169,7 @@ async def test_handle_dispatch_sends_suggestions():
     http = FakeHttp()
     content = ("建议下线。```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
                "\"target_type\":\"serving_endpoint\",\"target_id\":3}]} ```")
-    llm = FakeLlm([{"role": "assistant", "content": content}])
+    llm = FakeLlm([AIMessage(content=content)])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
