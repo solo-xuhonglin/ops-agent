@@ -85,6 +85,9 @@ class GrpcClient:
         if kind == "ping":
             asyncio.create_task(self._reply_pong(msg.ping.ts))
             return
+        if kind == "register_ack":
+            log.info("admin ack: %s", msg.register_ack.message)
+            return
         handler = self._callbacks.get(kind)
         if handler:
             asyncio.create_task(handler(msg))
