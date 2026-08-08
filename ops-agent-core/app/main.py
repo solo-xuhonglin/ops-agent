@@ -47,7 +47,7 @@ async def amain() -> None:
         await http.close()
 
 
-def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> None:
+async def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> None:
     registry.load(list(msg.register_ack.tools))
 
 
