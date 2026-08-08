@@ -10,7 +10,7 @@
     </v-badge>
   </div>
 
-  <v-navigation-drawer v-if="visible" v-model="store.drawerOpen" location="right" temporary
+  <v-navigation-drawer ref="drawerEl" v-if="visible" v-model="store.drawerOpen" location="right" temporary
                        :width="drawerWidth" class="agent-drawer">
       <!-- 左缘拖拽手柄：横向拖动调整抽屉宽度 -->
       <div class="drawer-resizer" @pointerdown="startResize" />
@@ -206,29 +206,54 @@ function switchList(tab) {
 }
 
 // ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
+// 跟手的关键：拖动期间直接改 DOM（rAF 合并），不经过 Vue 重渲染；松手后才提交 ref
 const MIN_W = 320
 const MAX_W = 760
+const drawerEl = ref(null)
 const drawerWidth = ref(Number(localStorage.getItem('agentDrawerWidth')) || 430)
+let resizeRaf = 0
 
 function startResize(e) {
   e.preventDefault()
+  if (e.pointerId !== undefined && e.target?.setPointerCapture) {
+    try { e.target.setPointerCapture(e.pointerId) } catch (err) { /* ignore */ }
+  }
+  const drawer = drawerEl.value?.$el || drawerEl.value
   const startX = e.clientX
-  const startW = drawerWidth.value
+  const startW = drawer ? drawer.getBoundingClientRect().width : drawerWidth.value
+
+  // 拖动中禁用过渡，避免宽度变化被动画拖后腿
+  if (drawer) drawer.style.transition = 'none'
+
   const onMove = (ev) => {
-    // 抽屉在右侧：手柄向左拖 → 宽度增大
-    drawerWidth.value = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)))
+    cancelAnimationFrame(resizeRaf)
+    resizeRaf = requestAnimationFrame(() => {
+      if (!drawer) return
+      // 抽屉在右侧：手柄向左拖 → 宽度增大
+      const w = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)))
+      drawer.style.width = `${w}px`
+    })
   }
   const onUp = () => {
+    cancelAnimationFrame(resizeRaf)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
-    localStorage.setItem('agentDrawerWidth', String(drawerWidth.value))
+    if (drawer) {
+      const w = Math.round(drawer.getBoundingClientRect().width)
+      drawer.style.transition = ''
+      drawer.style.width = ''
+      drawerWidth.value = Math.min(MAX_W, Math.max(MIN_W, w))
+      localStorage.setItem('agentDrawerWidth', String(drawerWidth.value))
+    }
   }
   document.body.style.cursor = 'col-resize'
   document.body.style.userSelect = 'none'
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
 }
 
 // ===== 轮询：抽屉打开时 3s 刷新建议/任务/当前任务，关闭即停 =====
@@ -357,9 +382,10 @@ function eventColor(t) { return { progress: 'primary', tool_call: 'info', error:
   top: 0;
   bottom: 0;
   left: 0;
-  width: 6px;
+  width: 8px;
   cursor: col-resize;
   z-index: 20;
+  touch-action: none; /* 触屏拖动不触发滚动 */
   transition: background 0.15s ease;
 }
 .drawer-resizer:hover,
