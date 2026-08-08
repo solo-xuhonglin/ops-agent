@@ -60,7 +60,9 @@ public class DataInitializer implements CommandLineRunner {
             java.util.Map.entry("training:read", "查看训练任务"),
             java.util.Map.entry("training:write", "管理训练任务"),
             java.util.Map.entry("serving:read", "查看模型服务"),
-            java.util.Map.entry("serving:write", "管理模型服务"));
+            java.util.Map.entry("serving:write", "管理模型服务"),
+            java.util.Map.entry("agent:read", "查看Agent任务"),
+            java.util.Map.entry("agent:write", "派发Agent任务"));
 
     private static final List<String> PERMISSION_CODES = List.copyOf(PERMISSION_DESCRIPTIONS.keySet());
 
@@ -69,11 +71,12 @@ public class DataInitializer implements CommandLineRunner {
             "dataset:read", "dataset:write",
             "model:read", "model:write",
             "training:read", "training:write",
-            "serving:read", "serving:write");
+            "serving:read", "serving:write",
+            "agent:read", "agent:write");
 
     /** 业务只读权限（只读用户 / 未来 agent 继承用户权限） */
     private static final List<String> BUSINESS_READ_CODES = List.of(
-            "dataset:read", "model:read", "training:read", "serving:read");
+            "dataset:read", "model:read", "training:read", "serving:read", "agent:read");
 
     @Override
     @Transactional
