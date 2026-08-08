@@ -1,0 +1,96 @@
+syntax = "proto3";
+
+package opsagent.agent;
+
+option java_multiple_files = true;
+option java_package = "com.opsagent.admin.agent.proto";
+option java_outer_classname = "AgentProto";
+
+// admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
+service AgentService {
+  rpc Connect(stream ClientMessage) returns (stream ServerMessage);
+}
+
+message ClientMessage {
+  oneof msg {
+    Register register = 1;
+    TaskEvent task_event = 2;
+    TaskResult task_result = 3;
+    AgentUpdate agent_update = 4;
+    Pong pong = 5;
+  }
+}
+
+message ServerMessage {
+  oneof msg {
+    RegisterAck register_ack = 1;
+    TaskDispatch task_dispatch = 2;
+    CancelTask cancel_task = 3;
+    Ping ping = 4;
+  }
+}
+
+message AgentInfo {
+  string agent_id = 1;
+  repeated string capabilities = 2;
+}
+
+message Register {
+  string worker_id = 1;
+  repeated AgentInfo agents = 2;
+}
+
+message RegisterAck {
+  bool ok = 1;
+  string message = 2;
+}
+
+message TaskEvent {
+  string task_id = 1;
+  int32 seq = 2;
+  string event_type = 3;   // progress / tool_call / error
+  string content = 4;
+}
+
+message Suggestion {
+  string action_type = 1;
+  string target_type = 2;
+  int64 target_id = 3;
+  string params = 4;       // JSON 字符串
+  string reason = 5;
+  string priority = 6;     // HIGH / NORMAL / LOW
+}
+
+message TaskResult {
+  string task_id = 1;
+  bool ok = 2;
+  string conclusion = 3;
+  repeated Suggestion suggestions = 4;
+  string error = 5;
+}
+
+message TaskDispatch {
+  string task_id = 1;
+  string task_type = 2;    // diagnose_training / diagnose_serving / diagnose_dataset / model_review / question
+  string target_type = 3;
+  int64 target_id = 4;
+  string query = 5;
+  string task_token = 6;   // M2 起使用（scoped JWT）
+}
+
+message CancelTask {
+  string task_id = 1;
+  string reason = 2;
+}
+
+message AgentUpdate {
+  repeated AgentInfo agents = 1;
+}
+
+message Ping {
+  int64 ts = 1;
+}
+
+message Pong {
+  int64 ts = 1;
+}
