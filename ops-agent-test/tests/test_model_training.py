@@ -12,7 +12,6 @@ Covers:
 """
 from __future__ import annotations
 
-import time
 import uuid
 
 import pytest
@@ -50,66 +49,17 @@ def test_model_version_crud(client):
 
 
 # ===================== Real training run =====================
-def test_trigger_training_real_run(client, make_dataset, training_csv):
-    # 1) dataset must have a REAL uploaded file (weather:// placeholder is rejected)
-    ds = make_dataset()
-    upload = client.upload_file(ds["id"], training_csv)
-    object_key = upload.get("objectKey", "")
-    assert object_key and not object_key.startswith("weather://"), \
-        "dataset must have a real data file before training"
-
-    # 2) trigger a real training job with tiny hyperparams so it finishes fast
-    req = {
-        "datasetId": ds["id"],
-        "name": f"e2e-model-{uuid.uuid4().hex[:8]}",
-        "version": "v1",
-        "algorithm": "LSTM",
-        "hyperparameters": {
-            "seqLen": 12,
-            "hiddenSize": 16,
-            "epochs": 2,
-            "batchSize": 16,
-            "lr": 0.01,
-        },
-    }
-    try:
-        job = client.create_training_job(req)
-    except OpsAgentError as e:
-        pytest.fail(
-            f"trigger training failed on remote (possible missing train image / "
-            f"docker.sock issue): {e}"
-        )
-
-    assert job["status"] == "RUNNING", f"job should be RUNNING after launch, got {job['status']}"
-    job_id = job["id"]
-    mv_id = job["modelVersionId"]
-
-    # 3) poll until the TrainingJobPoller finalizes the job (every 5s)
-    terminal = None
-    for _ in range(48):  # up to ~4 min
-        time.sleep(5)
-        j = client.get_training_job(job_id)
-        if j["status"] in ("SUCCEEDED", "FAILED"):
-            terminal = j
-            break
-    assert terminal is not None, "training job did not reach a terminal state in time"
-    assert terminal["status"] == "SUCCEEDED", \
-        f"training ended {terminal['status']} (remote pipeline problem)"
-
-    # 4) ModelVersion finalized: READY + artifact key + metrics written back
-    mv = client.get_model(mv_id)
-    assert mv["status"] == "READY", f"model version status={mv['status']}"
+def test_trigger_training_real_run(client, ready_model):
+    # `ready_model` already did: dataset + real CSV upload -> trigger (tiny
+    # hyperparams) -> poll until SUCCEEDED -> model READY. Assert the finalized
+    # model + log access, then let the fixture teardown purge job/model.
+    mv = ready_model["model"]
     assert mv["artifactKey"] and mv["artifactKey"].endswith("/model.pt"), \
         f"artifactKey should point to model.pt, got {mv.get('artifactKey')}"
     assert mv["metrics"], "metrics.json should be written back to the model version"
 
-    # 5) logs URL is issued once the job is done
-    logs = client.training_logs_url(job_id)
+    logs = client.training_logs_url(ready_model["job_id"])
     assert logs.get("url"), "training logs presigned url should be returned"
-
-    # ---- cleanup (dataset handled by make_dataset teardown) ----
-    client.delete_training_job(job_id)
-    client.delete_model(mv_id)
 
 
 # ===================== Trigger validation =====================

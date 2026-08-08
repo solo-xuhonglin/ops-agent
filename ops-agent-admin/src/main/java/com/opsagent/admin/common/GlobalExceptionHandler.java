@@ -7,6 +7,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.stream.Collectors;
 
@@ -48,6 +49,17 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining("; "));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.<Void>builder().code(400).message(msg)
+                        .timestamp(java.time.OffsetDateTime.now()).build());
+    }
+
+    /** 保留 ResponseStatusException 自身携带的状态码（如 serving 未就绪 409、无文件 404）。 */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<ApiResponse<Void>> handleResponseStatus(ResponseStatusException ex) {
+        HttpStatus status = HttpStatus.valueOf(ex.getStatusCode().value());
+        String reason = ex.getReason();
+        return ResponseEntity.status(status)
+                .body(ApiResponse.<Void>builder().code(status.value())
+                        .message(reason == null ? "request rejected" : reason)
                         .timestamp(java.time.OffsetDateTime.now()).build());
     }
 

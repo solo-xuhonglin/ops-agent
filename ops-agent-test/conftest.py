@@ -9,6 +9,7 @@ Key design points:
 from __future__ import annotations
 
 import os
+import time
 import uuid
 
 import httpx
@@ -118,3 +119,48 @@ def training_csv(tmp_path) -> str:
     p = tmp_path / "weather_train.csv"
     _make_training_csv(str(p), n_per_region=30)
     return str(p)
+
+
+@pytest.fixture
+def ready_model(client: OpsAgentClient, make_dataset, training_csv):
+    """Train a real model to READY on the remote backend (tiny hyperparams) and
+    guarantee teardown cleanup of the training job + model. The dataset is cleaned
+    by `make_dataset` teardown. Returns:
+        {dataset_id, job_id, model_version_id, model}
+    """
+    ds = make_dataset()
+    client.upload_file(ds["id"], training_csv)
+
+    req = {
+        "datasetId": ds["id"],
+        "name": f"ready-model-{uuid.uuid4().hex[:8]}",
+        "version": "v1",
+        "algorithm": "LSTM",
+        "hyperparameters": {"seqLen": 12, "hiddenSize": 16, "epochs": 2, "batchSize": 16, "lr": 0.01},
+    }
+    job = client.create_training_job(req)
+    job_id = job["id"]
+    mv_id = job["modelVersionId"]
+
+    terminal = None
+    for _ in range(60):  # up to ~5 min
+        time.sleep(5)
+        j = client.get_training_job(job_id)
+        if j["status"] in ("SUCCEEDED", "FAILED"):
+            terminal = j
+            break
+    assert terminal is not None and terminal["status"] == "SUCCEEDED", \
+        f"training did not succeed on remote (missing train image? docker.sock?): " \
+        f"{terminal and terminal['status']}"
+
+    mv = client.get_model(mv_id)
+    assert mv["status"] == "READY", f"model not READY after training: {mv['status']}"
+
+    yield {"dataset_id": ds["id"], "job_id": job_id, "model_version_id": mv_id, "model": mv}
+
+    # teardown: best-effort purge job + model (dataset handled by make_dataset)
+    for fn, arg in ((client.delete_training_job, job_id), (client.delete_model, mv_id)):
+        try:
+            fn(arg)
+        except Exception:
+            pass
