@@ -293,7 +293,7 @@ fi
 if [ "$DO_UP" = "1" ]; then
   echo "==> 等待服务就绪"
   sleep 8
-  docker compose ps
+  docker compose --env-file "$ENV_FILE" ps
 fi
 
 echo "==> 部署完成（目标: ${TARGETS[*]}）"
