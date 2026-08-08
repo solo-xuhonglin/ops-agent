@@ -123,8 +123,31 @@ public class AgentTaskService {
                 task.setConclusion(error == null || error.isBlank() ? conclusion : error);
             }
             taskRepository.save(task);
+            if ("execute_suggestion".equals(task.getTaskType()) && task.getQuery() != null) {
+                updateSuggestionFromExecuteTask(task, ok, error);
+            }
             log.info("task finished: taskId={}, ok={}", taskId, ok);
         });
+    }
+
+    /** execute_suggestion 任务结束：把执行结果回写到对应处置建议（EXECUTED/FAILED + result）。 */
+    private void updateSuggestionFromExecuteTask(AgentTask task, boolean ok, String error) {
+        Long suggestionId = extractSuggestionId(task.getQuery());
+        if (suggestionId == null) {
+            return;
+        }
+        suggestionRepository.findById(suggestionId).ifPresent(s -> {
+            s.setStatus(ok ? "EXECUTED" : "FAILED");
+            s.setExecutedAt(OffsetDateTime.now());
+            s.setResult(ok ? task.getConclusion() : (error != null && !error.isBlank() ? error : task.getConclusion()));
+            suggestionRepository.save(s);
+            log.info("suggestion updated from execute task: id={} status={}", suggestionId, s.getStatus());
+        });
+    }
+
+    private Long extractSuggestionId(String query) {
+        var matcher = java.util.regex.Pattern.compile("\"suggestionId\"\\s*:\\s*(\\d+)").matcher(query);
+        return matcher.find() ? Long.parseLong(matcher.group(1)) : null;
     }
 
     private void persistSuggestions(String taskId, List<Suggestion> suggestions) {

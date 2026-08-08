@@ -28,6 +28,7 @@ public class AgentSuggestionService {
     private final AgentTaskRepository taskRepository;
     private final WorkerRegistry workerRegistry;
     private final GrantService grantService;
+    private final AgentTaskService taskService;
 
     public Page<AgentSuggestion> list(int page, int size) {
         return suggestionRepository.findAllByOrderByIdDesc(
@@ -66,7 +67,15 @@ public class AgentSuggestionService {
                         .setGrantKey(grantKey)
                         .setTtlSeconds((int) grantService.ttlSeconds()))
                 .build());
-        log.info("suggestion approved: id={} grantKey={} worker={}",
+
+        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query 调写工具（自动带 key），结果回传更新状态
+        String query = "{\"suggestionId\":%d,\"action\":\"%s\",\"params\":%s}".formatted(
+                suggestion.getId(), suggestion.getActionType(),
+                suggestion.getParams() == null ? "{}" : suggestion.getParams());
+        taskService.dispatch("execute_suggestion", suggestion.getTargetType(),
+                suggestion.getTargetId(), query, confirmedBy);
+
+        log.info("suggestion approved: id={} grantKey={} worker={}, execute task dispatched",
                 id, grantKey, worker.getWorkerId());
         return suggestion;
     }

@@ -1,12 +1,13 @@
-"""Agent 决策循环（M2）：function-calling。
+"""Agent 决策循环（M3）：function-calling + 处置建议产出/执行。
 
 收到 TaskDispatch → 组装 messages → 循环调 LLM(tools=schema)：
   LLM 返回 tool_call → 查 registry → 执行（HTTP 直调 admin，系统参数由 http_client 注入）→ 回填 → 再问
-  无 tool_call → 收敛 → TaskResult(conclusion)
-对外契约（TaskEvent → TaskResult）与 M1 一致。
+  无 tool_call → 收敛 → 解析结论 + suggestions(JSON 代码块) → TaskResult
+对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
 """
 import json
 import logging
+import re
 
 from app.agent.context import TaskContext
 from app.llm.deepseek import DeepSeekClient, parse_tool_calls
@@ -21,7 +22,15 @@ SYSTEM_PROMPT = (
     "你是 ops-agent 的运维助手，负责诊断训练任务、推理服务(serving)、数据集与模型状态，"
     "并回答运维相关的自然语言问询。你可以调用工具查询系统真实状态；"
     "基于工具返回的数据给出简洁、准确的中文结论；信息不足时可多次调用不同工具。"
+    "若任务明确要求执行已获授权的处置操作（如下线/中止/部署，任务描述中带 suggestionId），"
+    "直接调用对应的写工具执行并汇报结果。"
+    "若诊断发现需要处置（下线异常 serving、中止卡住的训练、部署模型等），在最终回答末尾附加"
+    " JSON 代码块给出处置建议：```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
+    "\"target_type\":\"serving_endpoint\",\"target_id\":3,\"reason\":\"原因说明\","
+    "\"priority\":\"HIGH\"}]} ```（写操作会经人工确认后由你执行，无需在当前回答中直接执行）。"
 )
+
+_JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
@@ -70,9 +79,12 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                 messages.append({"role": "tool", "tool_call_id": call_id, "name": name,
                                  "content": json.dumps(result, ensure_ascii=False)})
 
-        conclusion = _extract_conclusion(messages)
-        await client.send_result(ctx.task_id, ok=True, conclusion=conclusion)
-        log.info("task done: %s rounds=%s", ctx.task_id, rounds)
+        content = _extract_conclusion(messages)
+        suggestions = _parse_suggestions(content)
+        conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
+        await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
+                                 suggestions=_to_proto_suggestions(suggestions))
+        log.info("task done: %s rounds=%s suggestions=%s", ctx.task_id, rounds, len(suggestions))
     except Exception as e:  # noqa: BLE001 - 单任务失败不拖垮 worker
         log.error("task failed: %s", e, exc_info=True)
         await client.send_result(ctx.task_id, ok=False,
@@ -85,3 +97,31 @@ def _extract_conclusion(messages: list[dict]) -> str:
         if m.get("role") == "assistant" and m.get("content"):
             return m["content"]
     return "no conclusion produced (max tool rounds reached)"
+
+
+def _parse_suggestions(content: str) -> list[dict]:
+    """从 LLM 回答的 ```json 代码块解析 suggestions 列表（缺 action_type/target_id 的丢弃）。"""
+    m = _JSON_BLOCK_RE.search(content or "")
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return []
+    raw = data.get("suggestions") or []
+    return [s for s in raw
+            if isinstance(s, dict) and s.get("action_type") and s.get("target_id")]
+
+
+def _to_proto_suggestions(items: list[dict]) -> list[agent_pb2.Suggestion]:
+    out = []
+    for s in items:
+        out.append(agent_pb2.Suggestion(
+            action_type=str(s.get("action_type", "")),
+            target_type=str(s.get("target_type", "")),
+            target_id=int(s.get("target_id", 0)),
+            params=json.dumps(s.get("params", {}), ensure_ascii=False),
+            reason=str(s.get("reason", "")),
+            priority=str(s.get("priority", "NORMAL")),
+        ))
+    return out

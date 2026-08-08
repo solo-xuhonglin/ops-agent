@@ -17,8 +17,18 @@ class FakeClient:
     async def send_event(self, task_id, event_type, content):
         self.events.append((task_id, event_type, content))
 
-    async def send_result(self, task_id, ok, conclusion, error=""):
+    def __init__(self):
+        self.events = []
+        self.results = []
+        self.suggestion_bodies = []
+
+    async def send_event(self, task_id, event_type, content):
+        self.events.append((task_id, event_type, content))
+
+    async def send_result(self, task_id, ok, conclusion, error="", suggestions=None):
         self.results.append((task_id, ok, conclusion, error))
+        if suggestions:
+            self.suggestion_bodies.extend(suggestions)
 
 
 class FakeHttp:
@@ -135,3 +145,38 @@ def test_parse_tool_calls_extracts_id_name_args():
     result = parse_tool_calls(msg)
     assert result == [("c9", "training_get", {"jobId": 3})]
     assert parse_tool_calls({"role": "assistant"}) == []
+
+
+def test_parse_suggestions_extracts_json_block():
+    content = ("发现 serving 异常。```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
+               "\"target_type\":\"serving_endpoint\",\"target_id\":3,\"reason\":\"不健康\","
+               "\"priority\":\"HIGH\"}]} ```")
+    items = core._parse_suggestions(content)
+    assert len(items) == 1
+    assert items[0]["action_type"] == "serving_undeploy"
+    assert items[0]["target_id"] == 3
+
+
+def test_parse_suggestions_empty_without_block():
+    assert core._parse_suggestions("一切正常，无需处置。") == []
+    assert core._parse_suggestions(None) == []
+    assert core._parse_suggestions("```json {bad json} ```") == []
+
+
+@pytest.mark.asyncio
+async def test_handle_dispatch_sends_suggestions():
+    client = FakeClient()
+    registry = ToolRegistry()
+    http = FakeHttp()
+    content = ("建议下线。```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
+               "\"target_type\":\"serving_endpoint\",\"target_id\":3}]} ```")
+    llm = FakeLlm([{"role": "assistant", "content": content}])
+
+    await core.handle_dispatch(client, registry, llm, http, make_dispatch())
+
+    task_id, ok, conclusion, error = client.results[0]
+    assert ok is True
+    assert "```json" not in conclusion  # 建议块已剥离
+    assert client.suggestion_bodies and len(client.suggestion_bodies) == 1
+    assert client.suggestion_bodies[0].action_type == "serving_undeploy"
+    assert client.suggestion_bodies[0].target_id == 3
