@@ -27,6 +27,7 @@ ITEMS = [
     ("ops-agent-admin/pom.xml", "ops-agent-admin/pom.xml"),
     ("ops-agent-admin/Dockerfile", "ops-agent-admin/Dockerfile"),
     ("ops-agent-admin/src", "ops-agent-admin/src"),
+    ("ops-agent-core", "ops-agent-core"),
     ("ops-agent-data-train/train.py", "ops-agent-data-train/train.py"),
     ("ops-agent-data-train/Dockerfile", "ops-agent-data-train/Dockerfile"),
     ("ops-agent-data-train/requirements.txt", "ops-agent-data-train/requirements.txt"),
