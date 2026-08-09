@@ -164,8 +164,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
                       target_type=d.target_type, target_id=d.target_id,
-                      conversation_id=d.conversation_id, suggestion_id=d.suggestion_id,
-                      tracker=tracker)
+                      conversation_id=d.conversation_id, suggestion_id=d.suggestion_id)
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
     hint, user_prompt = _build_prompt(d)
@@ -176,7 +175,8 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     ]
 
     try:
-        graph = build_graph(llm=llm, http=http, registry=registry, client=client)
+        graph = build_graph(llm=llm, http=http, registry=registry, client=client,
+                            tracker=tracker)
         final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
         content = _extract_conclusion(final_messages)

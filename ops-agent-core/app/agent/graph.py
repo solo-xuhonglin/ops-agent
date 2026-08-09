@@ -54,10 +54,12 @@ def _extract_object_id(body: Any) -> Optional[int]:
     return None
 
 
-def _maybe_register_tracker(ctx: TaskContext, tool: Optional[agent_pb2.ToolSchema],
+def _maybe_register_tracker(tracker: Any, ctx: TaskContext,
+                            tool: Optional[agent_pb2.ToolSchema],
                             result: dict) -> None:
-    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步（async_suggestion）。"""
-    if tool is None or not (tool.is_write and ctx.tracker and ctx.conversation_id):
+    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步（async_suggestion）。
+    tracker 走闭包注入（不进 checkpoint state，避免 msgpack 序列化不可序列化对象）。"""
+    if tool is None or not (tool.is_write and tracker and ctx.conversation_id):
         return
     if not result or result.get("status") not in (200, 201, 202):
         return
@@ -68,8 +70,8 @@ def _maybe_register_tracker(ctx: TaskContext, tool: Optional[agent_pb2.ToolSchem
     if not mapping:
         return
     query_tool, object_type, id_param = mapping
-    next_step = ctx.tracker.next_step_for(ctx.conversation_id, tool.name)
-    ctx.tracker.register(
+    next_step = tracker.next_step_for(ctx.conversation_id, tool.name)
+    tracker.register(
         object_type=object_type, object_id=object_id,
         conversation_id=ctx.conversation_id, task_id=ctx.task_id,
         task_token=ctx.task_token, query_tool=query_tool,
@@ -208,10 +210,10 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
 
 
 def build_graph(llm: Any, http: AdminHttpClient,
-                registry: ToolRegistry, client: GrpcClient) -> Any:
-    """构建并编译决策图。llm/http/registry/client 为进程级共享实例，ctx 走 state。
-    llm 需实现 astream(messages)（流式产出 AIMessageChunk）；默认 ChatDeepSeek
-    （langchain-deepseek，reasoning_content 挂 additional_kwargs 供 _chunk_reasoning 读取）。"""
+                registry: ToolRegistry, client: GrpcClient,
+                tracker: Any = None) -> Any:
+    """构建并编译决策图。llm/http/registry/client/tracker 为进程级共享实例（闭包），ctx 走 state。
+    tracker 不进 state（msgpack 不可序列化），写工具成功回调用它注册异步跟踪。"""
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         """决策节点：工具清单注入 prompt 后流式调用 LLM。
@@ -284,7 +286,7 @@ def build_graph(llm: Any, http: AdminHttpClient,
             else:
                 result = await http.call(tool, args, ctx)
             # 异步写操作成功后注册跟踪（训练/部署完成后按 Plan 推进下一步）
-            _maybe_register_tracker(ctx, tool, result)
+            _maybe_register_tracker(tracker, ctx, tool, result)
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",
