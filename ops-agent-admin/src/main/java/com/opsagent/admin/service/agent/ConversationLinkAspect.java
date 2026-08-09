@@ -44,9 +44,14 @@ public class ConversationLinkAspect {
         // 只记录创建型写操作的成功响应（对象 ID 从响应 data 提取）
         if (result instanceof ApiResponse<?> resp && resp.getData() != null) {
             Long objectId = extractId(resp.getData());
-            String conversationId = agentTaskRepository.findByTaskId(taskId)
-                    .map(AgentTask::getConversationId).orElse(null);
+            AgentTask task = agentTaskRepository.findByTaskId(taskId).orElse(null);
+            String conversationId = task == null ? null : task.getConversationId();
             if (objectId != null && conversationId != null && !conversationId.isBlank()) {
+                // ① 响应记录到 task（agent 追踪载体：后续按 objectId 调现有业务接口轮询状态）
+                task.setResultObjectType(requireGrant.targetType());
+                task.setResultObjectId(objectId);
+                agentTaskRepository.save(task);
+                // ② 会话↔对象关系记录到 conversation_links（followup 反查）
                 ConversationLink link = new ConversationLink();
                 link.setConversationId(conversationId);
                 link.setTaskId(taskId);
@@ -54,9 +59,8 @@ public class ConversationLinkAspect {
                 link.setObjectType(requireGrant.targetType());
                 link.setObjectId(objectId);
                 linkRepository.save(link);
-                log.info("conversation link recorded: conv={} task={} action={} object={}/{}",
-                        conversationId, taskId, requireGrant.action(),
-                        requireGrant.targetType(), objectId);
+                log.info("agent write result recorded: task={} object={}/{} conversation={}",
+                        taskId, requireGrant.targetType(), objectId, conversationId);
             }
         }
         return result;

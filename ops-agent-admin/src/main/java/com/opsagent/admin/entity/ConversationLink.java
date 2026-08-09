@@ -43,6 +43,10 @@ public class ConversationLink {
     @Column(name = "object_id")
     private Long objectId;
 
+    /** 该对象是否已派发 followup（如训练完成 → 推部署建议）：追踪层状态，业务表不感知 */
+    @Column(name = "followup_dispatched")
+    private boolean followupDispatched = false;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 

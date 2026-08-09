@@ -8,7 +8,6 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.core.command.LogContainerResultCallback;
-import com.opsagent.admin.service.agent.TrainingFollowupService;
 import com.opsagent.admin.config.TrainProperties;
 import com.opsagent.admin.entity.ModelVersion;
 import com.opsagent.admin.entity.TrainingJob;
@@ -42,7 +41,6 @@ public class TrainingJobPoller {
     private final Optional<MinioService> minioService;
     private final TrainProperties trainProperties;
     private final MinioConfig minioConfig;
-    private final TrainingFollowupService followupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Scheduled(fixedDelay = 5000)
@@ -131,12 +129,7 @@ public class TrainingJobPoller {
         job.setFinishedAt(OffsetDateTime.now());
         trainingJobRepository.save(job);
         log.info("Training job succeeded jobId={} modelVersionId={}", job.getId(), job.getModelVersionId());
-        // agent 触发的训练（suggestionId 非空）→ 自动派发新任务到原 conversation 推 deploy suggestion
-        try {
-            followupService.dispatchFollowup(job);
-        } catch (Exception e) {
-            log.warn("training followup dispatch failed: jobId={} err={}", job.getId(), e.getMessage());
-        }
+        // 业务层到此为止：训练完成后的 agent followup（推部署建议）由 TrainingFollowupService 独立扫描触发
     }
 
     private void finalizeFailed(TrainingJob job, String reason) {

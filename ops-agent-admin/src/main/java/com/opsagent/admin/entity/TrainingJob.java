@@ -33,10 +33,6 @@ public class TrainingJob {
     @Column(name = "triggered_by")
     private Long triggeredBy;
 
-    /** 训练完成后是否已派发 agent 新任务推部署建议（防重复触发） */
-    @Column(name = "followup_dispatched")
-    private boolean followupDispatched = false;
-
     @Column(name = "log_key", length = 512)
     private String logKey;
 
