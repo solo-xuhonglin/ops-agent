@@ -7,9 +7,11 @@ import com.opsagent.admin.agent.proto.TaskDispatch;
 import com.opsagent.admin.entity.AgentEvent;
 import com.opsagent.admin.entity.AgentSuggestion;
 import com.opsagent.admin.entity.AgentTask;
+import com.opsagent.admin.entity.ConversationMessage;
 import com.opsagent.admin.repository.AgentEventRepository;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
+import com.opsagent.admin.repository.ConversationMessageRepository;
 import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,7 @@ public class AgentTaskService {
     private final AgentTaskRepository taskRepository;
     private final AgentEventRepository eventRepository;
     private final AgentSuggestionRepository suggestionRepository;
+    private final ConversationMessageRepository conversationMessageRepository;
     private final WorkerRegistry workerRegistry;
     private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
@@ -257,6 +260,9 @@ public class AgentTaskService {
             taskRepository.save(task);
             if ("execute_suggestion".equals(task.getTaskType()) && task.getQuery() != null) {
                 updateSuggestionFromExecuteTask(task, ok, error);
+                // 执行结果写回对话（用户审批后能在会话流里看到 agent 的响应，而非静默）
+                writeConversationReply(task, ok,
+                        error == null || error.isBlank() ? conclusion : error);
             }
             log.info("task finished: taskId={}, ok={}", taskId, ok);
         });
@@ -280,6 +286,23 @@ public class AgentTaskService {
     private Long extractSuggestionId(String query) {
         var matcher = java.util.regex.Pattern.compile("\"suggestionId\"\\s*:\\s*(\\d+)").matcher(query);
         return matcher.find() ? Long.parseLong(matcher.group(1)) : null;
+    }
+
+    /** execute_suggestion 任务执行结果写回对话：审批后用户能在会话流里看到 agent 响应（成功/失败均可见）。 */
+    private void writeConversationReply(AgentTask task, boolean ok, String conclusion) {
+        if (task.getConversationId() == null || task.getConversationId().isBlank()) {
+            return; // 非对话发起的 execute_suggestion（后台直接审批）无会话可写
+        }
+        ConversationMessage msg = new ConversationMessage();
+        msg.setMessageId(UUID.randomUUID().toString());
+        msg.setConversationId(task.getConversationId());
+        msg.setRole("assistant");
+        msg.setContent(conclusion == null || conclusion.isBlank() ? "（无反馈）" : conclusion);
+        msg.setStatus(ok ? "completed" : "failed");
+        msg.setTaskId(task.getTaskId());
+        conversationMessageRepository.save(msg);
+        log.info("execute suggestion reply saved: conversation={}, task={}, ok={}",
+                task.getConversationId(), task.getTaskId(), ok);
     }
 
     private void persistSuggestions(String taskId, List<Suggestion> suggestions) {

@@ -70,13 +70,14 @@ public class AgentSuggestionService {
                         .setTtlSeconds((int) grantService.ttlSeconds()))
                 .build());
 
-        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query（含 target）调写工具（自动带 key），结果回传更新状态
+        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query（含 target）调写工具（自动带 key），
+        // 结果回传更新状态；带 conversationId 让执行结果写回对话（审批后用户能在会话流里看到 agent 响应）
         String query = "{\"suggestionId\":%d,\"action\":\"%s\",\"targetType\":\"%s\",\"targetId\":%d,\"params\":%s}"
                 .formatted(suggestion.getId(), suggestion.getActionType(),
                         suggestion.getTargetType(), suggestion.getTargetId(),
                         suggestion.getParams() == null ? "{}" : suggestion.getParams());
         taskService.dispatch("execute_suggestion", suggestion.getTargetType(),
-                suggestion.getTargetId(), query, confirmedBy);
+                suggestion.getTargetId(), query, confirmedBy, null, suggestion.getConversationId());
 
         log.info("suggestion approved: id={} grantKey={} worker={}, execute task dispatched",
                 id, grantKey, worker.getWorkerId());
