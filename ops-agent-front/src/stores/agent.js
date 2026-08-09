@@ -262,7 +262,8 @@ export const useAgentStore = defineStore('agent', {
               name: data?.name || 'tool',
               args: data?.args,
               summary: '',
-              status: 'running'
+              status: 'running',
+              _summaryOpen: false
             })
             break
           }
@@ -353,7 +354,8 @@ export const useAgentStore = defineStore('agent', {
               name: data?.name || 'tool',
               args: data?.args,
               summary: '',
-              status: 'running'
+              status: 'running',
+              _summaryOpen: false
             })
             break
           case 'tool_result': {

@@ -182,7 +182,12 @@
                             :color="t.status === 'done' ? 'success' : 'info'" class="mr-1" />
                     <span class="text-body-small font-weight-medium">{{ t.name }}</span>
                     <span v-if="t.args && Object.keys(t.args).length" class="tool-args">{{ prettyArgs(t.args) }}</span>
-                    <div v-if="t.summary" class="tool-summary text-caption">{{ t.summary }}</div>
+                    <v-btn v-if="t.summary" variant="text" size="x-small" class="tool-toggle px-1"
+                           @click="t._summaryOpen = !t._summaryOpen">
+                      {{ t._summaryOpen ? '收起结果' : '查看结果' }}
+                      <v-icon size="13">{{ t._summaryOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                    </v-btn>
+                    <div v-if="t.summary && t._summaryOpen" class="tool-summary text-caption">{{ t.summary }}</div>
                   </div>
                 </div>
               </div>
@@ -786,14 +791,25 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   color: rgba(0, 0, 0, 0.4);
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
+.tool-toggle {
+  min-width: 0;
+  height: 20px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: rgb(var(--v-theme-primary));
+}
 .tool-summary {
   width: 100%;
-  padding-left: 20px;
+  padding: 6px 8px 6px 20px;
   color: rgba(0, 0, 0, 0.45);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 80px;
+  overflow-wrap: anywhere;
+  max-height: 220px;
   overflow-y: auto;
+  background: rgba(0, 0, 0, 0.03);
+  border-left: 2px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0 4px 4px 0;
 }
 
 /* ---- 流式光标 ---- */
