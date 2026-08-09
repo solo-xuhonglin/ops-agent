@@ -121,7 +121,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         "你可以调用以下工具查询系统真实状态或执行已授权操作：",
         "",
     ]
-    for t in registry.schemas():
+    for t in registry.all():  # ToolSchema proto 对象：name/description/parameters/is_write
         lines.append(f"- {t.name}: {t.description}")
         if t.parameters:
             lines.append(f"  参数(JSON Schema): {t.parameters}")
