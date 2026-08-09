@@ -13,7 +13,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Map;
 
@@ -42,9 +41,19 @@ public class AgentTaskController {
     @GetMapping
     @PreAuthorize("hasAuthority('agent:read')")
     public ApiResponse<?> list(@RequestParam(defaultValue = "0") int page,
-                               @RequestParam(defaultValue = "20") int size) {
-        Page<AgentTask> result = agentTaskService.list(page, size);
-        return ApiResponse.ok(result);
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) String status,
+                               @RequestHeader(value = "X-Agent-Task", required = false) String agentTaskId) {
+        if (agentTaskId != null && !agentTaskId.isBlank()) {
+            // agent 追踪：X-Agent-Task 反查会话，只返回该会话内自己发起的任务（隔离其他用户/会话）
+            String conversationId = agentTaskService.get(agentTaskId)
+                    .map(AgentTask::getConversationId).orElse(null);
+            if (conversationId != null) {
+                return ApiResponse.ok(agentTaskService.listByConversation(conversationId, status, page, size));
+            }
+            return ApiResponse.ok(Page.empty());
+        }
+        return ApiResponse.ok(agentTaskService.list(page, size));
     }
 
     @GetMapping("/{taskId}")

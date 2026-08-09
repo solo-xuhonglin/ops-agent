@@ -8,6 +8,7 @@ import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.http.Method;
+import com.opsagent.admin.config.MinioConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,7 +24,7 @@ import java.io.InputStream;
 public class MinioService {
 
     private final MinioClient minioClient;
-    private final com.opsagent.admin.config.MinioConfig minioConfig;
+    private final MinioConfig minioConfig;
 
     @PostConstruct
     public void init() {

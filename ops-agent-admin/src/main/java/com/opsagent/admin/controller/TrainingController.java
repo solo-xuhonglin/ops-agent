@@ -20,7 +20,6 @@ import java.util.Map;
 public class TrainingController {
 
     private final TrainingJobService trainingJobService;
-    private final com.opsagent.admin.repository.AgentTaskRepository agentTaskRepository;
 
     @GetMapping
     @PreAuthorize("hasAuthority('training:read')")
@@ -41,16 +40,9 @@ public class TrainingController {
     @PostMapping
     @PreAuthorize("hasAuthority('training:write')")
     @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
-    public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req,
-                                 @RequestHeader(value = "X-Agent-Task", required = false) String agentTaskId) {
-        // agent 调用时 X-Agent-Task = execute_suggestion 任务 ID → 反查其 conversationId 写入 job，
-        // 供训练完成 → 自动 followup 把部署建议推回原会话（grantKey 一次性、任务关联持久，走 task 反查最直接）
-        String conversationId = null;
-        if (agentTaskId != null && !agentTaskId.isBlank()) {
-            conversationId = agentTaskRepository.findByTaskId(agentTaskId)
-                    .map(com.opsagent.admin.entity.AgentTask::getConversationId).orElse(null);
-        }
-        return ApiResponse.ok(trainingJobService.trigger(req, conversationId));
+    public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req) {
+        // 会话关联由 ConversationLinkAspect 切面自动记录（conversation_links），业务代码不感知
+        return ApiResponse.ok(trainingJobService.trigger(req));
     }
 
     @GetMapping("/{id}/logs")

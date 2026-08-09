@@ -2,6 +2,7 @@ package com.opsagent.admin.service;
 
 import com.opsagent.admin.entity.ModelVersion;
 import com.opsagent.admin.repository.ModelVersionRepository;
+import com.opsagent.admin.config.MinioConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -23,7 +24,7 @@ public class ModelVersionService {
 
     private final ModelVersionRepository modelVersionRepository;
     private final Optional<MinioService> minioService;
-    private final com.opsagent.admin.config.MinioConfig minioConfig;
+    private final MinioConfig minioConfig;
 
     @Transactional(readOnly = true)
     public Page<ModelVersion> list(Pageable pageable, String status, Long datasetId) {

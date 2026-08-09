@@ -8,6 +8,9 @@ import com.opsagent.admin.entity.AgentEvent;
 import com.opsagent.admin.entity.AgentSuggestion;
 import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.entity.ConversationMessage;
+import com.opsagent.admin.entity.Permission;
+import com.opsagent.admin.entity.Role;
+import com.opsagent.admin.entity.User;
 import com.opsagent.admin.repository.AgentEventRepository;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
@@ -75,15 +78,15 @@ public class AgentTaskService {
         if (userId == null) {
             return FALLBACK_READ_PERMISSIONS;
         }
-        Optional<com.opsagent.admin.entity.User> user = userRepository.findById(userId);
+        Optional<User> user = userRepository.findById(userId);
         if (user.isEmpty() || user.get().getRoles() == null || user.get().getRoles().isEmpty()) {
             log.warn("scoped token fallback to read-only: userId={} not found or no roles", userId);
             return FALLBACK_READ_PERMISSIONS;
         }
         Set<String> codes = new LinkedHashSet<>();
-        for (com.opsagent.admin.entity.Role role : user.get().getRoles()) {
+        for (Role role : user.get().getRoles()) {
             if (role.getPermissions() == null) continue;
-            for (com.opsagent.admin.entity.Permission p : role.getPermissions()) {
+            for (Permission p : role.getPermissions()) {
                 if (p.getCode() != null && !p.getCode().isBlank()) {
                     codes.add(p.getCode());
                 }
@@ -327,6 +330,15 @@ public class AgentTaskService {
 
     public Page<AgentTask> list(int page, int size) {
         return taskRepository.findAllByOrderByIdDesc(PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id")));
+    }
+
+    /** agent 追踪：某会话下已发起/执行中的任务列表（status 可选过滤），供 agent 在对话中自查进度。 */
+    public Page<AgentTask> listByConversation(String conversationId, String status, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        if (status != null && !status.isBlank()) {
+            return taskRepository.findByConversationIdAndStatusOrderByIdDesc(conversationId, status, pageable);
+        }
+        return taskRepository.findByConversationIdOrderByIdDesc(conversationId, pageable);
     }
 
     public Optional<AgentTask> get(String taskId) {

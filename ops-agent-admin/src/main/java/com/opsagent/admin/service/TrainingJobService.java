@@ -12,6 +12,7 @@ import com.opsagent.admin.repository.ModelVersionRepository;
 import com.opsagent.admin.repository.TrainingJobRepository;
 import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.CurrentUser;
+import com.opsagent.admin.config.MinioConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -39,7 +40,7 @@ public class TrainingJobService {
     private final CurrentUser currentUser;
     private final TrainingLauncher trainingLauncher;
     private final Optional<MinioService> minioService;
-    private final com.opsagent.admin.config.MinioConfig minioConfig;
+    private final MinioConfig minioConfig;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional(readOnly = true)
@@ -100,11 +101,6 @@ public class TrainingJobService {
      */
     @Transactional
     public TrainingJob trigger(TrainingRequest req) {
-        return trigger(req, null);
-    }
-
-    @Transactional
-    public TrainingJob trigger(TrainingRequest req, String conversationId) {
         Dataset dataset = datasetRepository.findById(req.datasetId())
                 .orElseThrow(() -> new ResourceNotFoundException("数据集不存在: " + req.datasetId()));
         String objectKey = dataset.getObjectKey();
@@ -132,10 +128,6 @@ public class TrainingJobService {
         job.setDatasetId(dataset.getId());
         job.setStatus("PENDING");
         job.setTriggeredBy(currentUserId());
-        // agent 执行已审批建议时 conversationId 非空：训练完成 → TrainingFollowupService 自动推部署建议回原会话
-        if (conversationId != null && !conversationId.isBlank()) {
-            job.setConversationId(conversationId);
-        }
         TrainingJob savedJob = trainingJobRepository.save(job);
 
         String containerId = trainingLauncher.launch(

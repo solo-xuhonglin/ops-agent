@@ -1,8 +1,10 @@
 package com.opsagent.admin.service.agent;
 
 import com.opsagent.admin.entity.Conversation;
+import com.opsagent.admin.entity.ConversationLink;
 import com.opsagent.admin.entity.ModelVersion;
 import com.opsagent.admin.entity.TrainingJob;
+import com.opsagent.admin.repository.ConversationLinkRepository;
 import com.opsagent.admin.repository.ConversationRepository;
 import com.opsagent.admin.repository.ModelVersionRepository;
 import com.opsagent.admin.repository.TrainingJobRepository;
@@ -12,9 +14,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 训练完成 → 自动 followup：把部署评估推回发起训练的原会话（training_jobs.conversation_id 直连），
- * agent 收到 training_completed_followup 任务后推 serving_deploy 建议供人工审批。
+ * 训练完成 → 自动 followup：从 conversation_links 关系表反查发起训练的原会话，
+ * 把部署评估推回该会话（agent 收到 training_completed_followup 任务后推 serving_deploy 建议供审批）。
  * 多步审批连接（用户问「训练并部署」→ 训练审批 → 训练完成 → 自动推部署审批）。
+ * 业务侧不持有 conversation_id，全靠切面记录的关系表反查。
  */
 @Service
 @RequiredArgsConstructor
@@ -24,23 +27,26 @@ public class TrainingFollowupService {
     private final TrainingJobRepository trainingJobRepository;
     private final ModelVersionRepository modelVersionRepository;
     private final ConversationRepository conversationRepository;
+    private final ConversationLinkRepository linkRepository;
     private final AgentConversationService conversationService;
 
     /**
      * 训练 SUCCEEDED 时由 TrainingJobPoller.finalizeSucceeded 调用；幂等（followupDispatched 标志防重）。
-     * 会话归属用户 ID 从 conversation 表取（该会话的发起人），无会话（用户手动创建的训练）跳过。
+     * 无关联会话（用户手动创建的训练 / 关系表缺失）跳过。
      */
     @Transactional
     public void dispatchFollowup(TrainingJob job) {
-        if (job == null || job.getConversationId() == null || job.getConversationId().isBlank()) {
+        if (job == null || job.isFollowupDispatched()) {
             return;
         }
-        if (job.isFollowupDispatched()) {
-            log.debug("training followup already dispatched: jobId={}", job.getId());
+        ConversationLink link = linkRepository
+                .findFirstByObjectTypeAndObjectId("training_job", job.getId()).orElse(null);
+        if (link == null || link.getConversationId() == null || link.getConversationId().isBlank()) {
+            log.info("training followup skipped: no conversation link for jobId={}", job.getId());
             return;
         }
         Conversation conversation = conversationRepository
-                .findByConversationId(job.getConversationId()).orElse(null);
+                .findByConversationId(link.getConversationId()).orElse(null);
         if (conversation == null) {
             log.info("training followup skipped: conversation gone, jobId={}", job.getId());
             return;
@@ -61,11 +67,11 @@ public class TrainingFollowupService {
                 (metrics == null || metrics.isBlank()) ? "(无 metrics)" : metrics,
                 modelVersionId);
 
-        conversationService.send(job.getConversationId(), conversation.getUserId(),
+        conversationService.send(link.getConversationId(), conversation.getUserId(),
                 query, "training_completed_followup", "model_version", modelVersionId);
         job.setFollowupDispatched(true);
         trainingJobRepository.save(job);
         log.info("training followup dispatched: jobId={}, modelVersionId={}, conversation={}",
-                job.getId(), modelVersionId, job.getConversationId());
+                job.getId(), modelVersionId, link.getConversationId());
     }
 }

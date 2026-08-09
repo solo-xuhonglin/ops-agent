@@ -8,11 +8,13 @@ import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
 import com.github.dockerjava.api.command.InspectContainerResponse;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.core.command.LogContainerResultCallback;
+import com.opsagent.admin.service.agent.TrainingFollowupService;
 import com.opsagent.admin.config.TrainProperties;
 import com.opsagent.admin.entity.ModelVersion;
 import com.opsagent.admin.entity.TrainingJob;
 import com.opsagent.admin.repository.ModelVersionRepository;
 import com.opsagent.admin.repository.TrainingJobRepository;
+import com.opsagent.admin.config.MinioConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -39,8 +41,8 @@ public class TrainingJobPoller {
     private final ModelVersionRepository modelVersionRepository;
     private final Optional<MinioService> minioService;
     private final TrainProperties trainProperties;
-    private final com.opsagent.admin.config.MinioConfig minioConfig;
-    private final com.opsagent.admin.service.agent.TrainingFollowupService followupService;
+    private final MinioConfig minioConfig;
+    private final TrainingFollowupService followupService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Scheduled(fixedDelay = 5000)

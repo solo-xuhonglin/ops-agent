@@ -16,6 +16,11 @@ public interface AgentTaskRepository extends JpaRepository<AgentTask, Long> {
 
     Page<AgentTask> findAllByOrderByIdDesc(Pageable pageable);
 
+    /** agent 追踪：某会话下的任务列表（新→旧） */
+    Page<AgentTask> findByConversationIdOrderByIdDesc(String conversationId, Pageable pageable);
+
+    Page<AgentTask> findByConversationIdAndStatusOrderByIdDesc(String conversationId, String status, Pageable pageable);
+
     /** 超时扫描：卡在 DISPATCHED/RUNNING 且超时的任务 */
     List<AgentTask> findByStatusInAndCreatedAtBefore(Collection<String> statuses, OffsetDateTime before);
 
