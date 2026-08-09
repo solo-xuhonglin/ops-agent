@@ -14,12 +14,20 @@ ops-agent-test/
   requirements.txt
   pytest.ini
   .env.example
-  conftest.py                 # 登录 fixture / make_dataset(自带清理)
+  conftest.py                 # 登录 fixture / make_dataset(自带清理) / ready_model / reader_client
   src/opsagent_client.py      # 后端 HTTP 客户端封装
   tests/
     test_dataset_lifecycle.py # Tier1 元数据 CRUD
     test_dataset_file.py      # Tier2 MinIO 文件上传真实验证
     test_dataset_negative.py  # 鉴权/异常用例
+    test_model_training.py    # 模型版本 + 训练任务（含真实跑一轮）
+    test_model_training_negative.py
+    test_serving.py           # 模型服务（部署/推理/下线全链路）
+    test_serving_negative.py
+    test_agent.py             # Agent 模块契约（tools/tasks/suggestions）
+    test_agent_negative.py    # 401 / READONLY 角色 403
+    test_agent_worker.py      # Agent 全链路（需 fake worker，AGENT_E2E=1）
+    support/fake_worker.py    # 受控 gRPC fake worker（在服务器容器内运行）
 ```
 
 ## 2. 配置
@@ -64,3 +72,25 @@ pytest -m negative     # 鉴权/异常
 
 `make_dataset` fixture 用 `uuid` 生成唯一名称，并在 `try/finally` 中无论如何 `DELETE`
 清理，绝不污染远程数据；用例间无顺序依赖。
+
+## 6. Agent 模块测试
+
+- **契约/负向**（`test_agent.py` / `test_agent_negative.py`）：tools 启停与校验、tasks/
+  suggestions 列表与 404、401、403 —— 无 worker 依赖，`pytest -v` 直接跑。
+- **全链路**（`test_agent_worker.py`）：真实 gRPC 闭环——dispatch → TaskDispatch →
+  worker 回事件/结果 → SUCCEEDED → suggestion 落库 → approve → grantKey 推送 →
+  execute_suggestion → EXECUTED / REJECTED。需要一个**受控 fake worker**（真实
+  ops-agent-core 会调 LLM，行为不确定），由编排脚本隔离运行：
+
+  ```bash
+  # 项目根目录（复用 scripts/_conn.py 的 SSH 凭据）
+  python scripts/agent_e2e_runner.py
+  ```
+
+  脚本会：短暂 `docker stop ops-agent-agent`（注册表清空）→ 起 fake worker 容器
+  （复用 `ops-agent-core:latest` 镜像与 gRPC stub，连 docker 网络内 `admin:9090`）
+  → 等注册完成 → 本地跑 `AGENT_E2E=1` 的 agent 测试 → **自动恢复真实 agent**并清理
+  fake worker，最后打印 worker 收到的 grant/任务日志作为证据。
+- **权限说明**：种子用户 `user/user123` 是 OPERATOR（业务读写，代码设计如此），
+  不能用于 403 测试；`conftest.py` 的 `reader_client` 会用 admin 动态创建一个
+  READONLY 角色用户（只有 `*:read`），测完即删。

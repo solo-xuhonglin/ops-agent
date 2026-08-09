@@ -20,6 +20,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -91,7 +93,7 @@ public class AgentTaskService {
         log.info("task cancelled by timeout: taskId={}", task.getTaskId());
     }
 
-    /** 派发任务：入库 DISPATCHED → 找在线 worker → 发 TaskDispatch（无 worker 直接 FAILED） */
+    /** 派发任务：入库 DISPATCHED → 找在线 worker → 事务提交后发 TaskDispatch（无 worker 直接 FAILED）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query, Long dispatchedBy) {
         String effectiveType = (taskType == null || taskType.isBlank()) ? "question" : taskType;
@@ -116,22 +118,49 @@ public class AgentTaskService {
         taskRepository.save(task);
         String taskToken = jwtUtil.generateScopedToken(task.getDispatchedBy(),
                 SCOPED_READ_PERMISSIONS, task.getTaskId(), SCOPED_TOKEN_TTL_MS);
-        try {
-            worker.getResponseObserver().onNext(ServerMessage.newBuilder()
-                    .setTaskDispatch(TaskDispatch.newBuilder()
-                            .setTaskId(task.getTaskId())
-                            .setTaskType(effectiveType)
-                            .setTargetType(targetType == null ? "" : targetType)
-                            .setTargetId(targetId == null ? 0 : targetId)
-                            .setQuery(query == null ? "" : query)
-                            .setTaskToken(taskToken))
-                    .build());
-            log.info("task dispatched: taskId={}, type={}, worker={}", task.getTaskId(), taskType, worker.getWorkerId());
-        } catch (Exception e) {
-            log.error("dispatch send failed: taskId={}", task.getTaskId(), e);
-            fail(task, "dispatch send failed: " + e.getMessage());
-        }
+        ServerMessage dispatchMsg = ServerMessage.newBuilder()
+                .setTaskDispatch(TaskDispatch.newBuilder()
+                        .setTaskId(task.getTaskId())
+                        .setTaskType(effectiveType)
+                        .setTargetType(targetType == null ? "" : targetType)
+                        .setTargetId(targetId == null ? 0 : targetId)
+                        .setQuery(query == null ? "" : query)
+                        .setTaskToken(taskToken))
+                .build();
+        // 推送放到事务提交后：worker 秒回 TaskResult/事件时，complete()/recordEvent()
+        // 的事务必须能看到本任务（否则 findByTaskId 查不到、结果被静默丢弃，
+        // 任务会卡到 timeoutScan 才被 CANCELLED）。approve() 内联派发的
+        // execute_suggestion 任务尤其容易命中该竞态（同线程毫秒级回包）。
+        pushAfterCommit(worker, task, dispatchMsg);
         return task;
+    }
+
+    private void pushAfterCommit(WorkerRegistry.WorkerEntry worker, AgentTask task, ServerMessage msg) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            push(worker, task, msg);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                push(worker, task, msg);
+            }
+        });
+    }
+
+    private void push(WorkerRegistry.WorkerEntry worker, AgentTask task, ServerMessage msg) {
+        try {
+            worker.getResponseObserver().onNext(msg);
+            log.info("task dispatched: taskId={}, type={}, worker={}", task.getTaskId(),
+                    task.getTaskType(), worker.getWorkerId());
+        } catch (Exception e) {
+            // 事务已提交，任务已落库；只能把状态收敛为 FAILED
+            log.error("dispatch send failed: taskId={}", task.getTaskId(), e);
+            task.setStatus(STATUS_FAILED);
+            task.setConclusion("dispatch send failed: " + e.getMessage());
+            task.setFinishedAt(OffsetDateTime.now());
+            taskRepository.save(task);
+        }
     }
 
     /** 记录事件流；首个事件将任务置 RUNNING */

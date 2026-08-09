@@ -188,5 +188,44 @@ class OpsAgentClient:
             json={"values": values, "horizon": horizon},
         )["data"]
 
+    # ---- agent module helpers (verified against AgentTask/Suggestion/ToolController) ----
+    def dispatch_agent_task(self, payload: dict) -> dict:
+        """POST /api/agent/tasks -> {taskId, status}"""
+        return self.post("/api/agent/tasks", json=payload)["data"]
+
+    def get_agent_task(self, task_id: str) -> dict:
+        """GET /api/agent/tasks/{taskId} -> {task: {...}, events: [...]}"""
+        return self.get(f"/api/agent/tasks/{task_id}")["data"]
+
+    def list_agent_tasks(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/agent/tasks", params={"page": page, "size": size})["data"]
+
+    def list_agent_suggestions(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/agent/suggestions", params={"page": page, "size": size})["data"]
+
+    def approve_agent_suggestion(self, sug_id: int) -> dict:
+        """POST /api/agent/suggestions/{id}/approve -> {id, status, grantKey}"""
+        return self.post(f"/api/agent/suggestions/{sug_id}/approve")["data"]
+
+    def reject_agent_suggestion(self, sug_id: int) -> dict:
+        """POST /api/agent/suggestions/{id}/reject -> {id, status}"""
+        return self.post(f"/api/agent/suggestions/{sug_id}/reject")["data"]
+
+    def list_agent_tools(self) -> list:
+        return self.get("/api/agent/tools")["data"]
+
+    def set_agent_tool_enabled(self, tool_id: int, enabled: bool) -> dict:
+        return self.put(f"/api/agent/tools/{tool_id}/enabled", json={"enabled": enabled})["data"]
+
+    # ---- RBAC helpers (roles / users) ----
+    def list_roles(self, page: int = 0, size: int = 50) -> dict:
+        return self.get("/api/roles", params={"page": page, "size": size})["data"]
+
+    def create_user(self, payload: dict) -> dict:
+        return self.post("/api/users", json=payload)["data"]
+
+    def delete_user(self, user_id: int) -> dict:
+        return self.delete(f"/api/users/{user_id}")
+
     def close(self):
         self.http.close()

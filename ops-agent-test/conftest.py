@@ -86,13 +86,34 @@ def make_dataset(client: OpsAgentClient):
 
 
 @pytest.fixture(scope="session")
-def reader_client() -> OpsAgentClient:
-    """Low-privilege client (user/user123) holding only dataset:read + model:read.
-    Used to verify that model:/training: write endpoints return 403."""
-    c = OpsAgentClient(username="user", password="user123")
+def reader_client(client: OpsAgentClient) -> OpsAgentClient:
+    """Low-privilege client bound to a real READONLY user.
+
+    NOTE: the seeded demo user `user/user123` is OPERATOR (business read/write,
+    per DataInitializer), so it can NOT be used for 403 tests. Instead we create
+    a throwaway user with the READONLY role (holds only *:read permissions) via
+    the admin API, log in as it, and delete it on teardown.
+    """
+    roles_page = client.list_roles(page=0, size=50)
+    readonly = next(r for r in roles_page["content"] if r["name"] == "READONLY")
+    username = f"e2e-readonly-{uuid.uuid4().hex[:8]}"
+    created = client.create_user({
+        "username": username,
+        "password": "readonly123",
+        "displayName": "e2e readonly",
+        "email": f"{username}@opsagent.local",
+        "roleIds": [readonly["id"]],
+    })
+    user_id = created["id"]
+
+    c = OpsAgentClient(username=username, password="readonly123")
     c.login()
     yield c
     c.close()
+    try:
+        client.delete_user(user_id)
+    except Exception:
+        pass  # already gone or transient error -> ignore in teardown
 
 
 def _make_training_csv(path: str, n_per_region: int = 30) -> None:

@@ -19,14 +19,14 @@ def test_models_list_requires_auth(base_url):
 
 
 def test_model_write_forbidden_for_reader(reader_client):
-    """user/user123 holds only dataset:read + model:read -> model:write must be 403."""
+    """READONLY role lacks model:write -> creating a model must be 403."""
     with pytest.raises(OpsAgentError) as exc:
         reader_client.create_model({"name": "x", "version": "v1"})
     assert exc.value.status_code == 403
 
 
 def test_training_trigger_forbidden_for_reader(reader_client):
-    """user/user123 lacks training:write -> triggering a job must be 403."""
+    """READONLY role lacks training:write -> triggering a job must be 403."""
     with pytest.raises(OpsAgentError) as exc:
         reader_client.create_training_job({
             "datasetId": 1,
@@ -36,8 +36,7 @@ def test_training_trigger_forbidden_for_reader(reader_client):
     assert exc.value.status_code == 403
 
 
-def test_training_job_list_forbidden_for_reader(reader_client):
-    """training:read is also missing for the reader role -> list must be 403."""
-    with pytest.raises(OpsAgentError) as exc:
-        reader_client.list_training_jobs()
-    assert exc.value.status_code == 403
+def test_training_job_list_allowed_for_reader(reader_client):
+    """READONLY role holds training:read -> listing jobs is allowed (200)."""
+    page = reader_client.list_training_jobs()
+    assert "content" in page, "reader (training:read) must be able to list training jobs"
