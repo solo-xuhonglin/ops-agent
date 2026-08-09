@@ -15,15 +15,10 @@ function sortSuggestions(list) {
   })
 }
 
-/** 当前会话是否正有一条 assistant 消息在流式生成 */
-function hasStreamingMessage(messages) {
-  return messages.some((m) => m.role === 'assistant' && m.status === 'streaming')
-}
-
 export const useAgentStore = defineStore('agent', {
   state: () => ({
     drawerOpen: false,
-    activeView: 'chat',            // chat | list（会话列表）
+    activeView: 'chat',            // chat | list（会话列表）| suggestions（处置建议）
     conversations: [],
     totalConversations: 0,
     currentConversation: null,
@@ -54,6 +49,11 @@ export const useAgentStore = defineStore('agent', {
       this.activeView = 'list'
       this.drawerOpen = true
       this.fetchConversations()
+    },
+    openSuggestions() {
+      this.activeView = 'suggestions'
+      this.drawerOpen = true
+      this.fetchSuggestions()
     },
     closeDrawer() {
       this.stopStream()

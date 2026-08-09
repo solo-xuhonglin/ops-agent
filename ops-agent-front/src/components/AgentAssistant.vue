@@ -19,13 +19,19 @@
                @click="store.openList()" />
         <v-icon color="primary">mdi-robot</v-icon>
         <span class="text-title-medium font-weight-bold ml-2">
-          {{ store.activeView === 'list' ? '会话列表' : (store.currentConversation?.title || 'Agent 助手') }}
+          {{ viewTitle }}
         </span>
         <v-spacer />
         <v-tooltip text="处置建议" location="bottom">
           <template #activator="{ props }">
             <v-btn v-bind="props" icon="mdi-clipboard-text-outline" variant="text" size="small"
-                   :color="store.pendingCount > 0 ? 'error' : ''" @click="openSuggestions()" />
+                   :color="store.pendingCount > 0 ? 'error' : ''" @click="store.openSuggestions()" />
+          </template>
+        </v-tooltip>
+        <v-tooltip text="历史对话" location="bottom">
+          <template #activator="{ props }">
+            <v-btn v-bind="props" icon="mdi-history" variant="text" size="small"
+                   :color="store.activeView === 'list' ? 'primary' : ''" @click="store.openList()" />
           </template>
         </v-tooltip>
         <v-btn icon="mdi-close" variant="text" size="small" @click="store.closeDrawer()" />
@@ -57,6 +63,35 @@
           <div v-if="!store.conversations.length" class="empty-hint">
             <v-icon icon="mdi-forum-outline" size="40" class="mb-2" />
             <div class="text-body-medium text-medium-emphasis">暂无会话，点击上方新建开始对话</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 处置建议视图 ============ -->
+      <div v-else-if="store.activeView === 'suggestions'" class="d-flex flex-column fill-height">
+        <div class="flex-grow-1 overflow-y-auto pa-2">
+          <div v-for="s in store.suggestions" :key="s.id"
+               class="history-item mb-1" :class="{ 'history-item--pending': s.status === 'PENDING' }">
+            <div class="history-item__head">
+              <v-avatar :color="priorityColor(s.priority)" size="28" variant="tonal">
+                <v-icon size="16" :color="priorityColor(s.priority)">{{ actionIcon(s.actionType) }}</v-icon>
+              </v-avatar>
+              <span class="history-item__title">{{ actionText(s.actionType) }}</span>
+              <v-chip size="x-small" :color="sugColor(s.status)">{{ sugText(s.status) }}</v-chip>
+              <span class="history-item__time">{{ fmtDateTime(s.createdAt) }}</span>
+            </div>
+            <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
+            <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis history-item__clamp-2" :title="s.reason">{{ s.reason }}</div>
+            <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
+              <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
+              <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
+            </div>
+            <div v-else-if="s.status === 'EXECUTED' && s.result"
+                 class="history-item__body text-caption text-success history-item__clamp-3" :title="s.result">{{ s.result }}</div>
+          </div>
+          <div v-if="!store.suggestions.length" class="empty-hint">
+            <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
+            <div class="text-body-medium text-medium-emphasis">暂无处置建议</div>
           </div>
         </div>
       </div>
@@ -198,6 +233,13 @@ const input = ref('')
 const sending = ref(false)
 const scrollEl = ref(null)
 
+// 头部标题：按当前视图显示
+const viewTitle = computed(() => {
+  if (store.activeView === 'list') return '历史对话'
+  if (store.activeView === 'suggestions') return '处置建议'
+  return store.currentConversation?.title || 'Agent 助手'
+})
+
 // ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
 const MIN_W = 320
 const MAX_W = 760
@@ -273,10 +315,6 @@ function removeConversation(c) {
   }).then((ok) => {
     if (ok) store.deleteConversation(c.conversationId)
   })
-}
-
-function openSuggestions() {
-  store.openList()
 }
 
 async function send() {
@@ -361,6 +399,7 @@ const TARGETS = {
 }
 
 function actionText(t) { return ACTIONS[t]?.text || t }
+function actionIcon(t) { return ACTIONS[t]?.icon || 'mdi-tune' }
 function sugText(s) { return SUG_STATUS[s]?.text || s }
 function sugColor(s) { return SUG_STATUS[s]?.color || 'grey' }
 function priorityText(p) { return PRIORITIES[p]?.text || p }
