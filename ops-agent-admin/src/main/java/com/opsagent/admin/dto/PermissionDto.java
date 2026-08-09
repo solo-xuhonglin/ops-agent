@@ -1,5 +1,7 @@
 package com.opsagent.admin.dto;
 
+import jakarta.validation.constraints.NotBlank;
+
 public class PermissionDto {
 
     public record Response(
@@ -9,7 +11,7 @@ public class PermissionDto {
     }
 
     public record CreateRequest(
-            String code,
+            @NotBlank(message = "权限码不能为空") String code,
             String description) {
     }
 }

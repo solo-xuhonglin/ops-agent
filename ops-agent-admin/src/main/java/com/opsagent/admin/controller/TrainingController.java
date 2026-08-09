@@ -4,6 +4,7 @@ import com.opsagent.admin.common.ApiResponse;
 import com.opsagent.admin.dto.TrainingRequest;
 import com.opsagent.admin.entity.TrainingJob;
 import com.opsagent.admin.service.TrainingJobService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -37,7 +38,7 @@ public class TrainingController {
     @PostMapping
     @PreAuthorize("hasAuthority('training:write')")
     @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
-    public ApiResponse<?> create(@RequestBody TrainingRequest req) {
+    public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req) {
         return ApiResponse.ok(trainingJobService.trigger(req));
     }
 

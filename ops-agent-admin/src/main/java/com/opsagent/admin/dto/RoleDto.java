@@ -1,5 +1,7 @@
 package com.opsagent.admin.dto;
 
+import jakarta.validation.constraints.NotBlank;
+
 import java.util.List;
 
 public class RoleDto {
@@ -12,7 +14,7 @@ public class RoleDto {
     }
 
     public record CreateRequest(
-            String name,
+            @NotBlank(message = "角色名不能为空") String name,
             String description,
             List<Long> permissionIds) {
     }

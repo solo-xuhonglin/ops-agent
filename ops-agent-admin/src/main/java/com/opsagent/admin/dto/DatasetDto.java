@@ -1,5 +1,7 @@
 package com.opsagent.admin.dto;
 
+import jakarta.validation.constraints.NotBlank;
+
 import java.time.LocalDate;
 import java.util.List;
 
@@ -22,7 +24,7 @@ public class DatasetDto {
     }
 
     public record CreateRequest(
-            String name,
+            @NotBlank(message = "数据集名称不能为空") String name,
             String description,
             String objectKey,
             List<String> regions,
@@ -34,7 +36,7 @@ public class DatasetDto {
     }
 
     public record UpdateRequest(
-            String name,
+            @NotBlank(message = "数据集名称不能为空") String name,
             String description,
             List<String> regions,
             String source,
