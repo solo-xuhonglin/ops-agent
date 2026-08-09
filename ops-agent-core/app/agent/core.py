@@ -147,15 +147,13 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                       reasoning_enabled=bool(d.reasoning_enabled))
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
-    # execute 任务（已审批写操作）直调写工具，不过决策图
+    # execute 任务（已审批写操作）直调写工具，任务内决策图闭环推进
     if d.task_type == "execute":
-        await handle_execute(client, registry, llm, http, ctx, d, store, tracker)
+        await handle_execute(client, registry, llm, http, ctx, d, store, tracker,
+                             max_rounds=max_rounds)
         return
 
-    # continue 任务（execute 成功后 admin 自动派发推进 plan 步骤）：复用决策轮
-    if d.task_type == "continue":
-        await handle_continue(client, registry, llm, http, ctx, d, store, tracker)
-        return
+    # continue 任务已移除（2026-08-09 重构）：异步任务由 wait_until 自主轮询 + Monitor 兜底
 
     hint, user_prompt = _build_prompt(d)
     messages: list = [
@@ -210,27 +208,48 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                                  conclusion=f"task failed: {e}", error=str(e))
 
 
-EXECUTE_SUMMARY_SYSTEM = (
+EXECUTE_LOOP_SYSTEM = (
     "# 角色\n"
-    "你是 ops-agent 平台的智能运维助手。你刚刚执行了一个**已获人工审批**的写操作，"
-    "下面附上该操作的**原始执行结果**（工具返回 JSON）。\n"
+    "你刚执行了一个**已获人工审批**的写操作（结果由系统注入，你不需要、也不允许再次执行该写操作）。\n"
     "\n"
-    "# 输出要求\n"
-    "1. 明确操作是否成功（成功 / 失败 / 已提交进行中）；\n"
-    "2. 给出关键信息（如创建对象的 ID、当前状态、耗时等）；\n"
-    "3. 如需后续处理（异步轮询、重试、下一步建议），一并说明。\n"
-    "4. 必须严格基于原始结果，禁止编造；用中文；Markdown 简洁呈现。"
+    "# 任务\n"
+    "1. 判断操作是否成功（成功 / 失败 / 已提交进行中），给出关键信息（对象 ID、当前状态等）；\n"
+    "2. 若为异步操作（训练/部署）：用 wait_until 轮询对象状态直至到达终态或发生变化"
+    "（单次 60~120 秒，可连续调用；超时返回仍在进行中且预算将尽时，汇报现状并结束，系统会继续跟踪）；\n"
+    "3. 若关联 plan：按 plan 推进——步骤成功先用 plan_update 标记 done，再提下一步 approve_<写操作名>"
+    "（带 plan_id/step_no）；步骤失败标记 failed 并决定重试（approve_* 带 retry_of）或调整/废弃；"
+    "全部完成用 plan_update 置 plan DONE/FAILED；\n"
+    "4. 写操作失败：分析失败原因——参数可修正则 approve_<写操作名> 提出修正建议"
+    "（retry_of 关联原建议），方案不可行则说明放弃（必要时 plan_update 调整计划）；\n"
+    "5. 非工具调用时收敛：用中文 Markdown 报告操作结果（含「操作目标 / 操作结果 / 后续建议」）。\n"
+    "所有判断必须基于工具返回的真实数据，禁止编造。"
 )
+
+
+def _format_plan_summary(plan: Optional[dict]) -> str:
+    """plan dict → 决策上下文文本（execute 内闭环 / 推进轮复用）。"""
+    if not plan:
+        return ""
+    steps = plan.get("steps") or []
+    step_lines = "\n".join(
+        f"  step{s.get('step_no')}: {s.get('action_type')} (target={s.get('target_type')}/"
+        f"{s.get('target_id')}) status={s.get('status', 'pending')}"
+        + (f" note={s.get('note')}" if s.get("note") else "")
+        for s in steps)
+    return (f"plan_id={plan.get('plan_id')}\nsummary={plan.get('summary')}\n"
+            f"status={plan.get('status')}\nsteps:\n{step_lines or '  （空）'}")
 
 
 async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                          http: AdminHttpClient, ctx: TaskContext,
                          d: agent_pb2.TaskDispatch, store: Any,
-                         tracker: Any = None) -> None:
-    """execute 任务——直调写工具（不过决策图）→ 原始结果回喂 LLM 总结 → 回写 suggestion。
+                         tracker: Any = None, max_rounds: int = 10) -> None:
+    """execute 任务——系统直调写工具（安全边界）→ 同一任务内决策图自主推进 → 收敛。
 
-    原始结果经 tool_call/tool_result 事件展示（前端时间线），LLM 总结作为结论落对话。
-    异步写操作（training_create/serving_deploy）成功后注册 Monitor 轮询，由 tracker 推进 Plan。
+    写工具结果以观察注入任务内决策图：agent 用 wait_until 轮询异步对象、plan_update 推进
+    plan、approve_* 提下一步建议（失败时带 retry_of 修正重试）；非工具调用即收敛。
+    写工具本体绝不在 tools 列表（模型无直接执行路径）；suggestion 状态/task 落库/
+    Monitor 注册等收尾行为保留。取代旧「写工具 → LLM 总结秒回」与 admin continue 推进。
     """
     tool = registry.get(d.action_type)
     if tool is None:
@@ -261,7 +280,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                                        ensure_ascii=False))
     ok = isinstance(result, dict) and result.get("status") in (200, 201, 202)
 
-    # 落 RUNNING 任务行（admin 端 TaskResult 反查 suggestionId 需要；与 chat/continue 一致）
+    # 落 RUNNING 任务行（admin 端 TaskResult 反查 suggestionId 需要；与 chat 一致）
     if store is not None and store.enabled:
         try:
             await store.insert_task(ctx.task_id, "execute", ctx.conversation_id,
@@ -269,19 +288,33 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
         except Exception as e:  # noqa: BLE001
             log.warning("execute task insert failed: %s", e)
 
-    # 异步写操作成功后注册对象状态轮询（训练/部署完成后推进 Plan）
+    # 异步写操作成功后注册对象状态轮询（任务内 wait_until 预算用尽后由 Monitor 兜底）
     await _maybe_register_tracker(tracker, store, ctx, tool, result)
 
-    # 原始结果回喂 LLM 生成执行总结（失败则结构化兜底）；execute 用 fast 模式（无需思考，省 token）
+    # 决策图内闭环：写工具结果注入 → agent 自主推进（wait_until/plan_update/approve_*）
+    # → 非工具调用收敛。失败同样在图内（agent 看失败原因决定重试/放弃）。
     conclusion = ""
     try:
-        resp = await llm.select(False).ainvoke([
-            SystemMessage(content=EXECUTE_SUMMARY_SYSTEM),
-            HumanMessage(content=json.dumps(result, ensure_ascii=False)),
-        ])
-        conclusion = str(getattr(resp, "content", "")).strip()
-    except Exception as e:  # noqa: BLE001 - LLM 总结失败不阻塞任务
-        log.warning("execute summary llm failed: %s", e)
+        plan_text = ""
+        if store is not None and store.enabled and ctx.suggestion_id:
+            sug = await store.get_suggestion(ctx.suggestion_id)
+            if sug and sug.get("plan_id"):
+                plan_text = _format_plan_summary(await store.get_plan(sug["plan_id"]))
+        observation = json.dumps({
+            "operation": tool.name,
+            "write_result": result,
+            "plan": plan_text or "（无关联计划）",
+        }, ensure_ascii=False)
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT + "\n\n" + EXECUTE_LOOP_SYSTEM),
+            HumanMessage(content=observation),
+        ]
+        graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
+                            tracker=tracker, store=store)
+        final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
+        conclusion = _extract_conclusion(final_messages).strip()
+    except Exception as e:  # noqa: BLE001 - 图内闭环失败不阻塞 execute 收尾
+        log.warning("execute graph loop failed: %s", e)
     if not conclusion:
         conclusion = ("执行成功" if ok else "执行失败") + (f"：{summary}" if summary else "")
 
@@ -292,21 +325,6 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                                                  "EXECUTED" if ok else "FAILED", conclusion)
         except Exception as e:  # noqa: BLE001
             log.warning("suggestion result update failed: %s", e)
-
-    # 业务失败（非 HTTP 断连）：触发失败决策轮 —— 模型看失败原因决定修正重试（retry_of 新建议）
-    # 或放弃；决策文本并入结论回发（新 PENDING 建议前端可见，人工再审批后重试）
-    if not ok and ctx.suggestion_id and store is not None and store.enabled:
-        try:
-            from app.agent.decision import run_failure_decision
-            original = await store.get_suggestion(ctx.suggestion_id)
-            decision = await run_failure_decision(llm, http, registry, client, store,
-                                                  tracker, ctx,
-                                                  failure_text=summary or str(result),
-                                                  original=original)
-            if decision and decision != "（决策完成，无说明）":
-                conclusion = f"{conclusion}\n\n**失败处置建议**：{decision}"
-        except Exception as e:  # noqa: BLE001 - 失败决策不阻塞 execute 收尾
-            log.warning("failure decision skipped: %s", e)
     if store is not None and store.enabled:
         try:
             await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion)
