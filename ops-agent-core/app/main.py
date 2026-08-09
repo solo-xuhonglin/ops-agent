@@ -54,19 +54,21 @@ class LLMRuntime:
         return llm
 
     def _build(self, reasoning: bool) -> Any:
+        # thinking/reasoning_effort 是 DeepSeek 请求体顶层字段，必须走 extra_body（model_kwargs
+        # 会被 langchain 展开成 AsyncCompletions.create() 的 kwargs，导致 unexpected keyword）
         if reasoning:
-            model_kwargs = {
+            extra_body = {
                 "thinking": {"type": "enabled"},
                 "reasoning_effort": self._cfg.deepseek_reasoning_effort,
             }
         else:
-            model_kwargs = {"thinking": {"type": "disabled"}}
+            extra_body = {"thinking": {"type": "disabled"}}
         return ChatDeepSeek(
             base_url=self._cfg.deepseek_base_url,
             api_key=self._cfg.deepseek_api_key,
             model=self._cfg.deepseek_model,
             timeout=self._cfg.llm_timeout_s,
-            model_kwargs=model_kwargs,
+            extra_body=extra_body,
         )
 
 
