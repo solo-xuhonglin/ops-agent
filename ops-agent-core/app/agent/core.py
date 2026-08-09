@@ -159,6 +159,10 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
 
         content = _extract_conclusion(final_messages)
         suggestions = _parse_suggestions(content)
+        if not suggestions:
+            # 兜底：deepseek-reasoner 常把 suggestions JSON 放进 reasoning 而不放 content（用户看不到）。
+            # 从聚合推理链里再提取一次，保证审批卡能生成。
+            suggestions = _parse_suggestions(_extract_reasoning(final_messages))
         conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  suggestions=_to_proto_suggestions(suggestions),
