@@ -78,7 +78,7 @@ public class GrantCheckAspect {
                 try {
                     Object value = invokeAccessor(arg, targetParam);
                     return value instanceof Number n ? n.longValue() : parseLong(String.valueOf(value));
-                } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
+                } catch (Exception ignored) {
                     // 该参数无此字段，继续
                 }
             }
