@@ -116,7 +116,11 @@ export const useAgentStore = defineStore('agent', {
       if (!cid) return
       try {
         const { data } = await agentApi.getConversationMessages(cid)
-        this.messages = (data.data || []).map((m) => ({ ...m, _thinkingOpen: true }))
+        const serverMsgs = (data.data || []).map((m) => ({ ...m, _thinkingOpen: true }))
+        // 保留本地"执行中"占位：execute 结果消息未落库前，轮询整体覆盖会把它清掉
+        // （done/error 后占位 status 已改为 completed/failed，不再保留，由落库消息替代）
+        const pending = this.messages.filter((m) => m.status === 'executing')
+        this.messages = pending.length ? [...serverMsgs, ...pending] : serverMsgs
         this.fetchSuggestions()
         this.fetchPlans(cid)
       } catch (e) {
@@ -302,7 +306,8 @@ export const useAgentStore = defineStore('agent', {
     /**
      * approve 后监听 execute 任务的实时事件（会话级流，不绑 taskId）：
      * - tool_call/tool_result → 更新本地"执行中"占位消息的工具时间线（chat 流已关，无其他接收端）
-     * - done/error → 关流 + 刷新消息（落库的 execute 结果消息覆盖占位）
+     * - 占位消息每秒刷新已等待秒数（_elapsed），done/error 前一直可见
+     * - done/error → 清计时 + 占位标记 completed/failed（refreshMessages 不再保留）→ 刷新（落库结果替代占位）
      * execute 通常秒级返回，流会很快收到 done 自动关闭；重复 approve 时旧的监听让位。
      */
     listenExecute(conversationId, label = '正在执行已审批的写操作…') {
@@ -318,10 +323,15 @@ export const useAgentStore = defineStore('agent', {
         content: label,
         status: 'executing',
         toolCalls: [],
+        _elapsed: 0,
         _thinkingOpen: true,
         createdAt: new Date().toISOString()
       })
       const proxy = this.messages[this.messages.length - 1] // 必须取 reactive proxy（Pinia 坑）
+      const startTs = Date.now()
+      const timer = setInterval(() => {
+        proxy._elapsed = Math.round((Date.now() - startTs) / 1000)
+      }, 1000)
       this.executeController = agentApi.streamConversation(conversationId, null, (event, data) => {
         switch (event) {
           case 'tool_call':
@@ -342,7 +352,11 @@ export const useAgentStore = defineStore('agent', {
           }
           case 'done':
           case 'error': {
+            clearInterval(timer)
             this.executeController = null
+            // 标记占位收尾（refreshMessages 按 status==='executing' 才保留）
+            proxy.status = event === 'done' ? 'completed' : 'failed'
+            if (event === 'done' && data?.content) proxy.content = data.content
             this.refreshMessages(conversationId)
             break
           }

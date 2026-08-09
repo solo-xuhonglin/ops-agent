@@ -174,20 +174,42 @@
               </div>
 
               <!-- 答复：流式中纯文本（pre-wrap，零 markdown 重渲染开销），完成后一次 markdown 渲染 -->
-              <div v-if="m.content && (m.status === 'streaming' || m.status === 'executing')" class="msg-text">{{ m.content }}</div>
+              <div v-if="m.content && (m.status === 'streaming' || m.status === 'executing')" class="msg-text">
+                {{ m.content }}
+                <span v-if="m.status === 'executing' && m._elapsed > 0" class="exec-wait">
+                  （已等待 {{ m._elapsed }}s）
+                </span>
+              </div>
               <div v-else-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
 
               <!-- 授权卡：该轮建议（approve/reject 闭环） -->
               <div v-if="m.suggestions?.length" class="mt-2">
                 <v-card v-for="s in m.suggestions" :key="s.id" variant="outlined" class="suggestion-card mb-1">
-                  <v-card-text class="py-2">
+                  <v-card-text class="py-3">
+                    <!-- 标题行：操作图标 + 操作名 + 状态 + 目标 -->
                     <div class="d-flex align-center mb-1">
-                      <v-chip :color="priorityColor(s.priority)" size="x-small">{{ priorityText(s.priority) }}</v-chip>
-                      <span class="text-body-small font-weight-bold ml-2">{{ actionText(s.actionType) }}</span>
+                      <v-icon size="22" :color="priorityColor(s.priority)" class="mr-1">{{ actionIcon(s.actionType) }}</v-icon>
+                      <span class="text-title-medium font-weight-bold">{{ actionText(s.actionType) }}</span>
+                      <v-chip :color="s.status === 'PENDING' ? 'warning' : sugColor(s.status)" size="x-small" class="ml-2">
+                        {{ sugText(s.status) }}
+                      </v-chip>
                       <v-spacer />
-                      <span class="text-caption text-medium-emphasis">{{ targetText(s) }}</span>
+                      <span class="text-body-small text-medium-emphasis">{{ targetText(s) }}</span>
                     </div>
-                    <div class="text-body-small text-medium-emphasis">{{ s.reason }}</div>
+                    <!-- 原因 -->
+                    <div v-if="s.reason" class="text-body-medium mt-1">{{ s.reason }}</div>
+                    <!-- 业务参数 -->
+                    <div v-if="paramsEntries(s).length" class="suggestion-params mt-2">
+                      <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
+                        <span class="text-body-small text-medium-emphasis param-key">{{ p.k }}</span>
+                        <span class="text-body-small param-val">{{ p.v }}</span>
+                      </div>
+                    </div>
+                    <!-- 重试标记 -->
+                    <div v-if="s.retryOf" class="text-body-small text-warning mt-1">
+                      <v-icon size="14" class="mr-1">mdi-restart</v-icon>重试：原建议 {{ s.retryOf }}
+                    </div>
+                    <!-- 审批动作 / 结果 -->
                     <div v-if="s.status === 'PENDING' && canWrite" class="mt-2">
                       <v-btn size="small" color="primary" @click="approve(s)">确认执行</v-btn>
                       <v-btn size="small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
@@ -195,9 +217,6 @@
                     <div v-else-if="s.status === 'EXECUTED' && s.result"
                          class="text-caption text-success mt-1 suggestion-result"
                          v-html="renderMarkdown(s.result)" />
-                    <v-chip v-else-if="s.status !== 'PENDING'" size="x-small" :color="sugColor(s.status)" class="mt-1">
-                      {{ sugText(s.status) }}
-                    </v-chip>
                   </v-card-text>
                 </v-card>
               </div>
@@ -477,6 +496,33 @@ function prettyArgs(args) {
   }
 }
 
+/** 建议卡片参数：把 s.params（对象或 JSON 字符串）展开为 [{k, v}] 供 key-value 展示。 */
+function paramsEntries(s) {
+  let raw = s.params
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw)
+    } catch (e) {
+      return []
+    }
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return []
+  return Object.entries(raw).map(([k, v]) => ({ k, v: fmtParam(v) }))
+}
+
+/** 参数值格式化：对象/数组 JSON 化，标量原样。 */
+function fmtParam(v) {
+  if (v === null || v === undefined) return ''
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v)
+    } catch (e) {
+      return String(v)
+    }
+  }
+  return String(v)
+}
+
 // ===== 文案映射 =====
 // 与 agent 工具注册表（approve_<write_tool>）一致；任何新增写工具都需在此登记
 // actionType 名称，否则 fallback 到原字符串显示。
@@ -613,6 +659,12 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   white-space: pre-wrap;
   line-height: 1.6;
 }
+/* execute 执行中：等待秒数 */
+.exec-wait {
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.45);
+  white-space: nowrap;
+}
 
 /* ---- 思考过程折叠 ---- */
 .thinking-box {
@@ -688,6 +740,20 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
 
 .suggestion-card {
   border-left: 3px solid rgb(var(--v-theme-warning));
+}
+/* 建议卡片：业务参数 key-value 列表 */
+.suggestion-params {
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 4px 8px;
+}
+.suggestion-params .param-key {
+  min-width: 96px;
+  flex-shrink: 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.suggestion-params .param-val {
+  word-break: break-word;
 }
 
 /* ---- plan 卡片 ---- */
