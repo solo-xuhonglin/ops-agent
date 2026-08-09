@@ -149,6 +149,9 @@ ensure_present MINIO_MODEL_BUCKET models
 ensure_present MINIO_LOG_BUCKET logs
 ensure_present MINIO_PORT 9000
 ensure_present MINIO_CONSOLE_PORT 9001
+# LLM（deepseek-v4-flash 原生 function calling；思考强度 env 可调）
+ensure_present DEEPSEEK_MODEL deepseek-v4-flash
+ensure_present DEEPSEEK_REASONING_EFFORT max
 
 # 读取最终值（供 compose 与提示输出）
 SERV_IP="$(grep -E '^SERVER_IP=' "$ENV_FILE" | cut -d= -f2- || true)"
