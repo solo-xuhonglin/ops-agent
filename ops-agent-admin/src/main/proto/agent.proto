@@ -7,30 +7,30 @@ option java_package = "com.opsagent.admin.agent.proto";
 option java_outer_classname = "AgentProto";
 
 // admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
-// 职责边界：admin 只做通信与校验（授权 key / 会话归属 / token），流程控制完全由 agent 负责
+// 职责边界（v3 重构）：admin 只做通信与审批动作，流程控制与持久化完全由 agent 负责
+// （agent 直连 PostgreSQL 写 agent_tasks/agent_plans/agent_suggestions，gRPC 纯透传）
 service AgentService {
   rpc Connect(stream ClientMessage) returns (stream ServerMessage);
 }
 
 message ClientMessage {
+  reserved 6, 7;  // 曾为 async_suggestion / task_plan（agent 直写库替代，字段号不复用）
   oneof msg {
     Register register = 1;
     TaskEvent task_event = 2;
     TaskResult task_result = 3;
     AgentUpdate agent_update = 4;
     Pong pong = 5;
-    AsyncSuggestion async_suggestion = 6;  // agent 推进 Plan 时上报的建议（落 PENDING 待审批）
-    TaskPlan task_plan = 7;                // 任务计划（Plan）建/更新持久化（agent 驱动）
   }
 }
 
 message ServerMessage {
+  reserved 5;     // 曾为 authorization_grant（grant_key 已并入 TaskDispatch）
   oneof msg {
     RegisterAck register_ack = 1;
     TaskDispatch task_dispatch = 2;
     CancelTask cancel_task = 3;
     Ping ping = 4;
-    AuthorizationGrant authorization_grant = 5;
   }
 }
 
@@ -63,11 +63,12 @@ message ToolSchema {
 message TaskEvent {
   string task_id = 1;
   int32 seq = 2;
-  // progress / thinking / delta / tool_call / tool_result / error
-  //  thinking:   LLM 推理链增量文本
-  //  delta:      答复增量文本（流式回显）
-  //  tool_call:  JSON {"name","args"}
-  //  tool_result:JSON {"name","summary"}
+  // progress / thinking / delta / tool_call / tool_result / error / plan_update
+  //  thinking:    LLM 推理链增量文本
+  //  delta:       答复增量文本（流式回显）
+  //  tool_call:   JSON {"name","args"}
+  //  tool_result: JSON {"name","summary"}
+  //  plan_update: JSON {planId,status,summary,message}（agent 直写库后通知 admin 刷新/落消息）
   string event_type = 3;
   string content = 4;
 }
@@ -85,67 +86,30 @@ message TaskResult {
   string task_id = 1;
   bool ok = 2;
   string conclusion = 3;
-  repeated Suggestion suggestions = 4;
+  // deprecated: v3 起 agent 直写 agent_suggestions，此字段不再使用（保留字段号不复用）
+  repeated Suggestion suggestions = 4 [deprecated = true];
   string error = 5;
   string reasoning = 6;   // 聚合后的 LLM 推理链全文（可折叠展示）
 }
 
 message TaskDispatch {
   string task_id = 1;
-  string query = 2;          // 用户问询 / 执行指令（agent 自主理解，无 task_type 约定）
-  string task_token = 3;     // scoped JWT（任务级，suggestion_id>0 时长 TTL 覆盖异步跟踪期）
-  string history = 4;        // 多轮对话历史：JSON 数组 [{"role":"user|assistant","content":...}]
+  string query = 2;          // chat：用户问询；execute：可空（动作由结构化字段表达）
+  string task_token = 3;     // scoped JWT（execute 用长 TTL 覆盖异步跟踪期）
+  string history = 4;        // chat：多轮对话历史 JSON [{"role","content"},...]
   string conversation_id = 5; // 所属会话（对话/审批执行有；后台直派为空）
-  int64 suggestion_id = 6;   // >0：本任务执行已审批的写操作（grantKey 已下发）；0/缺省：普通任务
-  string target_type = 7;    // 诊断目标类型（可选，agent 也可从 query 判断）
+  string suggestion_id = 6;  // execute：对应建议（v3 为 UUID 字符串）；空=普通任务
+  string target_type = 7;    // 诊断目标类型（可选）
   int64 target_id = 8;
+  string task_type = 9;      // chat | execute
+  string action_type = 10;   // execute：写工具名（training_create 等）
+  string params = 11;        // execute：动作参数 JSON（不再由 LLM 解析 query）
+  string grant_key = 12;     // execute：approve 后签发（替代 AuthorizationGrant 单独推送）
 }
 
 message CancelTask {
   string task_id = 1;
   string reason = 2;
-}
-
-// 处置授权：人工确认建议后签发（时效 grantKey），沿流推送，agent 执行写工具时携带
-message AuthorizationGrant {
-  string action_type = 1;   // 对应写工具名（serving_undeploy 等）
-  string target_type = 2;   // serving_endpoint / training_job ...
-  int64 target_id = 3;
-  string grant_key = 4;     // 完整 key（含前缀），agent 原样回传
-  int32 ttl_seconds = 5;
-}
-
-// agent 侧 Plan 推进时异步上报的写操作建议（admin 落 agent_suggestions PENDING，用户审批后派发执行）
-message AsyncSuggestion {
-  string conversation_id = 1;
-  string task_id = 2;        // 来源任务（触发该建议的 execute_suggestion / question 任务）
-  string action_type = 3;    // training_create / serving_deploy ...
-  string target_type = 4;
-  int64 target_id = 5;
-  string params = 6;         // JSON 字符串
-  string reason = 7;
-  string priority = 8;       // HIGH / NORMAL / LOW
-}
-
-// 任务计划（Plan）持久化：agent 第一次对话建立，后续每步执行更新（admin 仅落库，不做流程）
-message TaskPlan {
-  string conversation_id = 1;
-  string plan_id = 2;        // agent 生成，conversation 级（upsert key）
-  string summary = 3;        // 计划摘要（用户可见，如"训练并部署 LSTM 模型"）
-  string status = 4;         // PLANNED / RUNNING / DONE / FAILED
-  repeated PlanStep steps = 5;
-}
-
-message PlanStep {
-  string action_type = 1;    // training_create / serving_deploy ...
-  string target_type = 2;
-  int64 target_id = 3;
-  string params = 4;         // JSON 字符串
-  string reason = 5;
-  string priority = 6;       // HIGH / NORMAL / LOW
-  string status = 7;         // pending / awaiting_approval / executing / done / failed
-  string object_type = 8;    // 执行结果对象类型（training_job / serving_endpoint ...）
-  int64 object_id = 9;       // 执行结果对象 ID（agent 据此轮询状态）
 }
 
 message AgentUpdate {

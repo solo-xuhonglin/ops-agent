@@ -103,15 +103,16 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 registry.get(workerId).ifPresent(entry -> entry.setAgents(update.getAgentsList()));
             }
 
-            /** plan_update：content JSON {planId,status,summary,message} → 落 assistant 消息 + SSE。 */
+            /** plan_update：content JSON {planId,conversationId,status,summary,message} → 落 assistant 消息 + SSE。 */
             private void handlePlanUpdate(String content) {
                 try {
-                    Map<?, ?> data = objectMapper.readValue(content, Map.class);
-                    String planId = String.valueOf(data.getOrDefault("planId", ""));
-                    String status = String.valueOf(data.getOrDefault("status", ""));
-                    String summary = String.valueOf(data.getOrDefault("summary", ""));
-                    String message = String.valueOf(data.getOrDefault("message", ""));
-                    String conversationId = String.valueOf(data.getOrDefault("conversationId", ""));
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> data = objectMapper.readValue(content, Map.class);
+                    String planId = str(data.get("planId"));
+                    String status = str(data.get("status"));
+                    String summary = str(data.get("summary"));
+                    String message = str(data.get("message"));
+                    String conversationId = str(data.get("conversationId"));
                     if (conversationId.isBlank() || "null".equals(conversationId)) {
                         log.warn("plan_update without conversationId, ignored: plan={}", planId);
                         return;
@@ -143,6 +144,10 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                     sb.append("\n\n").append(message);
                 }
                 return sb.toString();
+            }
+
+            private static String str(Object v) {
+                return v == null ? "" : String.valueOf(v);
             }
 
             private void touch() {
