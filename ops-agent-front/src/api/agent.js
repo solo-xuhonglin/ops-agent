@@ -39,6 +39,26 @@ export function streamConversation(conversationId, taskId, onEvent) {
   const token = localStorage.getItem('token')
   const url = `/api/agent/conversations/${conversationId}/stream${taskId ? `?taskId=${taskId}` : ''}`
   let settled = false // 已收到 done/error 收尾事件：后续连接关闭属正常收尾，不再视为错误
+  // idle 超时：30s 没收到任何事件视为断流（reader.read 长时间不返回 = 网络半关闭）。
+  // 收尾事件（done/error）会清掉 timer；任意 read 收到数据会重置。
+  const IDLE_TIMEOUT_MS = 30_000
+  const triggerIdle = () => {
+    if (settled) return
+    settled = true
+    onEvent('error', { message: '流式连接空闲超时（30s）' })
+    controller.abort()
+  }
+  let idleTimer = setTimeout(triggerIdle, IDLE_TIMEOUT_MS)
+  const resetIdle = () => {
+    if (settled) return
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(triggerIdle, IDLE_TIMEOUT_MS)
+  }
+  const clearIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = null
+    settled = true
+  }
 
   fetch(url, {
     method: 'POST',
@@ -70,6 +90,7 @@ export function streamConversation(conversationId, taskId, onEvent) {
         // 误报为 NetworkError；本地 abort 后 read() 抛 AbortError，被 catch 静默吞掉）
         if (event === 'done' || event === 'error') {
           settled = true
+          clearTimeout(idleTimer)
           controller.abort()
         }
         event = null
@@ -78,6 +99,7 @@ export function streamConversation(conversationId, taskId, onEvent) {
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+        resetIdle()
         buffer += decoder.decode(value, { stream: true })
         const parts = buffer.split('\n\n')
         buffer = parts.pop()

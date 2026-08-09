@@ -35,6 +35,7 @@ export const useAgentStore = defineStore('agent', {
     plans: [],                     // 当前会话的规划（plan 卡片）
     activePlan: null,              // 活跃 plan（含 steps）
     _streamTimer: null,            // 节流定时器
+    _streamStartedAt: 0,           // 当前流式开始时间（dispatch 入口用 stale check）
     loading: false,
     error: null,
     reasoningEnabled: localStorage.getItem('agentReasoning') !== 'off'  // 「深度思考」开关（默认开，持久化）
@@ -106,6 +107,7 @@ export const useAgentStore = defineStore('agent', {
         this.currentConversation =
           this.conversations.find((c) => c.conversationId === conversationId) || null
         this.fetchPlans(conversationId)
+        this.fetchSuggestions()
       } catch (e) {
         this.error = e.response?.data?.message || '会话加载失败'
       }
@@ -166,6 +168,13 @@ export const useAgentStore = defineStore('agent', {
 
     /** 自然语言问询 / 列表页诊断：落到当前会话（无会话则新建），返回 {messageId, taskId}。 */
     async dispatch({ query = '', taskType, targetType, targetId } = {}) {
+      // stale 兜底：streaming 状态卡 >30s 通常是 SSE 网络半关闭/服务端没推 done 事件；
+      // 之前直接 return null 会让用户的"再次发消息"被静默吃掉，这里强制收尾
+      if (this.streaming && this._streamStartedAt && Date.now() - this._streamStartedAt > 30_000) {
+        if (this.streamController) this.streamController.abort()
+        this.streamController = null
+        this.streaming = false
+      }
       if (this.streaming) return null
       if (!this.currentConversation) {
         await this.createConversation()
@@ -201,6 +210,7 @@ export const useAgentStore = defineStore('agent', {
       const streamingRef = this.messages[this.messages.length - 1]
 
       this.error = null
+      this._streamStartedAt = Date.now()
       try {
         const { data } = await agentApi.sendMessage(this.currentConversation.conversationId, payload)
         const { taskId } = data.data
@@ -278,6 +288,7 @@ export const useAgentStore = defineStore('agent', {
             if (data?.reasoning) streamingMsg.reasoning = data.reasoning
             this.streaming = false
             this.streamController = null
+            this._streamStartedAt = 0
             // 拉取该轮建议（授权卡）+ 任务最终态 + plan 进度
             this.attachSuggestions(taskId)
             this.fetchPlans(conversationId)
@@ -291,6 +302,7 @@ export const useAgentStore = defineStore('agent', {
             streamingMsg.error = data?.message || '流式错误'
             this.streaming = false
             this.streamController = null
+            this._streamStartedAt = 0
             break
           }
         }
@@ -392,6 +404,7 @@ export const useAgentStore = defineStore('agent', {
       }
       this._clearStreamTimer()
       this.streaming = false
+      this._streamStartedAt = 0
       // 未收尾的流式消息标记为中断
       this.messages.forEach((m) => {
         if (m.role === 'assistant' && m.status === 'streaming') {
