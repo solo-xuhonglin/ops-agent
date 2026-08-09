@@ -60,7 +60,12 @@ message ToolSchema {
 message TaskEvent {
   string task_id = 1;
   int32 seq = 2;
-  string event_type = 3;   // progress / tool_call / error
+  // progress / thinking / delta / tool_call / tool_result / error
+  //  thinking:   LLM 推理链增量文本
+  //  delta:      答复增量文本（流式回显）
+  //  tool_call:  JSON {"name","args"}
+  //  tool_result:JSON {"name","summary"}
+  string event_type = 3;
   string content = 4;
 }
 
@@ -79,15 +84,17 @@ message TaskResult {
   string conclusion = 3;
   repeated Suggestion suggestions = 4;
   string error = 5;
+  string reasoning = 6;   // 聚合后的 LLM 推理链全文（可折叠展示）
 }
 
 message TaskDispatch {
   string task_id = 1;
-  string task_type = 2;    // diagnose_training / diagnose_serving / diagnose_dataset / model_review / question
+  string task_type = 2;    // diagnose_training / diagnose_serving / diagnose_dataset / model_review / question / execute_suggestion
   string target_type = 3;
   int64 target_id = 4;
   string query = 5;
   string task_token = 6;   // M2 起使用（scoped JWT）
+  string history = 7;      // 多轮对话历史：JSON 数组 [{"role":"user|assistant","content":...}]
 }
 
 message CancelTask {

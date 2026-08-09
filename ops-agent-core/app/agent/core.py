@@ -1,8 +1,9 @@
 """Agent 决策入口（M3.5+，核心为 LangGraph + 标准 LangChain 生态）。
 
-收到 TaskDispatch → 组装初始消息（SystemMessage/HumanMessage）→ 交给 graph.run_graph
-执行决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用哪些工具）→
-收敛后解析结论 + suggestions(JSON 代码块) → TaskResult。
+收到 TaskDispatch → 组装初始消息（SystemMessage + 可选多轮 history + HumanMessage）→
+交给 graph.run_graph 执行决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用
+哪些工具；agent 节点流式产出，增量以 thinking/delta/tool_call/tool_result 事件实时回传）→
+收敛后解析结论 + suggestions(JSON 代码块) → TaskResult（含聚合推理链全文）。
 对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
 """
 import asyncio
@@ -10,7 +11,7 @@ import json
 import logging
 import re
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.errors import NodeCancelledError
 
@@ -50,6 +51,42 @@ def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
     return hint, "请汇总当前系统状态"
 
 
+def _build_history(d: "agent_pb2.TaskDispatch") -> list:
+    """多轮对话历史：TaskDispatch.history 为 JSON 数组 [{"role":"user|assistant","content":...}]。
+
+    解析失败或角色未知的条目直接丢弃；history 只用于给 LLM 提供上文，不做校验。
+    """
+    if not d.history:
+        return []
+    try:
+        raw = json.loads(d.history)
+    except (json.JSONDecodeError, TypeError):
+        log.warning("invalid task history, ignored: %s", str(d.history)[:200])
+        return []
+    if not isinstance(raw, list):
+        return []
+    messages: list = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content") or ""
+        if role == "user":
+            messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            messages.append(AIMessage(content=content))
+    return messages
+
+
+def _extract_reasoning(messages: list) -> str:
+    """取最后一条 assistant 消息的聚合推理链全文（graph agent_node 挂到 additional_kwargs）。"""
+    for m in reversed(messages):
+        if getattr(m, "type", "") == "ai":
+            kw = getattr(m, "additional_kwargs", None) or {}
+            return kw.get("reasoning_content") or ""
+    return ""
+
+
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                           llm: ChatOpenAI, http: AdminHttpClient,
                           msg: agent_pb2.ServerMessage, max_rounds: int = 10) -> None:
@@ -61,6 +98,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     hint, user_prompt = _build_prompt(d)
     messages: list = [
         SystemMessage(content=SYSTEM_PROMPT + hint),
+        *_build_history(d),
         HumanMessage(content=user_prompt),
     ]
 
@@ -72,8 +110,10 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
         suggestions = _parse_suggestions(content)
         conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
-                                 suggestions=_to_proto_suggestions(suggestions))
-        log.info("task done: %s suggestions=%s", ctx.task_id, len(suggestions))
+                                 suggestions=_to_proto_suggestions(suggestions),
+                                 reasoning=_extract_reasoning(final_messages))
+        log.info("task done: %s suggestions=%s reasoning_len=%d", ctx.task_id,
+                 len(suggestions), len(_extract_reasoning(final_messages)))
     except (asyncio.CancelledError, NodeCancelledError):
         # admin 超时/手动取消：不回发 result（admin 已置 CANCELLED，避免覆盖状态）
         log.info("task cancelled by admin: %s", ctx.task_id)

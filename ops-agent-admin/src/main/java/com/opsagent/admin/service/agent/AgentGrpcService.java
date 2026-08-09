@@ -24,6 +24,9 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
     private final WorkerRegistry registry;
     private final AgentTaskService taskService;
     private final ToolSchemaService toolSchemaService;
+    private final ConversationStreamManager streamManager;
+    private final AgentConversationService conversationService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @Override
     public StreamObserver<ClientMessage> connect(StreamObserver<ServerMessage> responseObserver) {
@@ -76,12 +79,19 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
             private void handleEvent(TaskEvent event) {
                 touch();
                 taskService.recordEvent(event.getTaskId(), event.getSeq(), event.getEventType(), event.getContent());
+                forwardStreamEvent(event);
             }
 
             private void handleResult(TaskResult result) {
                 touch();
                 taskService.complete(result.getTaskId(), result.getOk(), result.getConclusion(),
                         result.getSuggestionsList(), result.getError());
+                // 会话消息收口：落 assistant 消息 + SSE done 事件（非会话任务无绑定则跳过）
+                String conversationId = streamManager.conversationOf(result.getTaskId());
+                if (conversationId != null) {
+                    conversationService.finishAssistant(conversationId, result.getTaskId(),
+                            result.getOk(), result.getConclusion(), result.getReasoning(), result.getError());
+                }
             }
 
             private void handleAgentUpdate(AgentUpdate update) {
@@ -120,5 +130,29 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 registry.unregister(entry.getWorkerId());
             }
         });
+    }
+
+    /** 把 worker 事件转推给对应会话的 SSE 流（thinking/delta/tool_call/tool_result/error）。 */
+    private void forwardStreamEvent(TaskEvent event) {
+        String type = event.getEventType();
+        String taskId = event.getTaskId();
+        switch (type) {
+            case "thinking", "delta" -> streamManager.pushByTask(taskId, type,
+                    java.util.Map.of("delta", event.getContent()));
+            case "tool_call", "tool_result" -> streamManager.pushByTask(taskId, type,
+                    parseJsonOrRaw(event.getContent()));
+            case "error" -> streamManager.pushByTask(taskId, "error",
+                    java.util.Map.of("message", event.getContent()));
+            default -> { /* progress 等非回显事件不转发 */ }
+        }
+    }
+
+    /** tool_call/tool_result 的 content 是 JSON 字符串：能解析则透传对象，否则原样字符串。 */
+    private Object parseJsonOrRaw(String content) {
+        try {
+            return objectMapper.readValue(content, Object.class);
+        } catch (Exception e) {
+            return content;
+        }
     }
 }

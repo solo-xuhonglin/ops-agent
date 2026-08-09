@@ -96,6 +96,13 @@ public class AgentTaskService {
     /** 派发任务：入库 DISPATCHED → 找在线 worker → 事务提交后发 TaskDispatch（无 worker 直接 FAILED）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query, Long dispatchedBy) {
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, null);
+    }
+
+    /** 派发任务（多轮对话：history 为 JSON 数组，随 TaskDispatch 下发供 agent 组装上文）。 */
+    @Transactional
+    public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
+                              Long dispatchedBy, String history) {
         String effectiveType = (taskType == null || taskType.isBlank()) ? "question" : taskType;
         AgentTask task = new AgentTask();
         task.setTaskId(UUID.randomUUID().toString());
@@ -118,14 +125,18 @@ public class AgentTaskService {
         taskRepository.save(task);
         String taskToken = jwtUtil.generateScopedToken(task.getDispatchedBy(),
                 SCOPED_READ_PERMISSIONS, task.getTaskId(), SCOPED_TOKEN_TTL_MS);
+        TaskDispatch.Builder dispatchBuilder = TaskDispatch.newBuilder()
+                .setTaskId(task.getTaskId())
+                .setTaskType(effectiveType)
+                .setTargetType(targetType == null ? "" : targetType)
+                .setTargetId(targetId == null ? 0 : targetId)
+                .setQuery(query == null ? "" : query)
+                .setTaskToken(taskToken);
+        if (history != null && !history.isBlank()) {
+            dispatchBuilder.setHistory(history);
+        }
         ServerMessage dispatchMsg = ServerMessage.newBuilder()
-                .setTaskDispatch(TaskDispatch.newBuilder()
-                        .setTaskId(task.getTaskId())
-                        .setTaskType(effectiveType)
-                        .setTargetType(targetType == null ? "" : targetType)
-                        .setTargetId(targetId == null ? 0 : targetId)
-                        .setQuery(query == null ? "" : query)
-                        .setTaskToken(taskToken))
+                .setTaskDispatch(dispatchBuilder)
                 .build();
         // 推送放到事务提交后：worker 秒回 TaskResult/事件时，complete()/recordEvent()
         // 的事务必须能看到本任务（否则 findByTaskId 查不到、结果被静默丢弃，

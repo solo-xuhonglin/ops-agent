@@ -6,13 +6,15 @@ LLM 直接用 langchain_openai.ChatOpenAI（bind_tools 标准工具绑定），�
 ToolRegistry / AdminHttpClient / GrpcClient。
 
 任务上下文（TaskContext）放在 state：同一图实例可被多任务（不同 thread_id）并发 ainvoke。
-对外契约不变：调用方（core.handle_dispatch）仍发 TaskEvent / TaskResult。
+对外契约：调用方（core.handle_dispatch）仍收 TaskEvent / TaskResult；
+对话补强后 agent 节点流式产出（astream），增量以 thinking/delta 事件实时回传，
+聚合后的完整推理链挂在最终 AIMessage.additional_kwargs["reasoning_content"]。
 """
 import json
 import logging
 from typing import Annotated, Any, Literal, TypedDict
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
@@ -31,15 +33,61 @@ class AgentState(TypedDict):
     ctx: TaskContext
 
 
+def _chunk_text(chunk: Any) -> str:
+    """chunk.content 可能是 str（文本）或 list（content blocks），统一为 str。"""
+    content = getattr(chunk, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if isinstance(block, dict):
+            if block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        elif isinstance(block, str):
+            parts.append(block)
+    return "".join(parts)
+
+
+def _chunk_reasoning(chunk: Any) -> str:
+    """取 chunk 上的推理链增量（DeepSeek reasoner：additional_kwargs 或 response_metadata）。"""
+    for src in (getattr(chunk, "additional_kwargs", None) or {},
+                getattr(chunk, "response_metadata", None) or {}):
+        rc = src.get("reasoning_content") or src.get("reasoning")
+        if rc:
+            return rc if isinstance(rc, str) else str(rc)
+    return ""
+
+
 def build_graph(llm: ChatOpenAI, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient) -> Any:
     """构建并编译决策图。llm/http/registry/client 为进程级共享实例，ctx 走 state。"""
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        """决策节点：LLM 基于全量消息 + 动态工具 schema 产出 AIMessage。"""
+        """决策节点：LLM 流式产出（astream），增量发 thinking/delta 事件后聚合为完整 AIMessage。"""
         model = llm.bind_tools(registry.schemas())  # 每次绑定，注册表更新即生效
-        resp = await model.ainvoke(state["messages"])
-        return {"messages": [resp]}
+        ctx: TaskContext = state["ctx"]
+        chunks: list[Any] = []
+        reasoning_parts: list[str] = []
+        async for chunk in model.astream(state["messages"]):
+            chunks.append(chunk)
+            rc = _chunk_reasoning(chunk)
+            if rc:
+                reasoning_parts.append(rc)
+                await client.send_event(ctx.task_id, "thinking", rc)
+            text = _chunk_text(chunk)
+            if text:
+                await client.send_event(ctx.task_id, "delta", text)
+        if not chunks:
+            return {"messages": [AIMessage(content="")]}
+        merged = chunks[0]
+        for c in chunks[1:]:
+            merged = merged + c
+        # 聚合推理链全文挂到 additional_kwargs，供 TaskResult.reasoning 落库/展示
+        if reasoning_parts:
+            merged.additional_kwargs["reasoning_content"] = "".join(reasoning_parts)
+        return {"messages": [merged]}
 
     async def tools_node(state: AgentState) -> dict[str, Any]:
         """工具节点：执行 AIMessage 的 tool_calls，结果回填为 ToolMessage。"""
@@ -50,12 +98,16 @@ def build_graph(llm: ChatOpenAI, http: AdminHttpClient,
             name = tc["name"]
             args = tc.get("args") or {}
             await client.send_event(ctx.task_id, "tool_call",
-                                    f"{name}({json.dumps(args, ensure_ascii=False)})")
+                                    json.dumps({"name": name, "args": args}, ensure_ascii=False))
             tool = registry.get(name)
             if tool is None:
                 result = {"status": 0, "body": f"unknown tool: {name}"}
             else:
                 result = await http.call(tool, args, ctx)
+            body = result.get("body") if isinstance(result, dict) else result
+            summary = str(body)[:500] if body is not None else ""
+            await client.send_event(ctx.task_id, "tool_result",
+                                    json.dumps({"name": name, "summary": summary}, ensure_ascii=False))
             tool_msgs.append(ToolMessage(
                 content=json.dumps(result, ensure_ascii=False),
                 tool_call_id=tc.get("id", ""),
