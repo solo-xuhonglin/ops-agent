@@ -2,7 +2,7 @@
   <div>
     <div class="page-toolbar">
       <v-spacer />
-      <v-btn v-if="canTrain" color="secondary" prepend-icon="mdi-rocket-launch" @click="openTrain">训练模型</v-btn>
+      <v-btn v-if="canTrain" color="primary" prepend-icon="mdi-rocket-launch" @click="openTrain">训练模型</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 

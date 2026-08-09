@@ -74,9 +74,20 @@ public class DatasetService {
         d.setDateStart(req.dateStart());
         d.setDateEnd(req.dateEnd());
         d.setStatus(req.status());
-        Dataset saved = datasetRepository.save(d);
-        collectWeather(saved);
-        return toResponse(saved);
+        // 仅更新元数据，不再隐式触发天气采集；需要重新采集时显式调用 collect()
+        return toResponse(datasetRepository.save(d));
+    }
+
+    /**
+     * 显式触发天气数据采集：按数据集当前 regions/日期范围重新拉取，
+     * 覆盖 weather.csv 与 rowCount，状态更新为 READY（有数据）或 INVALID（无数据/失败）。
+     * 与「更新元数据」解耦，接口语义清晰。
+     */
+    @Transactional
+    public DatasetDto.Response collect(Long id) {
+        Dataset d = find(id);
+        collectWeather(d);
+        return toResponse(datasetRepository.save(d));
     }
 
     @Transactional

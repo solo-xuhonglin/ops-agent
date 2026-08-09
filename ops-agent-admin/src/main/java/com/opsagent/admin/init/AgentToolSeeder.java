@@ -82,6 +82,18 @@ public class AgentToolSeeder implements ApplicationRunner {
                     "{\"type\":\"object\",\"properties\":{\"endpointId\":{\"type\":\"integer\"},\"values\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}},\"horizon\":{\"type\":\"integer\"}},\"required\":[\"endpointId\",\"values\"]}"),
 
             // ===== 写工具（M3 接 grantKey 授权后由 agent 执行）=====
+            new ToolSpec("dataset_create", "Create a dataset and trigger weather collection",
+                    "POST", "/api/datasets", "dataset:write", true,
+                    "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"regions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"dateStart\":{\"type\":\"string\",\"format\":\"date\"},\"dateEnd\":{\"type\":\"string\",\"format\":\"date\"}},\"required\":[\"name\",\"regions\",\"dateStart\",\"dateEnd\"]}"),
+            new ToolSpec("dataset_update", "Update dataset metadata only (name/description/regions/date range), does NOT re-collect",
+                    "PUT", "/api/datasets/{datasetId}", "dataset:write", true,
+                    "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"regions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"dateStart\":{\"type\":\"string\",\"format\":\"date\"},\"dateEnd\":{\"type\":\"string\",\"format\":\"date\"},\"status\":{\"type\":\"string\"}},\"required\":[\"datasetId\"]}"),
+            new ToolSpec("dataset_collect", "Explicitly re-collect weather data for a dataset (overwrites CSV by current regions/date range)",
+                    "POST", "/api/datasets/{datasetId}/collect", "dataset:write", true,
+                    "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"}},\"required\":[\"datasetId\"]}"),
+            new ToolSpec("dataset_delete", "Delete a dataset and its stored file",
+                    "DELETE", "/api/datasets/{datasetId}", "dataset:write", true,
+                    "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"}},\"required\":[\"datasetId\"]}"),
             new ToolSpec("training_create", "Create a training job (needs human approval)",
                     "POST", "/api/training/jobs", "training:write", true,
                     "{\"type\":\"object\",\"properties\":{\"datasetId\":{\"type\":\"integer\"},\"name\":{\"type\":\"string\"},\"version\":{\"type\":\"string\"},\"algorithm\":{\"type\":\"string\"},\"hyperparameters\":{\"type\":\"object\"}},\"required\":[\"datasetId\"]}"),

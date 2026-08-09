@@ -13,6 +13,7 @@
       />
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建用户</v-btn>
+      <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
     <v-card class="data-card" elevation="0">

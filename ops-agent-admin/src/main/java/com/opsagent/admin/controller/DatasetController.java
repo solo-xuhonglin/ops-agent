@@ -53,6 +53,16 @@ public class DatasetController {
         return ApiResponse.ok(datasetService.update(id, req));
     }
 
+    /**
+     * 显式触发天气数据采集（重新拉取并按当前 regions/日期覆盖 weather.csv）。
+     * 与「更新元数据」解耦：PUT 只改元数据，采集由本接口单独完成。
+     */
+    @PostMapping("/{id}/collect")
+    @PreAuthorize("hasAuthority('dataset:write')")
+    public ApiResponse<?> collect(@PathVariable Long id) {
+        return ApiResponse.ok(datasetService.collect(id));
+    }
+
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('dataset:write')")
     public ApiResponse<?> delete(@PathVariable Long id) {

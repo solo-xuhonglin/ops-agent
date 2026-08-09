@@ -3,6 +3,7 @@
     <div class="page-toolbar">
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
+      <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
     <v-card class="data-card" elevation="0">
@@ -188,6 +189,7 @@ const pageSize = ref(10)
 const page = ref(0)
 const dialog = ref(false)
 const editId = ref(null)
+const editSnapshot = ref(null)
 const saving = ref(false)
 const form = reactive({ name: '', description: '', regions: [], dateStart: null, dateEnd: null, status: 'READY' })
 
@@ -249,6 +251,7 @@ function onOptions(o) { page.value = o.page - 1; pageSize.value = o.itemsPerPage
 
 function reset() {
   editId.value = null
+  editSnapshot.value = null
   Object.assign(form, { name: '', description: '', regions: [], dateStart: null, dateEnd: null, status: 'READY' })
 }
 function openCreate() { reset(); dialog.value = true }
@@ -259,6 +262,12 @@ function openEdit(item) {
     dateStart: item.dateStart ? new Date(item.dateStart) : null,
     dateEnd: item.dateEnd ? new Date(item.dateEnd) : null, status: item.status
   })
+  // 记录编辑前的采集参数，用于判断保存后是否需要重新采集
+  editSnapshot.value = {
+    regions: [...(item.regions || [])].sort().join(','),
+    dateStart: item.dateStart || '',
+    dateEnd: item.dateEnd || ''
+  }
   dialog.value = true
 }
 
@@ -274,6 +283,14 @@ async function save() {
     }
     if (editId.value) {
       await api.put(`/datasets/${editId.value}`, { ...payload, status: form.status })
+      // 智能补采集：仅当 regions/日期范围有变化时才显式触发重新采集，
+      // 仅改名称/描述等元数据则保持纯更新（接口语义：PUT=元数据，POST /collect=采集）。
+      const regionsKey = [...(form.regions || [])].sort().join(',')
+      const dateKey = `${payload.dateStart || ''}|${payload.dateEnd || ''}`
+      const snap = editSnapshot.value
+      if (!snap || snap.regions !== regionsKey || snap.dateStart !== (payload.dateStart || '') || snap.dateEnd !== (payload.dateEnd || '')) {
+        await api.post(`/datasets/${editId.value}/collect`)
+      }
     } else {
       await api.post('/datasets', payload)
     }
