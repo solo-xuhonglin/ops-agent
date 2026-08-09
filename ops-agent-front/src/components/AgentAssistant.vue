@@ -259,7 +259,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, computed, reactive, watch, nextTick, onUnmounted } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import { useAgentStore } from '../stores/agent'
 import { useConfirm } from '../composables/useConfirm'
@@ -514,6 +514,17 @@ function sugColor(s) { return SUG_STATUS[s]?.color || 'grey' }
 function priorityText(p) { return PRIORITIES[p]?.text || p }
 function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
 function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
+
+// 执行结果（suggestion 的 markdown result）按条目跟踪折叠/展开状态。
+// 建议列表刷新时清空，避免 stale id。
+const resultExpanded = reactive({})
+function toggleResult(id) { resultExpanded[id] = !resultExpanded[id] }
+watch(() => store.suggestions, (list) => {
+  const ids = new Set(list.map(s => s.id))
+  for (const id of Object.keys(resultExpanded)) {
+    if (!ids.has(id)) delete resultExpanded[id]
+  }
+}, { deep: false })
 function planTargetText(st) {
   const tt = st.target_type || st.targetType
   const tid = st.target_id ?? st.targetId
