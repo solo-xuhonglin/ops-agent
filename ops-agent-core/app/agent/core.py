@@ -272,6 +272,21 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                                                  "EXECUTED" if ok else "FAILED", conclusion)
         except Exception as e:  # noqa: BLE001
             log.warning("suggestion result update failed: %s", e)
+
+    # 业务失败（非 HTTP 断连）：触发失败决策轮 —— 模型看失败原因决定修正重试（retry_of 新建议）
+    # 或放弃；决策文本并入结论回发（新 PENDING 建议前端可见，人工再审批后重试）
+    if not ok and ctx.suggestion_id and store is not None and store.enabled:
+        try:
+            from app.agent.decision import run_failure_decision
+            original = await store.get_suggestion(ctx.suggestion_id)
+            decision = await run_failure_decision(llm, http, registry, client, store,
+                                                  tracker, ctx,
+                                                  failure_text=summary or str(result),
+                                                  original=original)
+            if decision and decision != "（决策完成，无说明）":
+                conclusion = f"{conclusion}\n\n**失败处置建议**：{decision}"
+        except Exception as e:  # noqa: BLE001 - 失败决策不阻塞 execute 收尾
+            log.warning("failure decision skipped: %s", e)
     if store is not None and store.enabled:
         try:
             await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion)

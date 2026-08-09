@@ -1,11 +1,11 @@
 """决策轮：异步任务观察完成后的 LLM 决策（观察 → 思考 → 行动）。
 
-Monitor 轮询到对象终态（SUCCEEDED/FAILED/CANCELLED/STOPPED）后触发：
-- 组装 plan 上下文 + 观察结果 → 单轮 LLM 推理（原生 function calling，bind_tools）
-- LLM 可调 plan_update（步骤 done/failed/cancelled、plan DONE/FAILED/CANCELLED）、
-  approve_<写操作>（下一步/重试 retry_of）、只读工具（补充观察）
-- 写操作永远经 approve_* 审批建议 → 人工确认 → execute，模型无法自授权
-- 工具循环上限 MAX_DECISION_ROUNDS 防死循环
+两种触发场景共用同一决策循环（_run_decision_loop，bind_tools + ToolMessage）：
+- run_decision_round：Monitor 轮询到对象终态后，决定 plan 下一步（步骤 done/failed、下一步建议、收尾）
+- run_failure_decision：execute 写操作失败后，模型看失败原因决定重试（retry_of）或放弃
+LLM 可调 plan_update、approve_<写操作>（重试带 retry_of）、只读工具；
+写操作永远经 approve_* 审批建议 → 人工确认 → execute，模型无法自授权；
+工具循环上限 MAX_DECISION_ROUNDS 防死循环。
 """
 import asyncio
 import json
@@ -44,37 +44,23 @@ DECISION_SYSTEM = (
     "- 严禁编造观察结果；一切基于下方给出的观察数据与工具返回。\n"
 )
 
+FAILURE_DECISION_SYSTEM = (
+    "你是运维 agent 的决策模块。一次**已获人工审批**的写操作执行失败了，"
+    "请依据失败原因与上下文决定下一步。\n"
+    "规则：\n"
+    "- 失败原因可修正（参数错误/目标不存在/格式不符等）：调用对应的 approve_<写操作名> "
+    "重新提出审批建议，带上**修正后的参数**与 retry_of=原 suggestion_id，"
+    "让用户再次确认后重试（修正仍须人工审批，你无权直接执行写操作）。\n"
+    "- 方案不可行或需更换方案：说明原因，必要时用 plan_update 调整/废弃计划。\n"
+    "- 可调用只读工具查询真实状态核实原因；信息足够时直接输出决策说明（markdown）。\n"
+    "- 严禁编造失败原因；一切基于下方给出的失败结果与工具返回。\n"
+)
 
-async def run_decision_round(llm_runtime: Any, http: AdminHttpClient, registry: ToolRegistry,
-                             client: GrpcClient, store: Any, tracker: Any,
-                             monitor: Any, terminal_status: str,
-                             observation: str = "") -> Optional[str]:
-    """执行一次决策轮。返回决策说明（无工具调用后的最终文本）。
 
-    monitor：已到达终态的对象监视；terminal_status：终态（SUCCEEDED/FAILED/...）；
-    observation：观察数据摘要（查询返回的原文，供 LLM 分析）。
-    """
-    plan: Optional[dict] = None
-    if monitor.plan_id and store is not None:
-        try:
-            plan = await store.get_plan(monitor.plan_id)
-        except Exception as e:  # noqa: BLE001
-            log.warning("decision plan fetch failed: %s", e)
-
-    plan_text = _format_plan(plan) or "（无关联计划）"
-    human = (
-        f"观察结果：对象 {monitor.object_type}/{monitor.object_id} 状态已到达 {terminal_status}。\n"
-        f"观察数据：{observation or '（无）'}\n"
-        f"当前计划：\n{plan_text}\n"
-        f"最近完成/失败的建议：{monitor.suggestion_id or '（无）'}\n"
-        "请决定计划下一步并更新状态。"
-    )
-    messages: list[Any] = [
-        SystemMessage(content=DECISION_SYSTEM),
-        HumanMessage(content=human),
-    ]
-    llm = llm_runtime.select(True).bind_tools(build_openai_tools(registry))
-    ctx = TaskContext(task_id=monitor.task_id or "", task_token=monitor.task_token or "")
+async def _run_decision_loop(llm: Any, messages: list[Any], ctx: TaskContext,
+                             http: AdminHttpClient, registry: ToolRegistry,
+                             client: GrpcClient, store: Any, tracker: Any) -> str:
+    """通用决策循环：LLM 调工具（approve_*/plan_update/只读）→ 执行 → ToolMessage 回填 → 收敛。"""
     final_text = ""
     try:
         for _ in range(MAX_DECISION_ROUNDS):
@@ -102,11 +88,76 @@ async def run_decision_round(llm_runtime: Any, http: AdminHttpClient, registry: 
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001 - 决策失败不阻塞进程
-        log.error("decision round failed: %s", e, exc_info=True)
+        log.error("decision loop failed: %s", e, exc_info=True)
         final_text = f"（决策失败：{e}）"
+    return final_text
+
+
+async def run_decision_round(llm_runtime: Any, http: AdminHttpClient, registry: ToolRegistry,
+                             client: GrpcClient, store: Any, tracker: Any,
+                             monitor: Any, terminal_status: str,
+                             observation: str = "") -> Optional[str]:
+    """执行一次决策轮（观察完成 → plan 下一步）。返回决策说明。
+
+    monitor：已到达终态的对象监视；terminal_status：终态（SUCCEEDED/FAILED/...）；
+    observation：观察数据摘要（查询返回的原文，供 LLM 分析）。
+    """
+    plan: Optional[dict] = None
+    if monitor.plan_id and store is not None:
+        try:
+            plan = await store.get_plan(monitor.plan_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("decision plan fetch failed: %s", e)
+
+    plan_text = _format_plan(plan) or "（无关联计划）"
+    human = (
+        f"观察结果：对象 {monitor.object_type}/{monitor.object_id} 状态已到达 {terminal_status}。\n"
+        f"观察数据：{observation or '（无）'}\n"
+        f"当前计划：\n{plan_text}\n"
+        f"最近完成/失败的建议：{monitor.suggestion_id or '（无）'}\n"
+        "请决定计划下一步并更新状态。"
+    )
+    messages: list[Any] = [
+        SystemMessage(content=DECISION_SYSTEM),
+        HumanMessage(content=human),
+    ]
+    llm = llm_runtime.select(True).bind_tools(build_openai_tools(registry))
+    ctx = TaskContext(task_id=monitor.task_id or "", task_token=monitor.task_token or "")
+    final_text = await _run_decision_loop(llm, messages, ctx, http, registry, client,
+                                          store, tracker)
     if final_text:
         log.info("decision done: plan=%s obj=%s/%s -> %s", monitor.plan_id,
                  monitor.object_type, monitor.object_id, terminal_status)
+    return final_text
+
+
+async def run_failure_decision(llm_runtime: Any, http: AdminHttpClient,
+                               registry: ToolRegistry, client: GrpcClient,
+                               store: Any, tracker: Any, ctx: TaskContext,
+                               failure_text: str, original: Optional[dict]) -> Optional[str]:
+    """execute 写操作失败后的决策轮：模型看失败原因决定重试（retry_of 修正建议）或放弃。
+
+    ctx：execute 任务上下文（带 conversation_id/suggestion_id）；
+    failure_text：写工具返回的失败信息摘要；original：原建议 dict（action_type/params/plan 关联）。
+    """
+    parts = [f"失败结果：{failure_text}"]
+    if original:
+        parts.append(
+            f"原建议：action={original.get('action_type')} "
+            f"target={original.get('target_type') or '-'}/{original.get('target_id') or '-'} "
+            f"params={original.get('params') or '{}'}")
+        if original.get("plan_id"):
+            parts.append(f"所属计划：plan_id={original.get('plan_id')} step_no={original.get('step_no') or '-'}")
+    parts.append("请决定下一步：参数可修正则用 approve_<写操作名> 提出修正建议（retry_of 关联原建议），否则说明放弃。")
+    messages: list[Any] = [
+        SystemMessage(content=FAILURE_DECISION_SYSTEM),
+        HumanMessage(content="\n".join(parts)),
+    ]
+    llm = llm_runtime.select(True).bind_tools(build_openai_tools(registry))
+    final_text = await _run_decision_loop(llm, messages, ctx, http, registry, client,
+                                          store, tracker)
+    if final_text:
+        log.info("failure decision done: sug=%s -> %s", ctx.suggestion_id, final_text[:80])
     return final_text
 
 

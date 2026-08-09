@@ -253,3 +253,59 @@ async def test_decision_round_no_plan_ok():
     text = await run_decision_round(llm, FakeHttp(), FakeRegistry(), FakeClient(),
                                     make_store(db), FakeTracker(db), Monitor(), "SUCCEEDED")
     assert "无计划" in text
+
+
+# ==================== 失败决策轮（execute 失败 → 修正重试/放弃） ====================
+
+async def test_failure_decision_retry_suggestion():
+    """execute 失败：模型提出修正建议（approve_* + retry_of 原建议），落新 PENDING 建议。"""
+    from app.agent.context import TaskContext
+    from app.agent.decision import run_failure_decision
+
+    db = FakeDb()
+    store = make_store(db)
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1",
+                      suggestion_id="sug_orig")
+    llm = FakeLlm([
+        {"name": "approve_training_create",
+         "args": {"datasetId": 5, "name": "lstm_v2", "target_type": "dataset",
+                  "target_id": 5, "retry_of": "sug_orig"}},
+    ], final_text="已提出修正建议（数据集改为 5），请再次确认")
+
+    text = await run_failure_decision(llm, FakeHttp(), FakeRegistry(), FakeClient(),
+                                      store, FakeTracker(db), ctx,
+                                      "dataset 3 not found", {"action_type": "training_create",
+                                                              "target_type": "dataset",
+                                                              "target_id": 3,
+                                                              "params": '{"datasetId": 3}'})
+
+    assert "修正建议" in text
+    sug = [args for sql, args in db.executed if "INSERT INTO agent_suggestions" in sql]
+    assert sug, "失败决策应落新建议"
+    args = sug[0]
+    assert args[11] == "sug_orig"          # retry_of 关联原建议
+    assert args[4] == "conv1"              # conversation_id 注入（前端可见）
+    assert args[5] == "training_create"    # action_type 由 approve_* 名推导
+    assert args[7] == 5                    # target_id 由模型携带
+    params = json.loads(args[8])
+    assert params == {"datasetId": 5, "name": "lstm_v2"}
+
+
+async def test_failure_decision_abandon():
+    """execute 失败且无法修正：模型直接说明放弃（不落新建议）。"""
+    from app.agent.context import TaskContext
+    from app.agent.decision import run_failure_decision
+
+    db = FakeDb()
+    store = make_store(db)
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1",
+                      suggestion_id="sug_orig")
+    llm = FakeLlm([], final_text="参数无法修正（目标数据集不存在且无替代），建议放弃本次操作")
+
+    text = await run_failure_decision(llm, FakeHttp(), FakeRegistry(), FakeClient(),
+                                      store, FakeTracker(db), ctx,
+                                      "dataset 999 not found", {"action_type": "training_create"})
+
+    assert "放弃" in text
+    sug = [sql for sql, _ in db.executed if "INSERT INTO agent_suggestions" in sql]
+    assert sug == []  # 不落新建议
