@@ -266,7 +266,7 @@
               {{ store.reasoningEnabled ? '推理链 + 工具调用' : '快速回答' }}
             </span>
           </div>
-          <div v-if="store.pendingSuggestions.length" class="mb-2">
+          <div v-if="store.pendingSuggestions.length" class="my-2">
             <v-card v-for="s in store.pendingSuggestions.slice(0, 2)" :key="s.id"
                     class="mb-1 suggestion-card" variant="outlined">
               <v-card-text class="py-2">

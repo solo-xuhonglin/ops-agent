@@ -385,11 +385,14 @@ export const useAgentStore = defineStore('agent', {
       if (!taskId) return
       try {
         const { data } = await agentApi.listSuggestions({ page: 0, size: 100 })
-        const suggestions = (data.data.content || []).filter((s) => s.sourceTaskId === taskId || s.taskId === taskId)
+        const list = data.data.content || []
+        const suggestions = list.filter((s) => s.sourceTaskId === taskId || s.taskId === taskId)
         const last = [...this.messages].reverse().find((m) => m.role === 'assistant')
         if (last && (last.status === 'completed' || last.status === 'failed')) {
           last.suggestions = suggestions
         }
+        // 同时兜底挂载当前会话其他 PENDING 建议（防多建议/多轮 race）
+        this._attachPendingSuggestionsToMessages(list)
       } catch (e) {
         // 建议拉取失败不阻塞 UI
       }
@@ -422,10 +425,31 @@ export const useAgentStore = defineStore('agent', {
     async fetchSuggestions() {
       try {
         const { data } = await agentApi.listSuggestions()
-        this.suggestions = sortSuggestions(data.data.content)
-        this.pendingCount = this.suggestions.filter((s) => s.status === 'PENDING').length
+        const list = sortSuggestions(data.data.content || [])
+        this.suggestions = list
+        this.pendingCount = list.filter((s) => s.status === 'PENDING').length
+        // 兜底：把当前会话的 PENDING 建议挂载到对应 assistant 消息（修复 done 事件与落库 race 导致消息区授权卡缺失）
+        this._attachPendingSuggestionsToMessages(list)
       } catch (e) {
         // 忽略：抽屉打开时随会话刷新
+      }
+    },
+
+    /**
+     * 把 PENDING 建议按 sourceTaskId 挂载到对应 assistant 消息（若消息区尚未挂载）。
+     * fetchSuggestions / done / approve 后都会走这里，确保授权卡既在消息里也在底部待审批区。
+     */
+    _attachPendingSuggestionsToMessages(list) {
+      const assistantMsgs = this.messages.filter((m) => m.role === 'assistant')
+      if (!assistantMsgs.length) return
+      for (const s of list.filter((x) => x.status === 'PENDING')) {
+        if (!s.sourceTaskId) continue
+        const target = assistantMsgs.find((m) => m.taskId === s.sourceTaskId)
+        if (!target) continue
+        target.suggestions = target.suggestions || []
+        if (!target.suggestions.some((x) => x.suggestionId === s.suggestionId)) {
+          target.suggestions.push(s)
+        }
       }
     },
 
