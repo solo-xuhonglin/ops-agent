@@ -33,6 +33,14 @@ public class TrainingJob {
     @Column(name = "triggered_by")
     private Long triggeredBy;
 
+    /** 触发本次训练的 agent 建议 ID（agent 调 training_create 时从 grantKey 解析写入；null 表示非 agent 触发） */
+    @Column(name = "suggestion_id")
+    private Long suggestionId;
+
+    /** 训练完成后是否已派发 agent 新任务推部署建议（防重复触发） */
+    @Column(name = "followup_dispatched")
+    private boolean followupDispatched = false;
+
     @Column(name = "log_key", length = 512)
     private String logKey;
 

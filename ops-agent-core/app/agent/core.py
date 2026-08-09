@@ -49,13 +49,19 @@ _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
-    """user prompt：execute_suggestion 任务给专门指引，其他按 query/target 构造。"""
+    """user prompt：按任务类型给出专门指引。"""
     if d.task_type == "execute_suggestion":
         # 已审批任务：直接调对应写工具，grantKey 已就位（admin 端 aspect 校验）。
-        # 执行成功后按 query 中的 suggestionId 回写 suggestion 状态（EXECUTED/FAILED）。
         return (
             "（任务类型：execute_suggestion——已审批的写操作，请执行）",
             (d.query or "") + "\n请按 query 描述执行该写操作，完成后回报结果。",
+        )
+    if d.task_type == "training_completed_followup":
+        # 训练完成自动触发的部署评估：query 已包含 modelVersionId/metrics。
+        return (
+            "（任务类型：training_completed_followup——训练已完成，自动评估是否部署）",
+            (d.query or "") + "\n如需部署，推送 action_type=serving_deploy、target_type=model_version、"
+            "target_id 为 modelVersionId 的 suggestions JSON 块。",
         )
     hint = ""
     if d.task_type and d.task_type != "question":

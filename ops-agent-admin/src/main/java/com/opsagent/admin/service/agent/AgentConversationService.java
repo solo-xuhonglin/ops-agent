@@ -119,7 +119,7 @@ public class AgentConversationService {
 
         AgentTask task = taskService.dispatch(
                 taskType == null || taskType.isBlank() ? "question" : taskType,
-                targetType, targetId, text, userId, history);
+                targetType, targetId, text, userId, history, conv.getConversationId());
         streamManager.bindTask(task.getTaskId(), conv.getConversationId());
 
         if (AgentTaskService.STATUS_FAILED.equals(task.getStatus())) {

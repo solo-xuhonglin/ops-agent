@@ -46,6 +46,10 @@ public class AgentTask {
     @Column(name = "worker_id", length = 64)
     private String workerId;
 
+    /** 所属会话 ID（仅多轮对话/系统派发的任务有；admin 直接派的任务为 null） */
+    @Column(name = "conversation_id", length = 64)
+    private String conversationId;
+
     @Column(columnDefinition = "TEXT")
     private String conclusion;
 

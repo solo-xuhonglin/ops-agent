@@ -133,13 +133,23 @@ public class AgentTaskService {
     /** 派发任务：入库 DISPATCHED → 找在线 worker → 事务提交后发 TaskDispatch（无 worker 直接 FAILED）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query, Long dispatchedBy) {
-        return dispatch(taskType, targetType, targetId, query, dispatchedBy, null);
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, null, null);
     }
 
     /** 派发任务（多轮对话：history 为 JSON 数组，随 TaskDispatch 下发供 agent 组装上文）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
                               Long dispatchedBy, String history) {
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, history, null);
+    }
+
+    /**
+     * 派发任务（完整参数）：
+     * - conversationId 多轮对话/系统自动派发时传入，用于训练完成 → 自动 followup 反查 conversation。
+     */
+    @Transactional
+    public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
+                              Long dispatchedBy, String history, String conversationId) {
         String effectiveType = (taskType == null || taskType.isBlank()) ? "question" : taskType;
         AgentTask task = new AgentTask();
         task.setTaskId(UUID.randomUUID().toString());
@@ -149,6 +159,7 @@ public class AgentTaskService {
         task.setQuery(query);
         task.setStatus(STATUS_DISPATCHED);
         task.setDispatchedBy(dispatchedBy);
+        task.setConversationId(conversationId);
         taskRepository.save(task);
 
         WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);
@@ -272,9 +283,13 @@ public class AgentTaskService {
     }
 
     private void persistSuggestions(String taskId, List<Suggestion> suggestions) {
+        // 从 task 反查 conversationId（execute_suggestion 任务由 conversationService.send 派发，带 conversationId）
+        AgentTask task = taskRepository.findByTaskId(taskId).orElse(null);
+        String conversationId = task != null ? task.getConversationId() : null;
         for (Suggestion s : suggestions) {
             AgentSuggestion suggestion = new AgentSuggestion();
             suggestion.setTaskId(taskId);
+            suggestion.setConversationId(conversationId);
             suggestion.setActionType(s.getActionType());
             suggestion.setTargetType(s.getTargetType());
             suggestion.setTargetId(s.getTargetId());
@@ -283,7 +298,8 @@ public class AgentTaskService {
             suggestion.setPriority(s.getPriority().isBlank() ? "NORMAL" : s.getPriority());
             suggestionRepository.save(suggestion);
         }
-        log.info("task suggestions persisted: taskId={}, count={}", taskId, suggestions.size());
+        log.info("task suggestions persisted: taskId={}, count={}, conversationId={}",
+                taskId, suggestions.size(), conversationId);
     }
 
     public Page<AgentTask> list(int page, int size) {

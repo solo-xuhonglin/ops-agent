@@ -26,6 +26,10 @@ public class AgentSuggestion {
     @Column(name = "task_id", length = 64)
     private String taskId;
 
+    /** 所属会话 ID（agent 在对话中提出的建议，用于训练完成→自动触发 agent 新一轮推 deploy suggestion） */
+    @Column(name = "conversation_id", length = 64)
+    private String conversationId;
+
     /** 对应写工具名（training_delete / serving_undeploy / ...） */
     @Column(name = "action_type", length = 32, nullable = false)
     private String actionType;

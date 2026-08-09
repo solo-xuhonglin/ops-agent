@@ -100,6 +100,11 @@ public class TrainingJobService {
      */
     @Transactional
     public TrainingJob trigger(TrainingRequest req) {
+        return trigger(req, null);
+    }
+
+    @Transactional
+    public TrainingJob trigger(TrainingRequest req, Long suggestionId) {
         Dataset dataset = datasetRepository.findById(req.datasetId())
                 .orElseThrow(() -> new ResourceNotFoundException("数据集不存在: " + req.datasetId()));
         String objectKey = dataset.getObjectKey();
@@ -127,6 +132,10 @@ public class TrainingJobService {
         job.setDatasetId(dataset.getId());
         job.setStatus("PENDING");
         job.setTriggeredBy(currentUserId());
+        // agent 调用时 suggestionId 非空：训练完成 → TrainingFollowupService 自动派 agent 新任务推 deploy suggestion
+        if (suggestionId != null) {
+            job.setSuggestionId(suggestionId);
+        }
         TrainingJob savedJob = trainingJobRepository.save(job);
 
         String containerId = trainingLauncher.launch(
