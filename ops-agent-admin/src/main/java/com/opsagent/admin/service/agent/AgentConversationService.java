@@ -156,12 +156,12 @@ public class AgentConversationService {
         // 1. taskId 反查 suggestion_id
         java.util.Optional<AgentTask> taskOpt = taskRepository.findByTaskId(taskId);
         if (taskOpt.isEmpty()) {
-            log.debug("autoContinue skipped: task not found: {}", taskId);
+            log.info("autoContinue skipped: task not found: {}", taskId);
             return;
         }
         String suggestionId = taskOpt.get().getSuggestionId();
         if (suggestionId == null || suggestionId.isBlank()) {
-            log.debug("autoContinue skipped: task has no suggestion_id: {}", taskId);
+            log.info("autoContinue skipped: task has no suggestion_id: {}", taskId);
             return;
         }
         // 2. suggestionId 查 plan_id

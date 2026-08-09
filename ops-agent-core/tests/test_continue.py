@@ -88,8 +88,10 @@ class FakeStore:
         self.suggestion_inserts.append(new)
         return sid
 
-    async def insert_task(self, task_id, task_type, conversation_id, query=""):
-        self.task_inserts.append({"task_id": task_id, "task_type": task_type})
+    async def insert_task(self, task_id, task_type, conversation_id, query="",
+                        plan_id="", suggestion_id=""):
+        self.task_inserts.append({"task_id": task_id, "task_type": task_type,
+                                  "suggestion_id": suggestion_id})
 
     async def finish_task(self, task_id, status, conclusion=""):
         self.task_finishes.append({"task_id": task_id, "status": status, "conclusion": conclusion})

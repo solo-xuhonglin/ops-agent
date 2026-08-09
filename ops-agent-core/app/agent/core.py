@@ -256,6 +256,14 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                             json.dumps({"name": tool.name, "summary": summary}, ensure_ascii=False))
     ok = isinstance(result, dict) and result.get("status") in (200, 201, 202)
 
+    # 落 RUNNING 任务行（admin 端 TaskResult 反查 suggestionId 需要；与 chat/continue 一致）
+    if store is not None and store.enabled:
+        try:
+            await store.insert_task(ctx.task_id, "execute", ctx.conversation_id,
+                                    query=d.params or "", suggestion_id=ctx.suggestion_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("execute task insert failed: %s", e)
+
     # 异步写操作成功后注册对象状态轮询（训练/部署完成后推进 Plan）
     await _maybe_register_tracker(tracker, store, ctx, tool, result)
 
@@ -329,7 +337,7 @@ async def handle_continue(client: GrpcClient, registry: ToolRegistry, llm: Any,
         return
     try:
         await store.insert_task(d.task_id, "continue", d.conversation_id,
-                                query=d.query or "")
+                                query=d.query or "", suggestion_id=ctx.suggestion_id)
     except Exception as e:  # noqa: BLE001
         log.warning("continue task insert failed: %s", e)
 
