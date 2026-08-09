@@ -219,6 +219,24 @@ class OpsAgentClient:
     def set_agent_tool_enabled(self, tool_id: int, enabled: bool) -> dict:
         return self.put(f"/api/agent/tools/{tool_id}/enabled", json={"enabled": enabled})["data"]
 
+    # ---- agent conversation helpers (multi-turn chat) ----
+    def create_agent_conversation(self) -> dict:
+        """POST /api/agent/conversations -> conversation"""
+        return self.post("/api/agent/conversations")["data"]
+
+    def list_agent_conversations(self, page: int = 0, size: int = 20) -> dict:
+        return self.get("/api/agent/conversations", params={"page": page, "size": size})["data"]
+
+    def get_agent_conversation_messages(self, conversation_id: str) -> list:
+        return self.get(f"/api/agent/conversations/{conversation_id}/messages")["data"]
+
+    def delete_agent_conversation(self, conversation_id: str) -> dict:
+        return self.delete(f"/api/agent/conversations/{conversation_id}")
+
+    def send_agent_message(self, conversation_id: str, payload: dict) -> dict:
+        """POST /api/agent/conversations/{id}/messages -> {messageId, taskId, status}"""
+        return self.post(f"/api/agent/conversations/{conversation_id}/messages", json=payload)["data"]
+
     # ---- RBAC helpers (roles / users) ----
     def list_roles(self, page: int = 0, size: int = 50) -> dict:
         return self.get("/api/roles", params={"page": page, "size": size})["data"]

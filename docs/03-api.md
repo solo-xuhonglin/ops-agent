@@ -148,6 +148,27 @@ serving 全部端点统一收敛在 `/api/serving/endpoints` 资源路径下；�
 | POST | `/api/agent/suggestions/{id}/approve` | `agent:write` | 确认建议：签发时效 grantKey（Redis）沿 gRPC 推 agent + 派发执行任务 → `APPROVED` |
 | POST | `/api/agent/suggestions/{id}/reject` | `agent:write` | 忽略建议 → `REJECTED` |
 
+**多轮会话（对话补强 2026-08-09，旧「对话即任务」用法移除，任务仅作授权闭环内部载体）：**
+
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| POST | `/api/agent/conversations` | `agent:write` | 创建会话 |
+| GET | `/api/agent/conversations` | `agent:read` | 会话列表（分页，新→旧；归属隔离） |
+| GET | `/api/agent/conversations/{id}/messages` | `agent:read` | 历史恢复：完整消息流（时间升序） |
+| DELETE | `/api/agent/conversations/{id}` | `agent:write` | 删除会话（连带消息） |
+| POST | `/api/agent/conversations/{id}/messages` | `agent:write` | 发消息：`{query?, taskType?, targetType?, targetId?}` → `{messageId, taskId, status}`（派发内部 task，携带多轮 history） |
+| POST | `/api/agent/conversations/{id}/stream?taskId=` | `agent:read` | SSE 流式回显（fetch stream + Bearer token；taskId 已结束则回放最终 done/error 兜底） |
+
+SSE 事件（`event:` + `data:` JSON）：
+```
+event: thinking    data: {"delta":"推理链增量"}
+event: tool_call   data: {"name":"serving_list","args":{...}}
+event: tool_result data: {"name":"serving_list","summary":"..."}
+event: delta       data: {"delta":"答复增量"}
+event: done        data: {"messageId":"...","status":"completed|failed","content":"...","reasoning":"..."}
+event: error       data: {"message":"..."}
+```
+
 **任务状态**：`DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED`。
 **建议状态**：`PENDING → APPROVED → EXECUTING → EXECUTED / FAILED`；`PENDING → REJECTED`；`APPROVED` 但 key 超时未执行 → `EXPIRED`。
 
@@ -176,13 +197,13 @@ serving 全部端点统一收敛在 `/api/serving/endpoints` 资源路径下；�
 
 > **agent 能力接口**（工具 = admin 现有 REST API 子集）不在本文档重复：只读 11 个（`dataset_list/get/get_file_url`、`model_list/get`、`training_list/get/get_logs_url`、`serving_list/get/predict`）+ 写 4 个（`training_create/delete`、`serving_deploy/undeploy`），定义存 `agent_tools` 表，agent 注册时动态下发 schema。写工具调用需携带 `X-Grant-Key`（人工确认后签发、一次性、精确绑定 action+target）；身份头 `X-Agent-Worker`/`X-Agent-Task` 由 agent 代码注入。
 
-## 8. 对话（SSE）Conversation —— 已搁置
+## 8. 对话（SSE）Conversation —— 已实现（2026-08-09）
 
-> **设计变更（2026-08-08）**：agent 定位由"终端用户自然语言对话"改为"**内部运维/业务自动化助手**"（纯被动、admin 下发任务才行动），端用户对话接口未实现、不再规划。值班问询改由前端 Agent 浮窗输入框 → `POST /api/agent/tasks`（question 任务）承载。
+> **实现说明**：agent 多轮会话已落地（见 §7 表格），本节的旧规划（`/api/chat/stream`）不再使用，由 `/api/agent/conversations/*` 取代。历史搁置记录保留如下供追溯。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/chat/stream` | （未实现，已搁置） |
+| POST | `/api/chat/stream` | （未实现，已废弃） |
 
 ```jsonc
 // 请求体（已搁置）

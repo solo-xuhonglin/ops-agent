@@ -38,6 +38,7 @@ FAKE_CONTAINER = "e2e-fake-worker"
 READY_FILE = f"{REMOTE_E2E_DIR}/ready"
 GRANTS_FILE = f"{REMOTE_E2E_DIR}/grants.log"
 RESULTS_FILE = f"{REMOTE_E2E_DIR}/results.log"
+HISTORY_FILE = f"{REMOTE_E2E_DIR}/history.log"
 WORKER_LOG = f"{REMOTE_E2E_DIR}/worker.log"
 
 
@@ -112,6 +113,7 @@ def main() -> int:
             TEST_PYTHON,
             "-m", "pytest",
             "tests/test_agent.py", "tests/test_agent_negative.py", "tests/test_agent_worker.py",
+            "tests/test_agent_conversation.py",
             "-v",
         ]
         proc = subprocess.run(pytest_args, cwd=TEST_DIR, env=env)
@@ -123,6 +125,8 @@ def main() -> int:
         print(sh(c, f"cat {GRANTS_FILE} 2>/dev/null || echo '(none)'"))
         print("\n[evidence] dispatched tasks handled by fake worker:")
         print(sh(c, f"cat {RESULTS_FILE} 2>/dev/null || echo '(none)'"))
+        print("\n[evidence] multi-turn history carried to worker (history.log):")
+        print(sh(c, f"cat {HISTORY_FILE} 2>/dev/null || echo '(none)'"))
         print("\n[evidence] worker log (tail):")
         print(sh(c, f"tail -n 20 {WORKER_LOG} 2>/dev/null || echo '(none)'"))
         return code

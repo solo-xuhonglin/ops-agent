@@ -44,6 +44,7 @@ E2E_DIR = "/e2e"
 READY_FILE = os.path.join(E2E_DIR, "ready")
 GRANT_FILE = os.path.join(E2E_DIR, "grants.log")
 RESULT_FILE = os.path.join(E2E_DIR, "results.log")
+HISTORY_FILE = os.path.join(E2E_DIR, "history.log")
 LOG_FILE = os.path.join(E2E_DIR, "worker.log")
 ADMIN_ADDR = os.getenv("ADMIN_GRPC_ADDR", "admin:9090")
 WORKER_ID = "e2e-fake-" + os.getenv("E2E_WORKER_SUFFIX", uuid.uuid4().hex[:8])
@@ -97,21 +98,48 @@ async def main() -> None:
             _log(f"task_dispatch task={td.task_id} type={td.task_type}")
             with open(RESULT_FILE, "a") as f:
                 f.write(f"{td.task_id}\t{td.task_type}\t{td.target_type}\t{td.target_id}\n")
+            # 多轮历史：写入 history.log 供测试断言 history 正确透传
+            if td.history:
+                with open(HISTORY_FILE, "a") as f:
+                    f.write(f"{td.task_id}\t{td.history}\n")
             # progress event
             await stream.write(agent_pb2.ClientMessage(
                 task_event=agent_pb2.TaskEvent(
                     task_id=td.task_id, seq=seq, event_type="progress",
                     content="e2e worker analyzing")))
+            # 流式事件（思考过程 + 工具调用 + 增量回显），验证 SSE 事件序
+            seq += 1
+            await stream.write(agent_pb2.ClientMessage(
+                task_event=agent_pb2.TaskEvent(
+                    task_id=td.task_id, seq=seq, event_type="thinking",
+                    content="e2e reasoning step")))
+            seq += 1
+            await stream.write(agent_pb2.ClientMessage(
+                task_event=agent_pb2.TaskEvent(
+                    task_id=td.task_id, seq=seq, event_type="tool_call",
+                    content='{"name":"serving_list","args":{}}')))
+            seq += 1
+            await stream.write(agent_pb2.ClientMessage(
+                task_event=agent_pb2.TaskEvent(
+                    task_id=td.task_id, seq=seq, event_type="tool_result",
+                    content='{"name":"serving_list","summary":"2 endpoints"}')))
+            seq += 1
+            await stream.write(agent_pb2.ClientMessage(
+                task_event=agent_pb2.TaskEvent(
+                    task_id=td.task_id, seq=seq, event_type="delta",
+                    content="e2e partial answer")))
             # result (with a suggestion when the query asks for one)
             if SUGGEST_MARKER in (td.query or ""):
                 await stream.write(agent_pb2.ClientMessage(
                     task_result=agent_pb2.TaskResult(
                         task_id=td.task_id, ok=True, conclusion="e2e ok with suggestion",
+                        reasoning="e2e reasoning full",
                         suggestions=[_suggestion()])))
             else:
                 await stream.write(agent_pb2.ClientMessage(
                     task_result=agent_pb2.TaskResult(
-                        task_id=td.task_id, ok=True, conclusion="e2e ok")))
+                        task_id=td.task_id, ok=True, conclusion="e2e ok",
+                        reasoning="e2e reasoning full")))
             _log(f"task done task={td.task_id}")
         elif kind == "authorization_grant":
             g = msg.authorization_grant

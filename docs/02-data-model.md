@@ -124,26 +124,30 @@ conversations ──< agent_memories (session_id)
 | deployed_by | BIGINT | FK→users | |
 | created_at / stopped_at | TIMESTAMPTZ | | |
 
-## 4. 对话与记忆（已搁置）
+## 4. 对话与记忆（2026-08-09 对话已实现，记忆仍搁置）
 
-> **设计变更（2026-08-08）**：agent 定位改为内部运维助手，端用户对话/记忆表未建，以下为原规划，保留备查。
+> **实现说明**：多轮对话表已落地（conversations / conversation_messages），旧规划的 messages 表名改为 conversation_messages（避免与前端 messages 语义混淆）；agent_memories（pgvector）仍搁置。
 
-### conversations（未建）
+### conversations（已建 2026-08-09）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
-| user_id | BIGINT | FK→users | |
-| title | VARCHAR(255) | | |
+| conversation_id | VARCHAR(64) | UNIQUE NOT NULL | 对外标识（UUID） |
+| user_id | BIGINT | FK→users | 归属用户（NULL=系统内部） |
+| title | VARCHAR(200) | | 默认"新对话"，首条消息前 20 字 |
 | created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
 
-### messages（未建）
+### conversation_messages（已建 2026-08-09）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
-| conversation_id | BIGINT | FK→conversations | |
-| role | VARCHAR(16) | | user / assistant / system / tool |
-| content | TEXT | | |
-| tool_call | JSONB | | 工具调用记录（名/参/结果） |
+| message_id | VARCHAR(64) | UNIQUE NOT NULL | 对外标识（UUID） |
+| conversation_id | VARCHAR(64) | FK→conversations | |
+| role | VARCHAR(16) | | user / assistant / system |
+| content | TEXT | | 消息正文（assistant 为 markdown 源文本） |
+| reasoning | TEXT | | assistant 推理链全文（可折叠展示） |
+| status | VARCHAR(16) | | streaming / completed / failed |
+| task_id | VARCHAR(64) | | 该轮内部任务（FK→agent_tasks.task_id） |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
 
 ### agent_memories（未建，pgvector）
