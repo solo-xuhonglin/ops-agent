@@ -131,24 +131,24 @@
             </div>
           </div>
 
-          <div v-if="!store.messages.length && !store.streaming" class="agent-welcome pa-2">
-            <div class="agent-welcome__title">你好，我是 Agent 助手</div>
-
-            <div class="agent-welcome__block">
-              <div class="agent-welcome__block-title">我能做什么</div>
-              <div class="text-body-small text-medium-emphasis">
-                诊断排查训练任务、模型服务、数据集与模型；自动采集天气数据；发起训练与部署服务。
-              </div>
+          <div v-if="!store.messages.length && !store.streaming" class="agent-welcome">
+            <div class="agent-welcome__head">
+              <v-avatar size="34" color="primary" variant="tonal">
+                <span class="text-body-small font-weight-bold">A</span>
+              </v-avatar>
+              <span class="agent-welcome__title">Agent 助手</span>
             </div>
 
-            <div class="agent-welcome__block">
-              <div class="agent-welcome__block-title">开始使用</div>
-              <div class="agent-welcome__chips">
-                <v-btn v-for="q in quickPrompts" :key="q" variant="tonal" color="primary" size="small"
-                       class="ma-1" :loading="sending" @click="sendQuick(q)">
-                  {{ q }}
-                </v-btn>
-              </div>
+            <div class="agent-welcome__desc">
+              可以诊断训练 / 服务 / 数据集与模型，采集天气，发起训练与部署。
+            </div>
+
+            <div class="agent-welcome__list">
+              <v-btn v-for="q in quickPrompts" :key="q" variant="outlined" size="small"
+                     class="agent-welcome__prompt" :loading="sending" @click="sendQuick(q)">
+                <span class="agent-welcome__prompt-text">{{ q }}</span>
+                <v-icon size="15" icon="mdi-arrow-right" />
+              </v-btn>
             </div>
           </div>
 

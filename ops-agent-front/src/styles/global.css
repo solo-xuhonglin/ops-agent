@@ -99,30 +99,37 @@ h1, h2, h3, h4, h5, h6, p {
 .agent-welcome {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  padding: 4px 2px;
+}
+.agent-welcome__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .agent-welcome__title {
   font-size: 16px;
   font-weight: 600;
 }
-.agent-welcome__block {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
-  border-radius: 12px;
-  padding: 12px;
+.agent-welcome__desc {
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgba(0, 0, 0, 0.6);
 }
-.agent-welcome__block-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgb(var(--v-theme-primary));
-  margin-bottom: 6px;
-}
-.agent-welcome__chips {
+.agent-welcome__list {
   display: flex;
-  flex-wrap: wrap;
-  margin: -4px;
+  flex-direction: column;
+  gap: 8px;
 }
-.agent-welcome__chips .v-btn {
-  margin: 4px;
+.agent-welcome__prompt {
+  justify-content: space-between;
+  width: 100%;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.agent-welcome__prompt-text {
+  flex: 1 1 auto;
+  text-align: left;
 }
 .history-item {
   padding: 10px 12px;
