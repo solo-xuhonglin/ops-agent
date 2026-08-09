@@ -65,7 +65,7 @@ public class ServingController {
     /** 部署：校验模型 READY 后由 ServingLauncher 起容器，返回 CREATING 状态的 endpoint */
     @PostMapping("/endpoints/deploy")
     @PreAuthorize("hasAuthority('serving:write')")
-    @com.opsagent.admin.service.agent.RequireGrant(action = "serving_deploy", targetType = "serving_endpoint", targetParam = "modelVersionId")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "serving_deploy", targetType = "serving_endpoint")
     public ApiResponse<?> deploy(@RequestBody Map<String, Object> body) {
         Object mvId = body.get("modelVersionId");
         if (mvId == null) {
@@ -77,7 +77,7 @@ public class ServingController {
     /** 下线：停删容器并置 STOPPED（记录保留，供审计/历史查看） */
     @PostMapping("/endpoints/{id}/undeploy")
     @PreAuthorize("hasAuthority('serving:write')")
-    @com.opsagent.admin.service.agent.RequireGrant(action = "serving_undeploy", targetType = "serving_endpoint", targetParam = "id")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "serving_undeploy", targetType = "serving_endpoint")
     public ApiResponse<?> undeploy(@PathVariable Long id) {
         return ApiResponse.ok(servingEndpointService.undeploy(id));
     }

@@ -50,6 +50,7 @@ public class AgentSuggestionService {
             throw new IllegalArgumentException("agent 离线，无法下发授权，建议保持待确认");
         }
 
+        // 授权 = 人工已确认该写操作：grant 只做一次性凭证校验（不比对 action/targetId）
         String grantKey = grantService.issue(suggestion.getActionType(), suggestion.getTargetType(),
                 suggestion.getTargetId(), suggestion.getSuggestionId());
         suggestion.setStatus("APPROVED");

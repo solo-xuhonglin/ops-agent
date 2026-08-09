@@ -39,7 +39,7 @@ public class TrainingController {
 
     @PostMapping
     @PreAuthorize("hasAuthority('training:write')")
-    @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job")
     public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req) {
         // 会话关联由 ConversationLinkAspect 切面自动记录（conversation_links），业务代码不感知
         return ApiResponse.ok(trainingJobService.trigger(req));
@@ -55,7 +55,7 @@ public class TrainingController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('training:write')")
-    @com.opsagent.admin.service.agent.RequireGrant(action = "training_delete", targetType = "training_job", targetParam = "id")
+    @com.opsagent.admin.service.agent.RequireGrant(action = "training_delete", targetType = "training_job")
     public ApiResponse<?> delete(@PathVariable Long id) {
         trainingJobService.delete(id);
         return ApiResponse.ok();

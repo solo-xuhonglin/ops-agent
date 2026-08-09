@@ -12,7 +12,7 @@ import java.util.UUID;
 /**
  * 处置授权 grantKey 服务（Redis 权威）：
  * - issue：人工确认时签发，TTL 过期自动作废；
- * - consumeAndMatch：agent 执行写操作时原子消费（GETDEL），并校验 action/target 匹配（一次性防重放）。
+ * - consume：agent 执行写操作时原子消费（GETDEL，一次性防重放），有效即放行。
  */
 @Service
 @Slf4j
@@ -51,10 +51,12 @@ public class GrantService {
     }
 
     /**
-     * 原子消费并校验（action + targetId 匹配，targetType 由 action 隐含不作硬比对）。
-     * 返回匹配的 suggestionId（UUID）；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。
+     * 原子消费授权（一次性，防重放）：grantKey 存在（未过期/未消费）即放行，
+     * 不比对 action/targetId —— 授权语义 = 人工已确认该写操作，agent 执行时凭证有效即可
+     * （scoped taskToken 已绑定任务，grantKey 随 TaskDispatch 下发，两者共同约束调用面）。
+     * 返回 suggestionId（业务标识，供审计）。
      */
-    public Optional<String> consumeAndMatch(String grantKey, String actionType, Long targetId) {
+    public Optional<String> consume(String grantKey) {
         if (grantKey == null || grantKey.isBlank()) {
             return Optional.empty();
         }
@@ -64,13 +66,8 @@ public class GrantService {
             return Optional.empty();
         }
         GrantMeta meta = GrantMeta.decode(raw);
-        if (meta.actionType().equals(actionType) && meta.targetId().equals(targetId)) {
-            log.info("grant consumed: key={} suggestionId={}", grantKey, meta.suggestionId());
-            return Optional.of(meta.suggestionId());
-        }
-        log.warn("grant mismatch: expected action={} targetId={} got action={} targetId={}",
-                actionType, targetId, meta.actionType(), meta.targetId());
-        return Optional.empty();
+        log.info("grant consumed: key={} suggestionId={}", grantKey, meta.suggestionId());
+        return Optional.of(meta.suggestionId());
     }
 
     /** value 编码：suggestionId|actionType|targetType|targetId */
