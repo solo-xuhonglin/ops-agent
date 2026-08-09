@@ -27,6 +27,7 @@ if _version_not_supported:
 
 class AgentServiceStub(object):
     """admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
+    职责边界：admin 只做通信与校验（授权 key / 会话归属 / token），流程控制完全由 agent 负责
     """
 
     def __init__(self, channel):
@@ -44,6 +45,7 @@ class AgentServiceStub(object):
 
 class AgentServiceServicer(object):
     """admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
+    职责边界：admin 只做通信与校验（授权 key / 会话归属 / token），流程控制完全由 agent 负责
     """
 
     def Connect(self, request_iterator, context):
@@ -70,6 +72,7 @@ def add_AgentServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class AgentService(object):
     """admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
+    职责边界：admin 只做通信与校验（授权 key / 会话归属 / token），流程控制完全由 agent 负责
     """
 
     @staticmethod

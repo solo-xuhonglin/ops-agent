@@ -26,6 +26,8 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
     private final ToolSchemaService toolSchemaService;
     private final ConversationStreamManager streamManager;
     private final AgentConversationService conversationService;
+    private final AgentSuggestionService suggestionService;
+    private final TaskPlanService taskPlanService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @Override
@@ -41,6 +43,8 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                         case TASK_EVENT -> handleEvent(message.getTaskEvent());
                         case TASK_RESULT -> handleResult(message.getTaskResult());
                         case AGENT_UPDATE -> handleAgentUpdate(message.getAgentUpdate());
+                        case ASYNC_SUGGESTION -> handleAsyncSuggestion(message.getAsyncSuggestion());
+                        case TASK_PLAN -> handleTaskPlan(message.getTaskPlan());
                         case PONG -> touch();
                         default -> log.warn("unexpected client message: {}", message.getMsgCase());
                     }
@@ -98,6 +102,18 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 touch();
                 String workerId = workerIdRef.get();
                 registry.get(workerId).ifPresent(entry -> entry.setAgents(update.getAgentsList()));
+            }
+
+            /** agent 侧 Plan 推进时异步上报的写操作建议 → 落 agent_suggestions(PENDING)，用户审批后走 execute_suggestion。 */
+            private void handleAsyncSuggestion(AsyncSuggestion suggestion) {
+                touch();
+                suggestionService.persistAsync(suggestion);
+            }
+
+            /** agent 上报的任务计划（Plan）建/更新 → 持久化（admin 仅落库，不做流程）。 */
+            private void handleTaskPlan(com.opsagent.admin.agent.proto.TaskPlan plan) {
+                touch();
+                taskPlanService.upsert(plan);
             }
 
             private void touch() {

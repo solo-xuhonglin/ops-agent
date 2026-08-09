@@ -7,6 +7,7 @@ import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.CurrentUser;
 import com.opsagent.admin.service.agent.AgentTaskService;
+import com.opsagent.admin.service.agent.TaskPlanService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -26,6 +27,7 @@ import java.util.Map;
 public class AgentTaskController {
 
     private final AgentTaskService agentTaskService;
+    private final TaskPlanService taskPlanService;
     private final UserRepository userRepository;
     private final CurrentUser currentUser;
 
@@ -45,13 +47,13 @@ public class AgentTaskController {
                                @RequestParam(required = false) String status,
                                @RequestHeader(value = "X-Agent-Task", required = false) String agentTaskId) {
         if (agentTaskId != null && !agentTaskId.isBlank()) {
-            // agent 追踪：X-Agent-Task 反查会话，只返回该会话内自己发起的任务（隔离其他用户/会话）
+            // agent 追踪：X-Agent-Task 反查会话，返回该会话的任务计划（Plan，含步骤与状态）
             String conversationId = agentTaskService.get(agentTaskId)
                     .map(AgentTask::getConversationId).orElse(null);
             if (conversationId != null) {
-                return ApiResponse.ok(agentTaskService.listByConversation(conversationId, status, page, size));
+                return ApiResponse.ok(taskPlanService.findByConversationId(conversationId).orElse(null));
             }
-            return ApiResponse.ok(Page.empty());
+            return ApiResponse.ok(null);
         }
         return ApiResponse.ok(agentTaskService.list(page, size));
     }

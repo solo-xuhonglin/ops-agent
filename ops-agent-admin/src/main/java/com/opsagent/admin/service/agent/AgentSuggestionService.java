@@ -70,17 +70,41 @@ public class AgentSuggestionService {
                         .setTtlSeconds((int) grantService.ttlSeconds()))
                 .build());
 
-        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query（含 target）调写工具（自动带 key），
-        // 结果回传更新状态；带 conversationId 让执行结果写回对话（审批后用户能在会话流里看到 agent 响应）
+        // 派发"执行建议"任务：grantKey 已在 agent 侧 GrantStore，LLM 按 query（含 target）调写工具（自动带 key）；
+        // 带 conversationId（执行结果写回对话）+ suggestionId（长 TTL token + agent 判断已授权）
         String query = "{\"suggestionId\":%d,\"action\":\"%s\",\"targetType\":\"%s\",\"targetId\":%d,\"params\":%s}"
                 .formatted(suggestion.getId(), suggestion.getActionType(),
                         suggestion.getTargetType(), suggestion.getTargetId(),
                         suggestion.getParams() == null ? "{}" : suggestion.getParams());
         taskService.dispatch("execute_suggestion", suggestion.getTargetType(),
-                suggestion.getTargetId(), query, confirmedBy, null, suggestion.getConversationId());
+                suggestion.getTargetId(), query, confirmedBy, null,
+                suggestion.getConversationId(), suggestion.getId());
 
         log.info("suggestion approved: id={} grantKey={} worker={}, execute task dispatched",
                 id, grantKey, worker.getWorkerId());
+        return suggestion;
+    }
+
+    /** agent 侧 Plan 推进时异步上报的建议（gRPC AsyncSuggestion）→ 落 PENDING，用户审批后走 execute_suggestion。 */
+    @Transactional
+    public AgentSuggestion persistAsync(com.opsagent.admin.agent.proto.AsyncSuggestion proto) {
+        if (proto.getConversationId() == null || proto.getConversationId().isBlank()) {
+            log.warn("async suggestion ignored: no conversation, action={}", proto.getActionType());
+            return null;
+        }
+        AgentSuggestion suggestion = new AgentSuggestion();
+        suggestion.setTaskId(proto.getTaskId());
+        suggestion.setConversationId(proto.getConversationId());
+        suggestion.setActionType(proto.getActionType());
+        suggestion.setTargetType(proto.getTargetType());
+        suggestion.setTargetId(proto.getTargetId());
+        suggestion.setParams(proto.getParams());
+        suggestion.setReason(proto.getReason());
+        suggestion.setPriority(proto.getPriority().isBlank() ? "NORMAL" : proto.getPriority());
+        suggestionRepository.save(suggestion);
+        log.info("async suggestion persisted: id={} action={} target={}/{} conversation={}",
+                suggestion.getId(), suggestion.getActionType(), suggestion.getTargetType(),
+                suggestion.getTargetId(), suggestion.getConversationId());
         return suggestion;
     }
 

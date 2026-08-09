@@ -22,7 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -54,6 +53,10 @@ public class AgentTaskService {
 
     /** 任务级 scoped token 有效期：5 分钟（诊断任务足够，过期即失效） */
     public static final long SCOPED_TOKEN_TTL_MS = 5 * 60_000;
+
+    /** 执行已审批写操作（suggestion_id>0）的任务 token 有效期：覆盖异步跟踪期（训练/部署可能数小时），可配置 */
+    @Value("${agent.execute-token-ttl-seconds:86400}")
+    private long executeTokenTtlSeconds;
 
     /**
      * fallback 权限：当 dispatchedBy 为空/用户已删除时签发，避免 agent 拿到 token 但用户表查不到。
@@ -140,23 +143,31 @@ public class AgentTaskService {
     /** 派发任务：入库 DISPATCHED → 找在线 worker → 事务提交后发 TaskDispatch（无 worker 直接 FAILED）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query, Long dispatchedBy) {
-        return dispatch(taskType, targetType, targetId, query, dispatchedBy, null, null);
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, null, null, 0L);
     }
 
     /** 派发任务（多轮对话：history 为 JSON 数组，随 TaskDispatch 下发供 agent 组装上文）。 */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
                               Long dispatchedBy, String history) {
-        return dispatch(taskType, targetType, targetId, query, dispatchedBy, history, null);
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, history, null, 0L);
+    }
+
+    /** 派发任务（含 conversationId：多轮对话/审批执行传入，agent 据此定位会话与 Plan）。 */
+    @Transactional
+    public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
+                              Long dispatchedBy, String history, String conversationId) {
+        return dispatch(taskType, targetType, targetId, query, dispatchedBy, history, conversationId, 0L);
     }
 
     /**
      * 派发任务（完整参数）：
-     * - conversationId 多轮对话/系统自动派发时传入，用于训练完成 → 自动 followup 反查 conversation。
+     * - conversationId 多轮对话/审批执行传入（TaskDispatch 下发，agent 定位会话与 Plan）
+     * - suggestionId  >0 表示执行已审批的写操作：任务 token 用长 TTL（覆盖异步跟踪期），agent 据此可调写工具
      */
     @Transactional
     public AgentTask dispatch(String taskType, String targetType, Long targetId, String query,
-                              Long dispatchedBy, String history, String conversationId) {
+                              Long dispatchedBy, String history, String conversationId, Long suggestionId) {
         String effectiveType = (taskType == null || taskType.isBlank()) ? "question" : taskType;
         AgentTask task = new AgentTask();
         task.setTaskId(UUID.randomUUID().toString());
@@ -167,6 +178,7 @@ public class AgentTaskService {
         task.setStatus(STATUS_DISPATCHED);
         task.setDispatchedBy(dispatchedBy);
         task.setConversationId(conversationId);
+        task.setSuggestionId(suggestionId == null ? 0L : suggestionId);
         taskRepository.save(task);
 
         WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);
@@ -178,15 +190,23 @@ public class AgentTaskService {
 
         task.setWorkerId(worker.getWorkerId());
         taskRepository.save(task);
+        // 执行已审批写操作（suggestionId>0）用长 TTL 覆盖异步跟踪期；普通任务保持 5min
+        long ttlMs = task.getSuggestionId() != null && task.getSuggestionId() > 0
+                ? executeTokenTtlSeconds * 1000 : SCOPED_TOKEN_TTL_MS;
         String taskToken = jwtUtil.generateScopedToken(task.getDispatchedBy(),
-                resolveFullPermissions(task.getDispatchedBy()), task.getTaskId(), SCOPED_TOKEN_TTL_MS);
+                resolveFullPermissions(task.getDispatchedBy()), task.getTaskId(), ttlMs);
         TaskDispatch.Builder dispatchBuilder = TaskDispatch.newBuilder()
                 .setTaskId(task.getTaskId())
-                .setTaskType(effectiveType)
-                .setTargetType(targetType == null ? "" : targetType)
-                .setTargetId(targetId == null ? 0 : targetId)
                 .setQuery(query == null ? "" : query)
-                .setTaskToken(taskToken);
+                .setTaskToken(taskToken)
+                .setTargetType(targetType == null ? "" : targetType)
+                .setTargetId(targetId == null ? 0 : targetId);
+        if (conversationId != null && !conversationId.isBlank()) {
+            dispatchBuilder.setConversationId(conversationId);
+        }
+        if (task.getSuggestionId() != null && task.getSuggestionId() > 0) {
+            dispatchBuilder.setSuggestionId(task.getSuggestionId());
+        }
         if (history != null && !history.isBlank()) {
             dispatchBuilder.setHistory(history);
         }
@@ -331,15 +351,6 @@ public class AgentTaskService {
 
     public Page<AgentTask> list(int page, int size) {
         return taskRepository.findAllByOrderByIdDesc(PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id")));
-    }
-
-    /** agent 追踪：某会话下已发起/执行中的任务列表（status 可选过滤），供 agent 在对话中自查进度。 */
-    public Page<AgentTask> listByConversation(String conversationId, String status, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
-        if (status != null && !status.isBlank()) {
-            return taskRepository.findByConversationIdAndStatusOrderByIdDesc(conversationId, status, pageable);
-        }
-        return taskRepository.findByConversationIdOrderByIdDesc(conversationId, pageable);
     }
 
     public Optional<AgentTask> get(String taskId) {

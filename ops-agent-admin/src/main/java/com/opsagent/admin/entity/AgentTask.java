@@ -50,13 +50,9 @@ public class AgentTask {
     @Column(name = "conversation_id", length = 64)
     private String conversationId;
 
-    /** 执行结果对应的业务对象类型（training_job / serving_endpoint / ...）：agent 追踪载体，响应记录到 task 供按 id 轮询 */
-    @Column(name = "result_object_type", length = 32)
-    private String resultObjectType;
-
-    /** 执行结果对应的业务对象 ID（如训练 job ID）：agent 用现有业务查询（training_get 等）按此 ID 轮询状态 */
-    @Column(name = "result_object_id")
-    private Long resultObjectId;
+    /** 执行已审批写操作的建议 ID（>0：本任务带 grantKey 调写工具；普通任务为 0） */
+    @Column(name = "suggestion_id")
+    private Long suggestionId = 0L;
 
     @Column(columnDefinition = "TEXT")
     private String conclusion;
