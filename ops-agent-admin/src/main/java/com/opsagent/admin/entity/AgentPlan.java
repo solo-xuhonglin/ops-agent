@@ -32,6 +32,10 @@ public class AgentPlan {
     @Column(length = 255)
     private String summary;
 
+    /** 步骤清单 JSON（worker 直写；模型掌舵每步状态）。 */
+    @Column(columnDefinition = "text")
+    private String steps;
+
     /** PLANNED / RUNNING / DONE / FAILED / CANCELLED */
     @Column(length = 16, nullable = false)
     private String status = "PLANNED";

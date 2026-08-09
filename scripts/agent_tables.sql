@@ -15,6 +15,7 @@ CREATE TABLE agent_plans (
   plan_id         VARCHAR(64)  NOT NULL UNIQUE,
   conversation_id VARCHAR(64)  NOT NULL,
   summary         VARCHAR(255),
+  steps           TEXT,                          -- JSON 数组：步骤清单备忘（模型掌舵；每步含 status/note）
   status          VARCHAR(16)  NOT NULL DEFAULT 'PLANNED', -- PLANNED/RUNNING/DONE/FAILED/CANCELLED
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
@@ -37,6 +38,7 @@ CREATE TABLE agent_suggestions (
   priority        VARCHAR(8)   DEFAULT 'NORMAL',
   status          VARCHAR(16)  NOT NULL DEFAULT 'PENDING',
                   -- PENDING/APPROVED/REJECTED/EXECUTING/EXECUTED/FAILED/EXPIRED/CANCELLED
+  retry_of        VARCHAR(64),                  -- 重试来源建议（决策轮 retry 时挂）
   grant_key       VARCHAR(128),
   confirmed_by    BIGINT,
   confirmed_at    TIMESTAMPTZ,

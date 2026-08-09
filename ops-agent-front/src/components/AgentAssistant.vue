@@ -114,15 +114,15 @@
               <v-btn size="x-small" variant="text" icon="mdi-refresh" density="compact"
                      @click="store.fetchPlans(store.currentConversation?.conversationId)" />
             </div>
-            <div v-for="(st, i) in store.activePlan.steps" :key="st.id" class="plan-step d-flex align-center">
-              <v-icon size="13" class="mr-1" :color="stepStatusColor(st.status)">
-                {{ stepStatusIcon(st.status) }}
+            <div v-for="(st, i) in planSteps" :key="st.step_no" class="plan-step d-flex align-center">
+              <v-icon size="13" class="mr-1" :color="stepStatusColor(st.displayStatus)">
+                {{ stepStatusIcon(st.displayStatus) }}
               </v-icon>
-              <span class="text-caption plan-step__text">{{ i + 1 }}. {{ actionText(st.actionType) }}</span>
-              <span class="text-caption text-medium-emphasis ml-1">{{ targetText(st) }}</span>
+              <span class="text-caption plan-step__text">{{ i + 1 }}. {{ actionText(st.action_type) }}</span>
+              <span class="text-caption text-medium-emphasis ml-1">{{ planTargetText(st) }}</span>
               <v-spacer />
-              <v-chip size="x-small" density="compact" :color="stepStatusColor(st.status)">
-                {{ stepStatusText(st.status) }}
+              <v-chip size="x-small" density="compact" :color="stepStatusColor(st.displayStatus)">
+                {{ stepStatusText(st.displayStatus) }}
               </v-chip>
             </div>
           </div>
@@ -269,6 +269,34 @@ const viewTitle = computed(() => {
   if (store.activeView === 'list') return '历史对话'
   if (store.activeView === 'suggestions') return '处置建议'
   return store.currentConversation?.title || 'Agent 助手'
+})
+
+// ===== plan 卡片：plan.steps 骨架 + suggestions 审批状态合并 =====
+const planSteps = computed(() => {
+  const p = store.activePlan
+  if (!p?.plan) return []
+  let skeleton = []
+  try { skeleton = JSON.parse(p.plan.steps || '[]') } catch { skeleton = [] }
+  if (!skeleton.length) {
+    // 兜底：无 steps 骨架时用 suggestions 渲染
+    skeleton = (p.steps || []).map((s, i) => ({
+      step_no: s.stepNo || i + 1,
+      action_type: s.actionType,
+      target_type: s.targetType,
+      target_id: s.targetId
+    }))
+  }
+  const sugs = p.steps || []
+  return skeleton.map((st) => {
+    const sug = sugs.find((s) => s.stepNo === st.step_no)
+    let displayStatus = 'WAITING'
+    if (sug && sug.status !== 'PENDING') displayStatus = sug.status
+    else if (st.status === 'done') displayStatus = 'EXECUTED'
+    else if (st.status === 'failed') displayStatus = 'FAILED'
+    else if (st.status === 'cancelled') displayStatus = 'CANCELLED'
+    else if (sug && sug.status === 'PENDING') displayStatus = 'PENDING'
+    return { ...st, displayStatus }
+  })
 })
 
 // ===== 抽屉宽度：左缘拖拽调整（320~760），持久化到 localStorage =====
@@ -441,6 +469,12 @@ function sugColor(s) { return SUG_STATUS[s]?.color || 'grey' }
 function priorityText(p) { return PRIORITIES[p]?.text || p }
 function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
 function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
+function planTargetText(st) {
+  const tt = st.target_type || st.targetType
+  const tid = st.target_id ?? st.targetId
+  if (tt == null || tt === '') return ''
+  return `${TARGETS[tt] || tt}:${tid ?? 0}`
+}
 
 // ===== plan 卡片状态映射 =====
 const PLAN_STATUS = {
@@ -454,11 +488,12 @@ const STEP_STATUS = {
   PENDING: { text: '待审批', color: 'warning', icon: 'mdi-clock-outline' },
   APPROVED: { text: '已授权', color: 'info', icon: 'mdi-key-outline' },
   EXECUTING: { text: '执行中', color: 'primary', icon: 'mdi-progress-clock' },
-  EXECUTED: { text: '已执行', color: 'success', icon: 'mdi-check-circle-outline' },
+  EXECUTED: { text: '已完成', color: 'success', icon: 'mdi-check-circle-outline' },
   FAILED: { text: '失败', color: 'error', icon: 'mdi-close-circle-outline' },
   REJECTED: { text: '已忽略', color: 'grey', icon: 'mdi-cancel' },
   EXPIRED: { text: '已过期', color: 'grey', icon: 'mdi-clock-alert-outline' },
-  CANCELLED: { text: '已取消', color: 'grey', icon: 'mdi-cancel' }
+  CANCELLED: { text: '已取消', color: 'grey', icon: 'mdi-cancel' },
+  WAITING: { text: '等待中', color: 'grey', icon: 'mdi-clock-outline' }
 }
 function planStatusText(s) { return PLAN_STATUS[s]?.text || s }
 function planStatusColor(s) { return PLAN_STATUS[s]?.color || 'grey' }

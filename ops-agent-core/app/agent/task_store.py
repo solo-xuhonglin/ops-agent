@@ -67,17 +67,19 @@ class TaskStore:
     # ==================== agent_plans ====================
 
     async def upsert_plan(self, plan: dict) -> None:
-        """conversation 级 plan upsert（agent 建立/主动修改）。plan: {plan_id, conversation_id, summary, status}"""
+        """conversation 级 plan upsert（agent 建立/主动修改）。
+        plan: {plan_id, conversation_id, summary, status, steps}，steps 为步骤清单（JSON 存储）。"""
         conv = plan.get("conversation_id") or ""
         if not conv:
             return
         pid = plan.get("plan_id") or _uid("plan")
         plan["plan_id"] = pid
+        steps = json.dumps(plan.get("steps") or [], ensure_ascii=False)
         await self.db.execute(
-            "INSERT INTO agent_plans (plan_id, conversation_id, summary, status, created_at, updated_at) "
-            "VALUES ($1,$2,$3,$4,now(),now()) "
-            "ON CONFLICT (plan_id) DO UPDATE SET summary=$3, status=$4, updated_at=now()",
-            pid, conv, plan.get("summary", ""), plan.get("status", "RUNNING"))
+            "INSERT INTO agent_plans (plan_id, conversation_id, summary, steps, status, created_at, updated_at) "
+            "VALUES ($1,$2,$3,$4,$5,now(),now()) "
+            "ON CONFLICT (plan_id) DO UPDATE SET summary=$3, steps=$4, status=$5, updated_at=now()",
+            pid, conv, plan.get("summary", ""), steps, plan.get("status", "RUNNING"))
         log.info("plan upserted: %s conv=%s status=%s", pid[:8], conv[:8], plan.get("status"))
 
     async def update_plan_status(self, plan_id: str, status: str) -> None:
@@ -85,8 +87,28 @@ class TaskStore:
             "UPDATE agent_plans SET status=$2, updated_at=now() WHERE plan_id=$1",
             plan_id, status)
 
+    async def update_plan_step(self, plan_id: str, step_no: int, status: str,
+                               note: str = "") -> None:
+        """plan_update：更新 steps 清单中某一步的状态（模型掌舵步骤状态）。"""
+        plan = await self.get_plan(plan_id)
+        if not plan:
+            return
+        steps = plan.get("steps") or []  # get_plan 已解析 JSON
+        for s in steps:
+            if s.get("step_no") == step_no:
+                s["status"] = status
+                if note:
+                    s["note"] = note
+                break
+        await self.db.execute(
+            "UPDATE agent_plans SET steps=$2, updated_at=now() WHERE plan_id=$1",
+            plan_id, json.dumps(steps, ensure_ascii=False))
+
     async def get_plan(self, plan_id: str) -> Optional[dict]:
-        return await self.db.fetchrow("SELECT * FROM agent_plans WHERE plan_id=$1", plan_id)
+        plan = await self.db.fetchrow("SELECT * FROM agent_plans WHERE plan_id=$1", plan_id)
+        if plan and plan.get("steps"):
+            plan["steps"] = json.loads(plan["steps"])
+        return plan
 
     async def list_active_plans(self) -> list[dict]:
         """恢复用：未完结的 plan（PLANNED/RUNNING）。"""
@@ -103,19 +125,19 @@ class TaskStore:
     # ==================== agent_suggestions ====================
 
     async def insert_suggestion(self, s: dict) -> str:
-        """写一条 PENDING 建议；返回 suggestion_id。"""
+        """写一条 PENDING 建议；返回 suggestion_id。支持 plan_id/step_no/retry_of 关联。"""
         sid = s.get("suggestion_id") or _uid("sug")
         await self.db.execute(
             "INSERT INTO agent_suggestions "
             "(suggestion_id, plan_id, step_no, source_task_id, conversation_id, "
             " action_type, target_type, target_id, params, reason, priority, "
-            " status, created_at, updated_at) "
+            " status, retry_of, created_at, updated_at) "
             "VALUES ($1,NULLIF($2,''),$3,$4,$5,$6,$7,$8,$9,$10,$11,"
-            "'PENDING',now(),now())",
+            "'PENDING',NULLIF($12,''),now(),now())",
             sid, s.get("plan_id", ""), s.get("step_no"), s.get("source_task_id", ""),
             s.get("conversation_id", ""), s.get("action_type", ""), s.get("target_type", ""),
             int(s.get("target_id", 0)), json.dumps(s.get("params", {}), ensure_ascii=False),
-            s.get("reason", ""), s.get("priority", "NORMAL"))
+            s.get("reason", ""), s.get("priority", "NORMAL"), s.get("retry_of", ""))
         return sid
 
     async def mark_suggestion_executing(self, suggestion_id: str) -> None:
@@ -137,14 +159,14 @@ class TaskStore:
             "SELECT * FROM agent_suggestions WHERE suggestion_id=$1", suggestion_id)
 
     async def pending_steps(self, plan_id: str) -> list[dict]:
-        """plan 的待审批步骤（PENDING，按 step_no 升序）。"""
+        """plan 的待审批步骤建议（PENDING，按 step_no 升序）。"""
         if not plan_id:
             return []
         return await self.db.fetch(
             "SELECT * FROM agent_suggestions WHERE plan_id=$1 AND status='PENDING' ORDER BY step_no",
             plan_id)
 
-    async def plan_steps(self, plan_id: str) -> list[dict]:
+    async def suggestions_of_plan(self, plan_id: str) -> list[dict]:
         if not plan_id:
             return []
         return await self.db.fetch(

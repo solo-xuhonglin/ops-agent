@@ -55,8 +55,8 @@ async def amain() -> None:
     await db.start()
     store = TaskStore(db, cfg.worker_id)
 
-    # 任务跟踪器：Plan 直写库 + 异步轮询 + 自主推进（流程控制在 agent 侧）
-    tracker = TaskTracker(store, http, client, registry)
+    # 任务跟踪器：Plan 直写库 + 异步轮询 + 决策轮（模型在观察完成后决定 plan 下一步）
+    tracker = TaskTracker(store, http, client, registry, llm=llm)
     await tracker.start()
 
     client.on("register_ack", lambda m: _load_tools(registry, m))

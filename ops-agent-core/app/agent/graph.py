@@ -234,7 +234,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
             lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action 审批后由系统执行")
     lines += [
         "",
-        "- plan_create: 记录多步骤任务的执行计划（步骤清单与顺序，供后续按序处理）",
+        "- plan_create: 记录多步骤任务的执行计划（步骤清单与顺序）。只建立规划记录，不产生任何审批建议",
         '  参数(JSON Schema): {"type":"object","properties":{"summary":{"type":"string",'
         '"description":"计划摘要，如 训练并部署 LSTM 模型"},"steps":{"type":"array","items":{"type":"object",'
         '"properties":{"action_type":{"type":"string","description":"写工具名，如 training_create/serving_deploy"},'
@@ -243,12 +243,22 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
         '"required":["action_type"]}}},"required":["summary","steps"]}',
         "",
-        "- suggest_action: 提出一条写操作处置建议（系统生成待审批建议，审批通过后自动执行）。仅当需要写操作时调用",
+        "- plan_update: 更新计划状态：可更新计划整体状态（DONE/FAILED/CANCELLED），"
+        "或计划中某一步骤的状态（done/failed/cancelled，附说明）",
+        '  参数(JSON Schema): {"type":"object","properties":{"plan_id":{"type":"string","description":"plan_create 返回的 plan_id"},'
+        '"step_no":{"type":"integer","description":"要更新的步骤号（可选）"},"step_status":{"type":"string","enum":["done","failed","cancelled"],'
+        '"description":"步骤状态（与 step_no 一起用）"},"status":{"type":"string","enum":["DONE","FAILED","CANCELLED"],'
+        '"description":"plan 整体状态（不传 step_no 时用）"},"note":{"type":"string","description":"变更说明（展示给用户）"}},'
+        '"required":["plan_id"]}',
+        "",
+        "- suggest_action: 提出一条写操作处置建议（系统生成待审批建议，审批通过后自动执行）",
         '  参数(JSON Schema): {"type":"object","properties":{"action_type":{"type":"string",'
         '"description":"写工具名，如 training_create/serving_deploy/training_delete/serving_undeploy/dataset_collect"},'
         '"target_type":{"type":"string"},"target_id":{"type":"integer"},'
         '"params":{"type":"object","description":"业务参数（可选）"},"reason":{"type":"string"},'
-        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
+        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]},'
+        '"plan_id":{"type":"string","description":"所属计划（可选）"},"step_no":{"type":"integer","description":"计划内步骤号（可选）"},'
+        '"retry_of":{"type":"string","description":"重试某条已失败建议的 suggestion_id（可选）"}},'
         '"required":["action_type"]}',
         "",
         "【输出契约】",
@@ -258,7 +268,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         '   {"tool": "training_get", "args": {"jobId": 32}}',
         "   ```",
         "2. 工具名必须严格取自上面清单，args 必须符合对应参数 schema；会话/任务等系统参数无需填写。",
-        "3. 多步规划（复杂任务先规划，调用 plan_create）示例：",
+        "3. 多步规划（调用 plan_create）示例：",
         "   ```json",
         '   {"tool": "plan_create", "args": {"summary": "训练并部署 LSTM 模型", "steps": [',
         '     {"action_type": "training_create", "target_type": "dataset", "target_id": 96, "reason": "训练新模型", "priority": "HIGH"},',
@@ -274,8 +284,8 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dic
     """suggest_action 内置工具：落一条 PENDING 写操作建议（系统参数注入）。
 
     LLM 只填业务参数（action_type/target/params/reason/priority）；
-    conversation_id/source_task_id 由本层注入。
-    """
+    conversation_id/source_task_id 由本层注入；可挂 plan_id + step_no（plan 的步骤建议）
+    与 retry_of（决策轮重试）。"""
     if store is None or not store.enabled:
         log.warning("suggest_action unavailable: agent DB disabled")
         return {"status": 500, "body": "suggest_action unavailable (agent DB disabled)"}
@@ -286,6 +296,9 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dic
         sid = await store.insert_suggestion({
             "source_task_id": ctx.task_id,
             "conversation_id": ctx.conversation_id,
+            "plan_id": str(args.get("plan_id", "")),
+            "step_no": int(args.get("step_no", 0) or 0),
+            "retry_of": str(args.get("retry_of", "")),
             "action_type": action,
             "target_type": str(args.get("target_type", "")),
             "target_id": int(args.get("target_id", 0) or 0),
@@ -302,47 +315,88 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dic
 
 
 async def handle_plan_create(store: Any, ctx: TaskContext, args: dict) -> dict:
-    """plan_create 内置工具：建 plan + 按步骤落 PENDING suggestions（系统参数注入）。
+    """plan_create 内置工具：只建规划备忘录（summary + steps 清单），零建议副作用。
 
-    LLM 只填业务参数（summary/steps 的 action_type/target/params/...）；
-    conversation_id/source_task_id 由本层注入，避免模型填写系统字段。
+    步骤审批由模型后续逐步用 suggest_action(plan_id, step_no) 提出；
+    conversation_id 由本层注入，steps 补 step_no/status 后存 plan.steps（模型掌舵状态）。
     """
     if store is None or not store.enabled:
         log.warning("plan_create unavailable: agent DB disabled")
         return {"status": 500, "body": "plan_create unavailable (agent DB disabled)"}
-    steps = args.get("steps") or []
+    raw_steps = args.get("steps") or []
+    steps: list[dict] = []
+    for idx, s in enumerate(raw_steps):
+        if not isinstance(s, dict) or not s.get("action_type"):
+            continue
+        step = dict(s)
+        step["step_no"] = idx + 1
+        step.setdefault("status", "pending")  # pending/executing/done/failed/cancelled
+        step.setdefault("note", "")
+        steps.append(step)
     plan = {"conversation_id": ctx.conversation_id,
-            "summary": str(args.get("summary", "")), "status": "RUNNING"}
+            "summary": str(args.get("summary", "")),
+            "status": "RUNNING", "steps": steps}
     try:
         await store.upsert_plan(plan)
     except Exception as e:  # noqa: BLE001
         log.warning("plan_create upsert failed: %s", e)
         return {"status": 500, "body": f"plan create failed: {e}"}
     plan_id = plan.get("plan_id") or ""
-    ids: list[str] = []
-    for idx, s in enumerate(steps):
-        if not isinstance(s, dict) or not s.get("action_type"):
-            continue
-        try:
-            sid = await store.insert_suggestion({
-                "plan_id": plan_id,
-                "step_no": idx + 1,
-                "source_task_id": ctx.task_id,
-                "conversation_id": ctx.conversation_id,
-                "action_type": str(s.get("action_type", "")),
-                "target_type": str(s.get("target_type", "")),
-                "target_id": int(s.get("target_id", 0) or 0),
-                "params": s.get("params") or {},
-                "reason": str(s.get("reason", "")),
-                "priority": str(s.get("priority", "NORMAL")),
-            })
-            ids.append(sid)
-        except Exception as e:  # noqa: BLE001
-            log.warning("plan step suggestion failed: %s", e)
-    body = json.dumps({"plan_id": plan_id, "suggestion_ids": ids, "steps": len(ids)},
-                       ensure_ascii=False)
-    log.info("plan created: %s steps=%d", plan_id[:8], len(ids))
+    body = json.dumps({
+        "plan_id": plan_id,
+        "steps": len(steps),
+        "instruction": f"规划已建立（{len(steps)} 个步骤）。步骤按顺序处理：用 suggest_action(plan_id={plan_id}, step_no=N) 逐步提出审批建议，上一步完成后再提下一步。",
+    }, ensure_ascii=False)
+    log.info("plan created: %s steps=%d", plan_id[:8], len(steps))
     return {"status": 200, "body": body}
+
+
+async def handle_plan_update(store: Any, ctx: TaskContext, args: dict,
+                             notify: Any = None) -> dict:
+    """plan_update 内置工具：模型掌舵 plan 生命周期。
+
+    - plan 级：args.status ∈ DONE/FAILED/CANCELLED（结束整条计划）
+    - 步骤级：args.step_no + args.status ∈ done/failed/cancelled（更新 plan.steps 中某步）
+    - args.note 可选说明（前端展示）
+    变更经 plan_update 事件通知前端（notify 为 tracker 的更新+通知回调）。
+    """
+    if store is None or not store.enabled:
+        log.warning("plan_update unavailable: agent DB disabled")
+        return {"status": 500, "body": "plan_update unavailable (agent DB disabled)"}
+    plan_id = str(args.get("plan_id", ""))
+    if not plan_id:
+        return {"status": 400, "body": "plan_id is required"}
+    note = str(args.get("note", ""))
+    plan_status = str(args.get("status", "")).upper()
+    step_no = int(args.get("step_no", 0) or 0)
+    step_status = str(args.get("step_status", "")).lower()
+
+    if step_no > 0:
+        if step_status not in ("done", "failed", "cancelled"):
+            return {"status": 400, "body": f"invalid step_status: {step_status}"}
+        try:
+            await store.update_plan_step(plan_id, step_no, step_status, note)
+        except Exception as e:  # noqa: BLE001
+            log.warning("plan step update failed: %s", e)
+            return {"status": 500, "body": f"plan step update failed: {e}"}
+        message = f"步骤 {step_no} 已标记为 {step_status}" + (f"：{note}" if note else "")
+        if notify is not None:
+            await notify(plan_id, "RUNNING", message)
+        return {"status": 200, "body": json.dumps(
+            {"plan_id": plan_id, "step_no": step_no, "step_status": step_status},
+            ensure_ascii=False)}
+
+    if plan_status not in ("DONE", "FAILED", "CANCELLED"):
+        return {"status": 400, "body": f"invalid plan status: {plan_status}"}
+    try:
+        await store.update_plan_status(plan_id, plan_status)
+    except Exception as e:  # noqa: BLE001
+        log.warning("plan status update failed: %s", e)
+        return {"status": 500, "body": f"plan status update failed: {e}"}
+    if notify is not None:
+        await notify(plan_id, plan_status, note or f"计划已{plan_status}")
+    return {"status": 200, "body": json.dumps(
+        {"plan_id": plan_id, "status": plan_status}, ensure_ascii=False)}
 
 
 def build_graph(llm: Any, http: AdminHttpClient,
@@ -350,6 +404,9 @@ def build_graph(llm: Any, http: AdminHttpClient,
                 tracker: Any = None, store: Any = None) -> Any:
     """构建并编译决策图。llm/http/registry/client/tracker/store 为进程级共享实例（闭包），ctx 走 state。
     tracker/store 不进 state（msgpack 不可序列化），写工具成功回调用 tracker 注册异步跟踪。"""
+
+    # plan_update 的变更通知：tracker.notify_plan 仅做 plan_update 上报（状态已由 handler 落库）
+    tracker_notify = getattr(tracker, "notify_plan", None)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         """决策节点：工具清单注入 prompt 后流式调用 LLM。
@@ -421,11 +478,15 @@ def build_graph(llm: Any, http: AdminHttpClient,
             await client.send_event(ctx.task_id, "tool_call",
                                     json.dumps({"name": name, "args": args}, ensure_ascii=False))
             tool = registry.get(name)
-            if name in ("plan_create", "suggest_action"):
-                # 内置工具：worker 本地执行（建 plan / 落 PENDING 建议）
+            if name in ("plan_create", "plan_update", "suggest_action"):
+                # 内置工具：worker 本地执行（建 plan / 更新 plan / 落 PENDING 建议）
                 if store is not None and store.enabled:
-                    result = (await handle_plan_create(store, ctx, args)) if name == "plan_create" \
-                        else (await handle_suggest_action(store, ctx, args))
+                    if name == "plan_create":
+                        result = await handle_plan_create(store, ctx, args)
+                    elif name == "plan_update":
+                        result = await handle_plan_update(store, ctx, args, notify=tracker_notify)
+                    else:
+                        result = await handle_suggest_action(store, ctx, args)
                 else:
                     result = {"status": 500, "body": f"{name} unavailable (agent DB disabled)"}
             elif tool is None:

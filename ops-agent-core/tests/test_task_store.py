@@ -1,6 +1,8 @@
 """TaskStore（agent 自治写库 repo）测试：SQL 形状与参数（mock Database）。"""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.agent.task_store import TaskStore
@@ -85,10 +87,12 @@ async def test_upsert_plan_insert_and_conflict_update():
     db = FakeDb()
     store = make_store(db)
     await store.upsert_plan({"plan_id": "p1", "conversation_id": "c1",
-                             "summary": "s", "status": "RUNNING"})
+                             "summary": "s", "status": "RUNNING",
+                             "steps": [{"step_no": 1, "action_type": "training_create"}]})
     sql, args = db.executed[-1]
     assert "ON CONFLICT (plan_id)" in sql
-    assert args[0] == "p1" and args[3] == "RUNNING"
+    assert args[0] == "p1" and args[4] == "RUNNING"
+    assert json.loads(args[3])[0]["action_type"] == "training_create"  # steps JSON 存储
 
 
 async def test_insert_suggestion_pending():

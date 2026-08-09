@@ -51,14 +51,15 @@ class Monitor:
 
 
 class TaskTracker:
-    """Plan 直写库 + 后台轮询 + 自主推进（agent 进程内单例，main 装配）。"""
+    """Plan 直写库 + 后台轮询 + 决策轮（agent 进程内单例，main 装配）。"""
 
     def __init__(self, store: TaskStore, http: AdminHttpClient, client: GrpcClient,
-                 registry: ToolRegistry) -> None:
+                 registry: ToolRegistry, llm: Any = None) -> None:
         self.store = store
         self.http = http
         self.client = client
         self.registry = registry
+        self.llm = llm  # 决策轮用（异步观察完成后由 LLM 决定 plan 下一步）
         self._monitors: dict[str, Monitor] = {}
         self._task: Optional[asyncio.Task] = None
 
@@ -80,6 +81,10 @@ class TaskTracker:
         except Exception as e:  # noqa: BLE001
             log.warning("plan status update failed: %s", e)
             return
+        await self._notify_plan(plan_id, status, message)
+
+    async def notify_plan(self, plan_id: str, status: str, message: str = "") -> None:
+        """仅通知前端 plan 变更（状态已由调用方落库，如 plan_update 工具）。"""
         await self._notify_plan(plan_id, status, message)
 
     async def _notify_plan(self, plan_id: str, status: str, message: str = "") -> None:
@@ -167,12 +172,13 @@ class TaskTracker:
             monitor.succeeded = True
             log.info("monitor target reached: %s/%s status=%s",
                      monitor.object_type, monitor.object_id, status)
-            await self._on_done(monitor)
+            await self._on_done(monitor, observation=str(result.get("body", ""))[:2000])
         elif status in ("FAILED", "CANCELLED", "STOPPED"):
             monitor.finished = True
             log.info("monitor terminal failure: %s/%s status=%s",
                      monitor.object_type, monitor.object_id, status)
-            await self._on_failed(monitor, status)
+            await self._on_failed(monitor, status,
+                                  observation=str(result.get("body", ""))[:2000])
         else:
             # 指数退避
             monitor.check_interval = min(monitor.check_interval * 2, MAX_INTERVAL_S)
@@ -193,8 +199,8 @@ class TaskTracker:
             return node[0].get("status")
         return None
 
-    async def _on_done(self, monitor: Monitor) -> None:
-        """目标达成：当前 suggestion 置 EXECUTED → 推进 plan 下一步 / 完结。"""
+    async def _on_done(self, monitor: Monitor, observation: str = "") -> None:
+        """目标达成：suggestion 置 EXECUTED → 触发决策轮（模型标记步骤 done + 决定下一步）。"""
         if monitor.suggestion_id:
             try:
                 await self.store.update_suggestion_result(
@@ -202,21 +208,26 @@ class TaskTracker:
                     f"object {monitor.object_type}/{monitor.object_id} reached {monitor.target_status}")
             except Exception as e:  # noqa: BLE001
                 log.warning("suggestion result update failed: %s", e)
-        if not monitor.plan_id:
-            return
-        try:
-            pending = await self.store.pending_steps(monitor.plan_id)
-            if pending:
-                await self.update_plan_status(
-                    monitor.plan_id, "RUNNING",
-                    f"步骤已完成，下一步待审批：{pending[0].get('action_type')}")
-            else:
-                await self.update_plan_status(monitor.plan_id, "DONE", "计划全部完成")
-        except Exception as e:  # noqa: BLE001
-            log.warning("plan advance failed: %s", e)
+        if self.llm is not None and monitor.plan_id:
+            from app.agent.decision import run_decision_round
+            await run_decision_round(self.llm, self.http, self.registry, self.client,
+                                     self.store, self, monitor, "SUCCEEDED", observation)
+        elif monitor.plan_id:
+            # 无 LLM（单测/降级）：机械推进——下一步若有 PENDING 建议则通知，无则 DONE
+            try:
+                pending = await self.store.pending_steps(monitor.plan_id)
+                if pending:
+                    await self.update_plan_status(
+                        monitor.plan_id, "RUNNING",
+                        f"步骤已完成，下一步待审批：{pending[0].get('action_type')}")
+                else:
+                    await self.update_plan_status(monitor.plan_id, "DONE", "计划全部完成")
+            except Exception as e:  # noqa: BLE001
+                log.warning("plan advance failed: %s", e)
 
-    async def _on_failed(self, monitor: Monitor, status: str) -> None:
-        """目标失败：suggestion 置 FAILED + plan 标记失败（进一步决策由 P5 提示词/LLM 扩展）。"""
+    async def _on_failed(self, monitor: Monitor, status: str,
+                         observation: str = "") -> None:
+        """目标失败：suggestion 置 FAILED → 触发决策轮（模型决定重试/调整/废弃/汇报）。"""
         if monitor.suggestion_id:
             try:
                 await self.store.update_suggestion_result(
@@ -224,6 +235,10 @@ class TaskTracker:
                     f"object {monitor.object_type}/{monitor.object_id} ended {status}")
             except Exception as e:  # noqa: BLE001
                 log.warning("suggestion failed update: %s", e)
-        if monitor.plan_id:
+        if self.llm is not None and monitor.plan_id:
+            from app.agent.decision import run_decision_round
+            await run_decision_round(self.llm, self.http, self.registry, self.client,
+                                     self.store, self, monitor, status, observation)
+        elif monitor.plan_id:
             await self.update_plan_status(monitor.plan_id, "FAILED",
                                           f"步骤失败：对象 {status}")
