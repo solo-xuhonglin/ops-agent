@@ -28,6 +28,8 @@ SYSTEM_PROMPT = (
     "你是 ops-agent 的运维助手，负责诊断训练任务、推理服务(serving)、数据集与模型状态，"
     "并回答运维相关的自然语言问询。你可以调用工具查询系统真实状态；"
     "基于工具返回的数据给出简洁、准确的中文结论；信息不足时可多次调用不同工具。"
+    "工具调用遵循系统下发的【输出契约】：需要查询/执行时输出 {\"tool\":...,\"args\":...} JSON 块，"
+    "信息齐备后直接输出最终回答（markdown），不要在最终回答里再输出工具调用 JSON。"
     "若任务明确要求执行已获授权的处置操作（如下线/中止/部署，任务描述中带 suggestionId），"
     "直接调用对应的写工具执行并汇报结果。"
     "若诊断发现需要处置（下线异常 serving、中止卡住的训练、部署模型等），在最终回答末尾附加"
@@ -125,9 +127,12 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
 
 
 def _extract_conclusion(messages: list) -> str:
-    """取最后一条 assistant 消息（有内容才用），否则提示未收敛。"""
+    """取最后一条 assistant 消息（有内容且非工具调用轮才用），否则提示未收敛。"""
     for m in reversed(messages):
         if getattr(m, "type", "") == "ai" and getattr(m, "content", None):
+            kw = getattr(m, "additional_kwargs", None) or {}
+            if kw.get("_is_tool_round"):
+                continue  # 工具调用轮的内容是 JSON，不是结论
             return m.content
     return "no conclusion produced (max tool rounds reached)"
 
