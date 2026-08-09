@@ -1,6 +1,7 @@
 """ops-agent-core 入口：装配 LLM/工具层后启动 gRPC 重连主循环（长驻进程）。"""
 import asyncio
 import logging
+from typing import Any
 
 from langgraph.errors import NodeCancelledError
 
@@ -67,7 +68,7 @@ async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
     grants.add(msg.authorization_grant)
 
 
-async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: ChatOpenAI,
+async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: Any,
                     http: AdminHttpClient, msg: agent_pb2.ServerMessage, max_rounds: int) -> None:
     task_id = msg.task_dispatch.task_id
     active_tasks[task_id] = asyncio.current_task()  # 记录以便 CancelTask 精确取消
