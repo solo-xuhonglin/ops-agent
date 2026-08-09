@@ -563,6 +563,7 @@ const ACTIONS = {
   training_delete: { text: '中止训练', icon: 'mdi-stop-circle' },
   serving_deploy: { text: '部署服务', icon: 'mdi-server-plus' },
   serving_undeploy: { text: '下线服务', icon: 'mdi-server-remove' },
+  serving_predict: { text: '推理测试', icon: 'mdi-flask-outline' },
   dataset_create: { text: '创建数据集', icon: 'mdi-database-plus' },
   dataset_collect: { text: '采集数据', icon: 'mdi-cloud-download' },
   dataset_update: { text: '更新数据集', icon: 'mdi-database-edit' },
@@ -591,7 +592,12 @@ function sugText(s) { return SUG_STATUS[s]?.text || s }
 function sugColor(s) { return SUG_STATUS[s]?.color || 'grey' }
 function priorityText(p) { return PRIORITIES[p]?.text || p }
 function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
-function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
+function targetText(x) {
+  const tt = TARGETS[x.targetType] || x.targetType
+  const tid = x.targetId
+  if (tt == null || tt === '') return ''
+  return tid == null || tid === '' || Number(tid) === 0 ? tt : `${tt}:${tid}`
+}
 
 // 执行结果（suggestion 的 markdown result）按条目跟踪折叠/展开状态。
 // 建议列表刷新时清空，避免 stale id。
@@ -607,7 +613,7 @@ function planTargetText(st) {
   const tt = st.target_type || st.targetType
   const tid = st.target_id ?? st.targetId
   if (tt == null || tt === '') return ''
-  return `${TARGETS[tt] || tt}:${tid ?? 0}`
+  return tid == null || tid === '' || Number(tid) === 0 ? TARGETS[tt] || tt : `${TARGETS[tt] || tt}:${tid}`
 }
 
 // ===== plan 卡片状态映射 =====
