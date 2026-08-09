@@ -26,23 +26,37 @@ log = logging.getLogger("agent.core")
 
 SYSTEM_PROMPT = (
     "你是 ops-agent 的运维助手，负责诊断训练任务、推理服务(serving)、数据集与模型状态，"
-    "并回答运维相关的自然语言问询。你可以调用工具查询系统真实状态；"
-    "基于工具返回的数据给出简洁、准确的中文结论；信息不足时可多次调用不同工具。"
-    "工具调用遵循系统下发的【输出契约】：需要查询/执行时输出 {\"tool\":...,\"args\":...} JSON 块，"
+    "并回答运维相关的自然语言问询。\n"
+    "【严格授权规则——写操作必须走人工审批】\n"
+    "  严禁在常规问询/诊断任务中直接调用任何写工具（is_write=true，例如 training_create、"
+    "training_delete、serving_deploy、serving_undeploy、dataset_create、dataset_update、"
+    "dataset_collect、dataset_delete）。所有写操作必须经人工审批闭环：\n"
+    "    1) 不要调用写工具（即使你能）；\n"
+    "    2) 在最终回答末尾追加 ```json {\"suggestions\":[{\"action_type\":\"...\","
+    "\"target_type\":\"...\",\"target_id\":N,\"params\":{...},\"reason\":\"...\","
+    "\"priority\":\"HIGH|NORMAL|LOW\"}]} ``` 代码块说明需要的写操作；\n"
+    "    3) 任务结束 → 用户在前端看到审批卡 → 审批后系统会派发新任务（taskType="
+    "execute_suggestion，任务描述含 suggestionId）给你执行。\n"
+    "  唯一例外：当前任务的 taskType=execute_suggestion 且任务描述含 suggestionId，"
+    "说明该写操作已获人工审批，此时才可调用对应的写工具执行。\n"
+    "你可以调用只读工具（is_write=false）查询系统真实状态；"
+    "基于工具返回的数据给出简洁、准确的中文结论；信息不足时可多次调用不同工具。\n"
+    "工具调用遵循系统下发的【输出契约】：需要查询时输出 {\"tool\":...,\"args\":...} JSON 块，"
     "信息齐备后直接输出最终回答（markdown），不要在最终回答里再输出工具调用 JSON。"
-    "若任务明确要求执行已获授权的处置操作（如下线/中止/部署，任务描述中带 suggestionId），"
-    "直接调用对应的写工具执行并汇报结果。"
-    "若诊断发现需要处置（下线异常 serving、中止卡住的训练、部署模型等），在最终回答末尾附加"
-    " JSON 代码块给出处置建议：```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
-    "\"target_type\":\"serving_endpoint\",\"target_id\":3,\"reason\":\"原因说明\","
-    "\"priority\":\"HIGH\"}]} ```（写操作会经人工确认后由你执行，无需在当前回答中直接执行）。"
 )
 
 _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
-    """user prompt：query 优先，否则用 target 构造诊断指令（task_type 仅作轻提示）。"""
+    """user prompt：execute_suggestion 任务给专门指引，其他按 query/target 构造。"""
+    if d.task_type == "execute_suggestion":
+        # 已审批任务：直接调对应写工具，grantKey 已就位（admin 端 aspect 校验）。
+        # 执行成功后按 query 中的 suggestionId 回写 suggestion 状态（EXECUTED/FAILED）。
+        return (
+            "（任务类型：execute_suggestion——已审批的写操作，请执行）",
+            (d.query or "") + "\n请按 query 描述执行该写操作，完成后回报结果。",
+        )
     hint = ""
     if d.task_type and d.task_type != "question":
         hint = f"（任务类型：{d.task_type}）"

@@ -145,7 +145,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         if t.parameters:
             lines.append(f"  参数(JSON Schema): {t.parameters}")
         if t.is_write:
-            lines.append("  ⚠ 写操作：仅当任务明确要求且已获授权时调用")
+            lines.append("  ⚠ 写工具：仅当任务类型为 execute_suggestion（已审批）时才可调用；常规任务严禁调用，必须通过 suggestions JSON 走审批闭环")
     lines += [
         "",
         "【输出契约】",

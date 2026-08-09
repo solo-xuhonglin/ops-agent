@@ -10,6 +10,7 @@ import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.repository.AgentEventRepository;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
+import com.opsagent.admin.repository.UserRepository;
 import com.opsagent.admin.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,8 +25,10 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -46,15 +49,49 @@ public class AgentTaskService {
     /** 任务级 scoped token 有效期：5 分钟（诊断任务足够，过期即失效） */
     public static final long SCOPED_TOKEN_TTL_MS = 5 * 60_000;
 
-    /** scoped token 裁剪出的只读权限（诊断/问询仅需业务只读） */
-    private static final List<String> SCOPED_READ_PERMISSIONS = List.of(
+    /**
+     * fallback 权限：当 dispatchedBy 为空/用户已删除时签发，避免 agent 拿到 token 但用户表查不到。
+     * 给业务只读权限（与旧 SCOPED_READ_PERMISSIONS 等价）——这是降级路径，正常路径总是用用户完整权限。
+     */
+    private static final List<String> FALLBACK_READ_PERMISSIONS = List.of(
             "dataset:read", "model:read", "training:read", "serving:read");
 
     private final AgentTaskRepository taskRepository;
     private final AgentEventRepository eventRepository;
     private final AgentSuggestionRepository suggestionRepository;
     private final WorkerRegistry workerRegistry;
+    private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
+
+    /**
+     * 从 userId 解析完整权限列表（roles → permissions → 去重 code），用于签发 scoped token。
+     * 保留用户原本的全量权限，**不缩小**；agent 的精细化授权由 grantKey（按 action+targetId 匹配）兜底。
+     * 用户不存在/无角色 → fallback 到只读权限（不破回归，agent 不会越权）。
+     */
+    private List<String> resolveFullPermissions(Long userId) {
+        if (userId == null) {
+            return FALLBACK_READ_PERMISSIONS;
+        }
+        Optional<com.opsagent.admin.entity.User> user = userRepository.findById(userId);
+        if (user.isEmpty() || user.get().getRoles() == null || user.get().getRoles().isEmpty()) {
+            log.warn("scoped token fallback to read-only: userId={} not found or no roles", userId);
+            return FALLBACK_READ_PERMISSIONS;
+        }
+        Set<String> codes = new LinkedHashSet<>();
+        for (com.opsagent.admin.entity.Role role : user.get().getRoles()) {
+            if (role.getPermissions() == null) continue;
+            for (com.opsagent.admin.entity.Permission p : role.getPermissions()) {
+                if (p.getCode() != null && !p.getCode().isBlank()) {
+                    codes.add(p.getCode());
+                }
+            }
+        }
+        if (codes.isEmpty()) {
+            return FALLBACK_READ_PERMISSIONS;
+        }
+        log.debug("scoped token full permissions resolved: userId={}, count={}", userId, codes.size());
+        return List.copyOf(codes);
+    }
 
     /** 任务超时：DISPATCHED/RUNNING 超过该时长未结束 → 发 CancelTask 置 CANCELLED（双兜底：agent 侧也 await 不退出则靠此收口） */
     @Value("${agent.task.timeout-seconds:300}")
@@ -124,7 +161,7 @@ public class AgentTaskService {
         task.setWorkerId(worker.getWorkerId());
         taskRepository.save(task);
         String taskToken = jwtUtil.generateScopedToken(task.getDispatchedBy(),
-                SCOPED_READ_PERMISSIONS, task.getTaskId(), SCOPED_TOKEN_TTL_MS);
+                resolveFullPermissions(task.getDispatchedBy()), task.getTaskId(), SCOPED_TOKEN_TTL_MS);
         TaskDispatch.Builder dispatchBuilder = TaskDispatch.newBuilder()
                 .setTaskId(task.getTaskId())
                 .setTaskType(effectiveType)
