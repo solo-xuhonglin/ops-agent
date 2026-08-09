@@ -1,4 +1,4 @@
-"""Real agent scenario tests: simple chat round + multi-step plan with auto-continue.
+"""Real agent scenario tests: simple chat round + multi-step plan in-task loop.
 
 These exercise the REAL deployed worker + LLM (NOT the fake worker), so they
 need an online ops-agent-core worker. Run explicitly against a deployed stack:
@@ -8,9 +8,10 @@ need an online ops-agent-core worker. Run explicitly against a deployed stack:
 
 Non-deterministic LLM behaviour is handled with defensive polling:
 - simple case: only asserts the chat round converged to a non-empty assistant reply
-- complex case: asserts approve -> execute reaches EXECUTED, and (when the model
-  attached a plan_id) that the auto-continue round produces a next PENDING
-  suggestion for a later plan step
+- complex case: asserts approve -> execute reaches EXECUTED, and that the plan
+  advances to a next PENDING suggestion for a later step (produced either inside
+  the execute task's decision loop via wait_until, or by the Monitor advance
+  round after the execute task converged — no admin-driven continue exists)
 """
 from __future__ import annotations
 
@@ -34,8 +35,10 @@ pytestmark = [
 # ===================== helpers =====================
 
 def _poll_assistant_message(client: OpsAgentClient, conversation_id: str,
-                            task_id: str, timeout: float = 120.0) -> dict:
-    """Wait until the assistant message for this task is terminal; return it."""
+                            task_id: str, timeout: float = 480.0) -> dict:
+    """Wait until the assistant message for this task is terminal; return it.
+    Execute tasks now run an in-task decision loop (wait_until polling), so the
+    assistant message may take minutes instead of the old instant summary."""
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
@@ -73,9 +76,9 @@ def _poll_suggestion_status(client: OpsAgentClient, suggestion_id: str,
 
 
 def _poll_new_pending(client: OpsAgentClient, plan_id: str, exclude: set[str],
-                      timeout: float = 180.0) -> dict | None:
+                      timeout: float = 600.0) -> dict | None:
     """Wait for a PENDING suggestion in the SAME plan, not in `exclude`
-    (i.e. the auto-continue next step; filters out unrelated leftover PENDINGs)."""
+    (the next step proposed by the in-task loop or the advance round)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         page = client.list_agent_suggestions(page=0, size=50)
@@ -111,9 +114,13 @@ def test_scenario_simple_chat_round(client: OpsAgentClient):
 
 # ===================== complex scenario =====================
 
-def test_scenario_multi_step_plan_with_auto_continue(client: OpsAgentClient):
-    """Complex: multi-step request -> approve first step -> execute -> auto-continue
-    proposes the next step (same plan), proving the full approval loop incl. continue."""
+def test_scenario_multi_step_plan_in_task_loop(client: OpsAgentClient):
+    """Complex: multi-step request -> approve first step -> execute -> next step
+    PENDING appears in the same plan (in-task decision loop / advance round).
+
+    There is no admin-driven continue task anymore: the execute task itself runs
+    the decision loop (wait_until polling), and the Monitor advance round backs it
+    up after the task converged. The next PENDING may come from either path."""
     conv = client.create_agent_conversation()
     try:
         resp = client.send_agent_message(conv["conversationId"], {
@@ -135,16 +142,17 @@ def test_scenario_multi_step_plan_with_auto_continue(client: OpsAgentClient):
         approved = client.approve_agent_suggestion(first["suggestionId"])
         assert approved["status"] in ("APPROVED", "EXECUTED"), approved
         executed = _poll_suggestion_status(client, first["suggestionId"],
-                                           {"EXECUTED", "FAILED", "EXPIRED"}, timeout=180)
+                                           {"EXECUTED", "FAILED", "EXPIRED"}, timeout=240)
         assert executed["status"] == "EXECUTED", \
             f"execute did not succeed: {executed['status']} result={executed.get('result')}"
 
-        # 3) auto-continue: a next PENDING suggestion for a later step should appear
-        #    (may take a decision-round; a second chat message never needed)
-        nxt = _poll_new_pending(client, plan_id, exclude={first["suggestionId"]}, timeout=240)
+        # 3) next step: a PENDING suggestion for a later step in the same plan appears
+        #    (produced by the in-task decision loop or the Monitor advance round;
+        #    no second chat message needed, no admin continue involved)
+        nxt = _poll_new_pending(client, plan_id, exclude={first["suggestionId"]}, timeout=600)
         if nxt is not None:
             assert nxt.get("planId") == plan_id, \
-                f"continue step left the plan: {nxt.get('planId')} != {plan_id}"
+                f"next step left the plan: {nxt.get('planId')} != {plan_id}"
             assert nxt["status"] == "PENDING", nxt
             assert nxt["suggestionId"] != first["suggestionId"]
     finally:
