@@ -228,7 +228,7 @@ def _parse_tool_calls(content: str) -> list[dict]:
 
 
 def build_tool_prompt(registry: ToolRegistry) -> str:
-    """把注册表工具清单 + 输出契约注入 system prompt（每轮重建，注册表更新即生效）。"""
+    """把注册表工具清单 + 内置工具 + 输出契约注入 system prompt（每轮重建，注册表更新即生效）。"""
     lines = [
         "你可以调用以下工具查询系统真实状态或执行已授权操作：",
         "",
@@ -238,19 +238,72 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         if t.parameters:
             lines.append(f"  参数(JSON Schema): {t.parameters}")
         if t.is_write:
-            lines.append("  ⚠ 写工具：仅当任务类型为 execute_suggestion（已审批）时才可调用；常规任务严禁调用，必须通过 suggestions JSON 走审批闭环")
+            lines.append("  ⚠ 写工具：仅当任务携带 suggestion_id（已审批）时才可调用；常规任务严禁调用，必须通过 suggestions 走审批闭环")
     lines += [
+        "",
+        "- plan_create: 为复杂多步任务建立执行计划（系统按 steps 生成待审批建议；上一步完成（含异步训练/部署完成）后下一步自动出现在审批列表）",
+        '  参数(JSON Schema): {"type":"object","properties":{"summary":{"type":"string",'
+        '"description":"计划摘要，如 训练并部署 LSTM 模型"},"steps":{"type":"array","items":{"type":"object",'
+        '"properties":{"action_type":{"type":"string","description":"写工具名，如 training_create/serving_deploy"},'
+        '"target_type":{"type":"string"},"target_id":{"type":"integer","description":"目标 ID；暂未知填 0"},'
+        '"params":{"type":"object","description":"业务参数（可选）"},"reason":{"type":"string"},'
+        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
+        '"required":["action_type"]}}},"required":["summary","steps"]}',
         "",
         "【输出契约】",
         "1. 需要查询/执行时，只输出一个 JSON 代码块（不要包含其他内容）：",
         '   ```json {"tool": "<工具名>", "args": {...}} ```',
         "   需要并行调用多个工具时：",
         '   ```json {"tools": [{"tool": "a", "args": {...}}, {"tool": "b", "args": {...}}]} ```',
-        "2. 工具名必须严格取自上面清单，args 必须符合对应参数 schema。",
+        "2. 工具名必须严格取自上面清单，args 必须符合对应参数 schema；会话/任务等系统参数无需填写。",
         "3. 当所需信息已获取、无需再调用工具时，直接输出最终回答（markdown），不要输出 JSON。",
         "4. 回答中的数据必须来自工具返回结果，严禁编造。",
     ]
     return "\n".join(lines)
+
+
+async def handle_plan_create(store: Any, ctx: TaskContext, args: dict) -> dict:
+    """plan_create 内置工具：建 plan + 按步骤落 PENDING suggestions（系统参数注入）。
+
+    LLM 只填业务参数（summary/steps 的 action_type/target/params/...）；
+    conversation_id/source_task_id 由本层注入，避免模型填写系统字段。
+    """
+    if store is None or not store.enabled:
+        log.warning("plan_create unavailable: agent DB disabled")
+        return {"status": 500, "body": "plan_create unavailable (agent DB disabled)"}
+    steps = args.get("steps") or []
+    plan = {"conversation_id": ctx.conversation_id,
+            "summary": str(args.get("summary", "")), "status": "RUNNING"}
+    try:
+        await store.upsert_plan(plan)
+    except Exception as e:  # noqa: BLE001
+        log.warning("plan_create upsert failed: %s", e)
+        return {"status": 500, "body": f"plan create failed: {e}"}
+    plan_id = plan.get("plan_id") or ""
+    ids: list[str] = []
+    for idx, s in enumerate(steps):
+        if not isinstance(s, dict) or not s.get("action_type"):
+            continue
+        try:
+            sid = await store.insert_suggestion({
+                "plan_id": plan_id,
+                "step_no": idx + 1,
+                "source_task_id": ctx.task_id,
+                "conversation_id": ctx.conversation_id,
+                "action_type": str(s.get("action_type", "")),
+                "target_type": str(s.get("target_type", "")),
+                "target_id": int(s.get("target_id", 0) or 0),
+                "params": s.get("params") or {},
+                "reason": str(s.get("reason", "")),
+                "priority": str(s.get("priority", "NORMAL")),
+            })
+            ids.append(sid)
+        except Exception as e:  # noqa: BLE001
+            log.warning("plan step suggestion failed: %s", e)
+    body = json.dumps({"plan_id": plan_id, "suggestion_ids": ids, "steps": len(ids)},
+                       ensure_ascii=False)
+    log.info("plan created: %s steps=%d", plan_id[:8], len(ids))
+    return {"status": 200, "body": body}
 
 
 def build_graph(llm: Any, http: AdminHttpClient,
@@ -319,7 +372,8 @@ def build_graph(llm: Any, http: AdminHttpClient,
 
     async def tools_node(state: AgentState) -> dict[str, Any]:
         """工具节点：执行 pending_tools，结果以普通文本消息回填（不产生 tool 角色消息，
-        保证 reasoner 等不支持 function calling 的模型多轮兼容）。"""
+        保证 reasoner 等不支持 function calling 的模型多轮兼容）。
+        内置工具（plan_create）走本地 handler（直写库），其余走 admin HTTP。"""
         ctx: TaskContext = state["ctx"]
         tool_msgs: list[Any] = []
         for tc in (state.get("pending_tools") or []):
@@ -328,7 +382,13 @@ def build_graph(llm: Any, http: AdminHttpClient,
             await client.send_event(ctx.task_id, "tool_call",
                                     json.dumps({"name": name, "args": args}, ensure_ascii=False))
             tool = registry.get(name)
-            if tool is None:
+            if name == "plan_create":
+                # 内置工具：worker 本地执行（建 plan + 落 PENDING suggestions）
+                if store is not None and store.enabled:
+                    result = await handle_plan_create(store, ctx, args)
+                else:
+                    result = {"status": 500, "body": "plan_create unavailable (agent DB disabled)"}
+            elif tool is None:
                 result = {"status": 0, "body": f"unknown tool: {name}"}
             else:
                 result = await http.call(tool, args, ctx)
