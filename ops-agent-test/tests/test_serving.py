@@ -43,15 +43,17 @@ def test_serving_list_and_get(client):
 
 
 def test_deploy_non_ready_model_422(client):
-    name = f"notready-{uuid.uuid4().hex[:8]}"
-    mv = client.create_model({"name": name, "version": "v1", "algorithm": "LSTM", "status": "TRAINING"})
-    try:
-        with pytest.raises(OpsAgentError) as exc:
-            client.deploy_serving(mv["id"])
-        assert exc.value.status_code == 422, \
-            f"expected 422 for non-READY model, got {exc.value.status_code}"
-    finally:
-        client.delete_model(mv["id"])
+    """Deploying a non-READY model must be rejected (422). Models are produced by
+    training only (POST /api/models removed), so find an existing non-READY model;
+    skip when none exists."""
+    models = client.list_models(size=100)["content"]
+    non_ready = next((m for m in models if m["status"] != "READY"), None)
+    if non_ready is None:
+        pytest.skip("no non-READY model available (train a failing job to cover this)")
+    with pytest.raises(OpsAgentError) as exc:
+        client.deploy_serving(non_ready["id"])
+    assert exc.value.status_code == 422, \
+        f"expected 422 for non-READY model, got {exc.value.status_code}"
 
 
 def test_deploy_missing_model_404(client):

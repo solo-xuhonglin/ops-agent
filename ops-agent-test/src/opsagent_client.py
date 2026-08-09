@@ -126,14 +126,16 @@ class OpsAgentClient:
         )["data"]
 
     # ---- model version helpers (verified against ModelController) ----
-    def create_model(self, payload: dict) -> dict:
-        return self.post("/api/models", json=payload)["data"]
-
+    # NOTE: models are produced by training only; there is intentionally no
+    # create_model (POST /api/models was removed as a dead endpoint).
     def get_model(self, mv_id: int) -> dict:
         return self.get(f"/api/models/{mv_id}")["data"]
 
-    def list_models(self, page: int = 0, size: int = 20) -> dict:
-        return self.get("/api/models", params={"page": page, "size": size})["data"]
+    def list_models(self, page: int = 0, size: int = 20, status: str | None = None) -> dict:
+        params = {"page": page, "size": size}
+        if status:
+            params["status"] = status
+        return self.get("/api/models", params=params)["data"]
 
     def delete_model(self, mv_id: int) -> dict:
         return self.delete(f"/api/models/{mv_id}")

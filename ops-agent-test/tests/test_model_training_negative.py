@@ -19,9 +19,9 @@ def test_models_list_requires_auth(base_url):
 
 
 def test_model_write_forbidden_for_reader(reader_client):
-    """READONLY role lacks model:write -> creating a model must be 403."""
+    """READONLY role lacks model:write -> deleting a model must be 403."""
     with pytest.raises(OpsAgentError) as exc:
-        reader_client.create_model({"name": "x", "version": "v1"})
+        reader_client.delete_model(9_999_999)
     assert exc.value.status_code == 403
 
 

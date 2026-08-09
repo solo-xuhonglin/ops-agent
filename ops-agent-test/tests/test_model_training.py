@@ -21,30 +21,28 @@ from src.opsagent_client import OpsAgentError
 pytestmark = pytest.mark.model_training
 
 
-# ===================== ModelVersion CRUD =====================
-def test_model_version_crud(client):
-    name = f"e2e-mv-{uuid.uuid4().hex[:10]}"
-    mv = client.create_model({"name": name, "version": "v1", "algorithm": "LSTM"})
-    assert mv["id"], "model version id should be returned"
-    assert mv["name"] == name
-    assert mv["status"] in (None, "DRAFT", "TRAINING", "READY", "FAILED")
+# ===================== ModelVersion read flows =====================
+def test_model_version_read(client, ready_model):
+    """ModelVersion is a training product: POST /api/models was removed, so
+    only read flows exist. `ready_model` produces a real READY model."""
+    mv = ready_model["model"]
+    assert mv["id"] and mv["status"] == "READY"
 
     got = client.get_model(mv["id"])
     assert got["id"] == mv["id"]
-    assert got["name"] == name
+    assert got["name"] == mv["name"]
 
     listed = client.list_models()
     ids = [m["id"] for m in listed["content"]]
-    assert mv["id"] in ids, "newly created model should appear in list"
+    assert mv["id"] in ids, "trained model should appear in list"
 
-    # an un-trained model has no artifact -> download url must error, not 200
-    with pytest.raises(OpsAgentError) as exc:
-        client.model_download_url(mv["id"])
-    assert exc.value.status_code >= 400
+    # READY model has an artifact -> download url works
+    url = client.model_download_url(mv["id"])
+    assert url["url"].startswith("http"), f"expected presigned url, got {url}"
 
-    client.delete_model(mv["id"])
+    # missing model -> 404
     with pytest.raises(OpsAgentError) as exc:
-        client.get_model(mv["id"])
+        client.get_model(9_999_999)
     assert "404" in str(exc.value)
 
 
