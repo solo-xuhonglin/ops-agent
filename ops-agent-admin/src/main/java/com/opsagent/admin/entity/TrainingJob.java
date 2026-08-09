@@ -33,9 +33,10 @@ public class TrainingJob {
     @Column(name = "triggered_by")
     private Long triggeredBy;
 
-    /** 触发本次训练的 agent 建议 ID（agent 调 training_create 时从 grantKey 解析写入；null 表示非 agent 触发） */
-    @Column(name = "suggestion_id")
-    private Long suggestionId;
+    /** 发起该训练的会话 ID（agent 执行已审批建议时从 X-Agent-Task 反查写入；非 agent 触发为 null）。
+     *  训练完成后 TrainingFollowupService 据此把部署建议推回原会话。 */
+    @Column(name = "conversation_id", length = 64)
+    private String conversationId;
 
     /** 训练完成后是否已派发 agent 新任务推部署建议（防重复触发） */
     @Column(name = "followup_dispatched")

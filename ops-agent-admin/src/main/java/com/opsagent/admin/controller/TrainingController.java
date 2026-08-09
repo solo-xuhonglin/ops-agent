@@ -20,6 +20,7 @@ import java.util.Map;
 public class TrainingController {
 
     private final TrainingJobService trainingJobService;
+    private final com.opsagent.admin.repository.AgentTaskRepository agentTaskRepository;
 
     @GetMapping
     @PreAuthorize("hasAuthority('training:read')")
@@ -41,13 +42,15 @@ public class TrainingController {
     @PreAuthorize("hasAuthority('training:write')")
     @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
     public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req,
-                                 @RequestHeader(value = "X-Grant-Key", required = false) String grantKey,
-                                 jakarta.servlet.http.HttpServletRequest request) {
-        // agent 调用时从 GrantCheckAspect 消费后透传的 attribute 拿 suggestionId 写入 job，
-        // 供训练完成 → 自动 followup 反查 conversation（grantKey 已被 aspect 原子消费，不能再 peek Redis）
-        Long suggestionId = (Long) request.getAttribute(
-                com.opsagent.admin.service.agent.GrantCheckAspect.AGENT_SUGGESTION_ID_ATTR);
-        return ApiResponse.ok(trainingJobService.trigger(req, suggestionId));
+                                 @RequestHeader(value = "X-Agent-Task", required = false) String agentTaskId) {
+        // agent 调用时 X-Agent-Task = execute_suggestion 任务 ID → 反查其 conversationId 写入 job，
+        // 供训练完成 → 自动 followup 把部署建议推回原会话（grantKey 一次性、任务关联持久，走 task 反查最直接）
+        String conversationId = null;
+        if (agentTaskId != null && !agentTaskId.isBlank()) {
+            conversationId = agentTaskRepository.findByTaskId(agentTaskId)
+                    .map(com.opsagent.admin.entity.AgentTask::getConversationId).orElse(null);
+        }
+        return ApiResponse.ok(trainingJobService.trigger(req, conversationId));
     }
 
     @GetMapping("/{id}/logs")

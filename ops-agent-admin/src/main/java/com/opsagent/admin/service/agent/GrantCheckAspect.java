@@ -47,20 +47,14 @@ public class GrantCheckAspect {
         String grantKey = request.getHeader("X-Grant-Key");
         Long targetId = resolveTargetId(pjp, requireGrant.targetParam());
 
-        if (scoped && grantKey != null && targetId != null) {
-            Long suggestionId = grantService.consumeAndMatch(grantKey, requireGrant.action(), targetId).orElse(null);
-            if (suggestionId != null) {
-                // 把 suggestionId 透传给 controller（训练/serving 创建时回写到 job，供 followup 反查 conversation）
-                request.setAttribute(AGENT_SUGGESTION_ID_ATTR, suggestionId);
-                return pjp.proceed();
-            }
+        boolean ok = scoped && grantKey != null && targetId != null
+                && grantService.consumeAndMatch(grantKey, requireGrant.action(), targetId).isPresent();
+        if (!ok) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "agent write rejected: valid grant required (scoped token + grant key)");
         }
-        throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "agent write rejected: valid grant required (scoped token + grant key)");
+        return pjp.proceed();
     }
-
-    /** request attribute 名：controller 读取被审批的 suggestionId（训练/serving 创建时回写 job）。 */
-    public static final String AGENT_SUGGESTION_ID_ATTR = "agentSuggestionId";
 
     /** 按 targetParam（逻辑字段名）从方法实参提取 targetId：
      *  ① 参数名 == targetParam 的 Number/String 参数；② DTO 的 get{TargetParam}()（bean）/ {targetParam}()（record）；
