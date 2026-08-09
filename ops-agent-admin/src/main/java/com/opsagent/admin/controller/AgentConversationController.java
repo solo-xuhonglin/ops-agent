@@ -116,7 +116,7 @@ public class AgentConversationController {
                     streamManager.push(conversationId, "error",
                             Map.of("message", "task " + status.toLowerCase() + ": " + task.getConclusion()));
                 }
-                streamManager.close(conversationId);
+                // 不主动 close：前端收到收尾事件后主动 abort 关闭（理由同 finishAssistant）
             }
         });
     }

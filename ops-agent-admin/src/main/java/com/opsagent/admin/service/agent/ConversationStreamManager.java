@@ -116,19 +116,6 @@ public class ConversationStreamManager {
         taskConversations.entrySet().removeIf(e -> e.getValue().equals(conversationId));
     }
 
-    /** 完成会话流但保留 task 映射：done/error 收尾事件推送后调用，避免连接悬挂到超时。
-     * 与 close() 的区别：不清 task→conv 绑定（用户可立刻发起下一轮，无需重新绑定）。 */
-    public void completeStream(String conversationId) {
-        SseEmitter emitter = streams.remove(conversationId);
-        if (emitter != null) {
-            try {
-                emitter.complete();
-            } catch (Exception e) {
-                log.debug("complete stream error: conversation={}", conversationId);
-            }
-        }
-    }
-
     /** 供内部使用：若无副作用需执行可忽略；保留以防后续需要遍历。 */
     public void forEachStream(Consumer<SseEmitter> action) {
         streams.values().forEach(action);

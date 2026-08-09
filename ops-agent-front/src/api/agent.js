@@ -37,6 +37,7 @@ export function streamConversation(conversationId, taskId, onEvent) {
   const controller = new AbortController()
   const token = localStorage.getItem('token')
   const url = `/api/agent/conversations/${conversationId}/stream${taskId ? `?taskId=${taskId}` : ''}`
+  let settled = false // 已收到 done/error 收尾事件：后续连接关闭属正常收尾，不再视为错误
 
   fetch(url, {
     method: 'POST',
@@ -64,6 +65,12 @@ export function streamConversation(conversationId, taskId, onEvent) {
         } catch (e) {
           onEvent(event, payload)
         }
+        // 收尾事件：主动关闭连接（服务端 complete 的时序可能让浏览器把正常关闭
+        // 误报为 NetworkError；本地 abort 后 read() 抛 AbortError，被 catch 静默吞掉）
+        if (event === 'done' || event === 'error') {
+          settled = true
+          controller.abort()
+        }
         event = null
         dataLines.length = 0
       }
@@ -85,7 +92,7 @@ export function streamConversation(conversationId, taskId, onEvent) {
       flush()
     })
     .catch((e) => {
-      if (e.name !== 'AbortError') {
+      if (e.name !== 'AbortError' && !settled) {
         onEvent('error', { message: e.message || '流式连接失败' })
       }
     })

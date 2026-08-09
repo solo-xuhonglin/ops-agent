@@ -171,7 +171,9 @@ public class AgentConversationService {
         done.put("reasoning", msg.getReasoning());
         done.put("taskId", taskId);
         streamManager.push(conversationId, "done", done);
-        streamManager.completeStream(conversationId);  // 收尾事件已推，关闭连接避免悬挂
+        // 不主动 complete：连接由前端收到 done 后主动 abort 关闭（服务端主动 complete 的
+        // 时序会让部分 HTTP 客户端把正常收尾误报为 network error）；断连/超时由
+        // SseEmitter 的 onCompletion/onError/onTimeout 及 register 顶掉旧流兜底清理。
         streamManager.unbindTask(taskId);
         log.info("conversation assistant message saved: conversation={}, task={}, ok={}",
                 conversationId, taskId, ok);
