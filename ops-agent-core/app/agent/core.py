@@ -153,13 +153,11 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                       reasoning_enabled=bool(d.reasoning_enabled))
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
-    # execute 任务（已审批写操作）直调写工具，任务内决策图闭环推进
+    # execute 任务（已审批写操作）：系统直调写工具后任务内决策图闭环推进
     if d.task_type == "execute":
         await handle_execute(client, registry, llm, http, ctx, d, store, tracker,
                              max_rounds=max_rounds)
         return
-
-    # continue 任务已移除（2026-08-09 重构）：异步任务由 wait_until 自主轮询 + Monitor 兜底
 
     hint, user_prompt = _build_prompt(d)
     messages: list = [
@@ -255,7 +253,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
     写工具结果以观察注入任务内决策图：agent 用 wait_until 轮询异步对象、plan_update 推进
     plan、approve_* 提下一步建议（失败时带 retry_of 修正重试）；非工具调用即收敛。
     写工具本体绝不在 tools 列表（模型无直接执行路径）；suggestion 状态/task 落库/
-    Monitor 注册等收尾行为保留。取代旧「写工具 → LLM 总结秒回」与 admin continue 推进。
+    Monitor 注册等收尾行为保留。
     """
     tool = registry.get(d.action_type)
     if tool is None:
