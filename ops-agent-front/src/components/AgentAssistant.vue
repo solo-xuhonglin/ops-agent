@@ -267,8 +267,8 @@
               </div>
               <!-- PENDING：原 确认执行 / 忽略 动作（保持现有 confirm 流）-->
               <div v-if="approvalPending(m) && canWrite" class="msg-approval__actions">
-                <v-btn size="x-small" color="primary" @click="approve(approvalPayload(m).suggestionId)">确认执行</v-btn>
-                <v-btn size="x-small" variant="text" class="ml-1" @click="reject(approvalPayload(m).suggestionId)">忽略</v-btn>
+                <v-btn size="small" color="primary" @click="approve(approvalPayload(m).suggestionId)">确认执行</v-btn>
+                <v-btn size="small" variant="text" @click="reject(approvalPayload(m).suggestionId)">忽略</v-btn>
               </div>
               <!-- 结果：执行成功/失败的 markdown 反馈（折叠）-->
               <div v-else-if="approvalPayload(m).result" class="msg-approval__result">
@@ -1000,10 +1000,17 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   color: rgba(0, 0, 0, 0.5);
 }
 
-/* ---- 审批 / 建议卡片 ---- */
+/* ---- 审批 / 建议卡片（比工具卡稍大、需要用户点击确认）---- */
 .msg-card--approval {
   background: rgba(0, 0, 0, 0.03);
   border-left: 3px solid rgb(var(--v-theme-warning));
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.msg-card--approval .msg-card__head {
+  font-size: 14px;
+  gap: 6px;
 }
 .msg-card--approval-pending {
   border-left-color: rgb(var(--v-theme-warning));
@@ -1020,36 +1027,42 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   border-left-color: rgb(var(--v-theme-error));
 }
 .msg-approval__reason {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: 6px;
+  font-size: 13px;
 }
 .msg-approval__retry {
-  margin-top: 2px;
-  font-size: 11px;
+  margin-top: 4px;
+  font-size: 12px;
   color: rgb(var(--v-theme-warning));
 }
 .msg-approval__params-wrap {
-  margin-top: 4px;
+  margin-top: 6px;
 }
 .msg-approval__params-toggle {
   display: inline-block;
   cursor: pointer;
   user-select: none;
   padding: 2px 0;
+  font-size: 12px;
 }
 .msg-approval__params-toggle:hover {
   color: rgb(var(--v-theme-primary));
 }
 .msg-approval__actions {
-  margin-top: 6px;
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+.msg-approval__actions .v-btn {
+  font-size: 13px;
 }
 .msg-approval__result {
-  margin-top: 6px;
-  font-size: 11px;
+  margin-top: 8px;
+  font-size: 13px;
 }
 .msg-approval__meta {
-  margin-top: 4px;
-  font-size: 10px;
+  margin-top: 6px;
+  font-size: 11px;
   color: rgba(0, 0, 0, 0.45);
 }
 

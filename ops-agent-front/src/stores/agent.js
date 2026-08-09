@@ -78,7 +78,14 @@ export const useAgentStore = defineStore('agent', {
       this.activeView = 'chat'
       this.drawerOpen = true
       if (!this.currentConversation) {
-        this.fetchConversations()
+        // 重置残留：避免上一会话的建议/工具行混进新视图（截图里那种"打开抽屉就一堆APPROVAL卡"的根因）
+        this.messages = []
+        this.fetchConversations().then(() => {
+          // 没有当前会话且已有历史会话时，自动选中最近一条，给一个连贯的上下文
+          if (!this.currentConversation && this.conversations.length > 0) {
+            this.selectConversation(this.conversations[0].conversationId)
+          }
+        })
       }
     },
     openList() {
@@ -128,11 +135,13 @@ export const useAgentStore = defineStore('agent', {
       this.activeView = 'chat'
       this.error = null
       this.currentTaskId = null
+      // 切会话前先清空 messages，避免旧会话残留行在新会话加载完成前闪现
+      this.messages = []
+      this.currentConversation =
+        this.conversations.find((c) => c.conversationId === conversationId) || null
       try {
         const { data } = await agentApi.getConversationMessages(conversationId)
         this.messages = (data.data || []).map((m) => normalizeMessage({ ...m, _thinkingOpen: true }))
-        this.currentConversation =
-          this.conversations.find((c) => c.conversationId === conversationId) || null
         this.fetchPlans(conversationId)
         this.fetchSuggestions()
       } catch (e) {
@@ -324,33 +333,70 @@ export const useAgentStore = defineStore('agent', {
     },
 
     /**
-     * 启动 SSE 流：delta/thinking 按 80ms 窗口节流合并后增量更新 streamingMsg；
+     * 启动 SSE 流：delta/thinking 按 80ms 窗口节流合并后增量更新 activeRef；
      * tool_call/tool_result → upsertToolCallRow（同 callId 一行）；
      * approve_<写工具> 工具调用 → 衍生 APPROVAL 行（占位 PENDING，approve/reject 后由 fetchSuggestions 补 decision）；
      * done/error 收尾；plan_update 事件刷新 plan 卡片。
+     *
+     * 关键：每个 LLM 轮次对应一个独立的 ASSISTANT 行（保持严格时间顺序），
+     * 边界检测：tool_result 之后的下一次 thinking/delta → 创建新的 ASSISTANT 行（rotateTurn）。
+     * 这样多轮规划（plan→tool→plan→tool→final answer）会按顺序渲染成 N 个 ASSISTANT + M 个 TOOL_CALL 交错的扁平时间线。
      */
     openStream(conversationId, taskId, streamingMsg) {
+      // 当前正在写入的 ASSISTANT 消息引用（每次 LLM 轮次切换时 rotate）
+      let activeRef = streamingMsg
       let pending = { thinking: '', delta: '' }
+      // 上一个事件是否是 tool_result，用于判断下一次 thinking/delta 是否是新轮次
+      let lastEventWasToolResult = false
+
+      /** 把 pending 写入 activeRef。 */
       const flush = () => {
         if (pending.thinking) {
-          streamingMsg.reasoning += pending.thinking
+          activeRef.reasoning += pending.thinking
           pending.thinking = ''
         }
         if (pending.delta) {
-          streamingMsg.content += pending.delta
+          activeRef.content += pending.delta
           pending.delta = ''
         }
       }
+      /** 切到新的 ASSISTANT 消息行：先 flush 旧 ref、关闭上一轮、新增一行、切换 activeRef。 */
+      const rotateTurn = () => {
+        flush()
+        // 上一轮有内容才关闭（避免无 reasoning/content 的空白行被关掉）
+        if (activeRef.reasoning || activeRef.content) {
+          activeRef.status = 'completed'
+        }
+        const newMsg = {
+          messageId: `stream-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          kind: 'ASSISTANT',
+          content: '',
+          reasoning: '',
+          status: 'streaming',
+          _thinkingOpen: true,
+          createdAt: new Date().toISOString()
+        }
+        this.messages.push(newMsg)
+        // 必须用 push 后 Pinia 包出来的 reactive proxy 来更新流式内容
+        activeRef = this.messages[this.messages.length - 1]
+        lastEventWasToolResult = false
+      }
+
       this._streamTimer = setInterval(flush, STREAM_FLUSH_MS)
 
       this.streamController = agentApi.streamConversation(conversationId, taskId, (event, data) => {
         switch (event) {
-          case 'thinking':
+          case 'thinking': {
+            // tool_result 后的第一条 thinking → 进入下一轮 LLM 调用，拆出独立 ASSISTANT 行
+            if (lastEventWasToolResult) rotateTurn()
             pending.thinking += data?.delta || ''
             break
-          case 'delta':
+          }
+          case 'delta': {
+            if (lastEventWasToolResult) rotateTurn()
             pending.delta += data?.delta || ''
             break
+          }
           case 'tool_call': {
             flush()
             const callId = data?.id || data?.callId || null
@@ -362,6 +408,7 @@ export const useAgentStore = defineStore('agent', {
             if (name.startsWith('approve_')) {
               this._prefillApprovalFromTool(taskId, name, args, callId)
             }
+            lastEventWasToolResult = false
             break
           }
           case 'tool_result': {
@@ -370,6 +417,8 @@ export const useAgentStore = defineStore('agent', {
             const name = data?.name || 'tool'
             const summary = data?.summary || ''
             this.upsertToolCallRow({ taskId, callId, name, summary, isResult: true })
+            // 标记轮次边界：下一次 thinking/delta 触发 rotateTurn
+            lastEventWasToolResult = true
             break
           }
           case 'plan_update': {
@@ -380,9 +429,9 @@ export const useAgentStore = defineStore('agent', {
           case 'done': {
             flush()
             this._clearStreamTimer()
-            streamingMsg.status = data?.status === 'failed' ? 'failed' : 'completed'
-            if (data?.content) streamingMsg.content = data.content
-            if (data?.reasoning) streamingMsg.reasoning = data.reasoning
+            activeRef.status = data?.status === 'failed' ? 'failed' : 'completed'
+            if (data?.content) activeRef.content = data.content
+            // 不覆盖 reasoning——多轮 ASSISTANT 行各自持有本轮的 reasoning，已通过 flush 累积好
             this.streaming = false
             this.streamController = null
             this._streamStartedAt = 0
@@ -395,8 +444,8 @@ export const useAgentStore = defineStore('agent', {
           case 'error': {
             flush()
             this._clearStreamTimer()
-            streamingMsg.status = 'failed'
-            streamingMsg.error = data?.message || '流式错误'
+            activeRef.status = 'failed'
+            activeRef.error = data?.message || '流式错误'
             this.streaming = false
             this.streamController = null
             this._streamStartedAt = 0
@@ -415,12 +464,16 @@ export const useAgentStore = defineStore('agent', {
 
     /** approve_<写工具> 工具调用：从前端本地 memory 里反查本轮已 fetch 的 PENDING 建议（PENDING 来自 SSE 早期，worker 也异步直写库）。
      *  若本地无对应 suggestionId，先 upsert 一个 PENDING 占位行；后续 fetchSuggestions 会用真实 suggestionId 刷新。
+     *  严格按当前 conversationId 过滤，避免把别的会话的 PENDING 错误预填进来。
      */
     _prefillApprovalFromTool(taskId, name, args, callId) {
-      // 从本地 store.suggestions 中找同 taskId 的 PENDING，且 actionType 匹配（args.action / args.plan 等）。
+      const currentCid = this.currentConversation?.conversationId
+      // 从本地 store.suggestions 中找同 taskId 的 PENDING，且 actionType 匹配、归属当前会话
       const toolActionType = (name || '').replace(/^approve_/, '')
       const cand = this.suggestions.find(
-        (s) => s.status === 'PENDING' && s.actionType === toolActionType
+        (s) => s.status === 'PENDING'
+          && s.actionType === toolActionType
+          && (!currentCid || s.conversationId === currentCid)
       )
       if (cand) {
         this.upsertApprovalRow({
@@ -504,10 +557,16 @@ export const useAgentStore = defineStore('agent', {
      *  同时把每条 PENDING 建议 upsert 成 APPROVAL 行（持 suggestionId + plan 关联）。 */
     async attachSuggestions(taskId) {
       if (!taskId) return
+      const currentCid = this.currentConversation?.conversationId
+      if (!currentCid) return
       try {
         const { data } = await agentApi.listSuggestions({ page: 0, size: 100 })
         const list = data.data.content || []
-        for (const s of list.filter((x) => x.status === 'PENDING' && x.sourceTaskId === taskId)) {
+        for (const s of list.filter((x) =>
+            x.status === 'PENDING'
+            && x.sourceTaskId === taskId
+            && x.conversationId === currentCid
+        )) {
           this.upsertApprovalRow({
             suggestionId: s.suggestionId,
             actionType: s.actionType,
@@ -557,9 +616,13 @@ export const useAgentStore = defineStore('agent', {
         const list = sortSuggestions(data.data.content || [])
         this.suggestions = list
         this.pendingCount = list.filter((s) => s.status === 'PENDING').length
-        // 同步每个已知 suggestion 的最新决策到 APPROVAL 行（即便不是当前轮生成的）
+        // 同步每个**当前会话的**建议的最新决策到 APPROVAL 行（其余会话的建议只更新侧栏列表、不写时间线）
+        // 避免一打开抽屉就被其它会话的已过期/失败审批行污染（截图里的根因）
+        const currentCid = this.currentConversation?.conversationId
+        if (!currentCid) return
         for (const s of list) {
           if (!s.suggestionId) continue
+          if (s.conversationId !== currentCid) continue
           this.upsertApprovalRow({
             suggestionId: s.suggestionId,
             actionType: s.actionType,
