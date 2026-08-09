@@ -20,7 +20,6 @@ import java.util.Map;
 public class TrainingController {
 
     private final TrainingJobService trainingJobService;
-    private final com.opsagent.admin.service.agent.GrantService grantService;
 
     @GetMapping
     @PreAuthorize("hasAuthority('training:read')")
@@ -42,9 +41,12 @@ public class TrainingController {
     @PreAuthorize("hasAuthority('training:write')")
     @com.opsagent.admin.service.agent.RequireGrant(action = "training_create", targetType = "training_job", targetParam = "datasetId")
     public ApiResponse<?> create(@Valid @RequestBody TrainingRequest req,
-                                 @RequestHeader(value = "X-Grant-Key", required = false) String grantKey) {
-        // agent 调用时从 grantKey 解析 suggestionId 写入 job，供训练完成 → 自动 followup 反查 conversation
-        Long suggestionId = grantService.getSuggestionId(grantKey).orElse(null);
+                                 @RequestHeader(value = "X-Grant-Key", required = false) String grantKey,
+                                 jakarta.servlet.http.HttpServletRequest request) {
+        // agent 调用时从 GrantCheckAspect 消费后透传的 attribute 拿 suggestionId 写入 job，
+        // 供训练完成 → 自动 followup 反查 conversation（grantKey 已被 aspect 原子消费，不能再 peek Redis）
+        Long suggestionId = (Long) request.getAttribute(
+                com.opsagent.admin.service.agent.GrantCheckAspect.AGENT_SUGGESTION_ID_ATTR);
         return ApiResponse.ok(trainingJobService.trigger(req, suggestionId));
     }
 

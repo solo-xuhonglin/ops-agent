@@ -50,23 +50,6 @@ public class GrantService {
                 && Boolean.TRUE.equals(redis.hasKey(grantKey));
     }
 
-    /** 不消费查 suggestionId：agent 创建训练/serving 时把 suggestionId 回写到 job，供后续 followup 反查 conversation。 */
-    public Optional<Long> getSuggestionId(String grantKey) {
-        if (grantKey == null || grantKey.isBlank()) {
-            return Optional.empty();
-        }
-        String raw = redis.opsForValue().get(grantKey); // 仅读，不 GETDEL
-        if (raw == null) {
-            return Optional.empty();
-        }
-        try {
-            return Optional.of(GrantMeta.decode(raw).suggestionId());
-        } catch (Exception e) {
-            log.warn("grant decode failed (peek only): key={} err={}", grantKey, e.getMessage());
-            return Optional.empty();
-        }
-    }
-
     /**
      * 原子消费并校验（action + targetId 匹配，targetType 由 action 隐含不作硬比对）。
      * 返回匹配的 suggestionId；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。
