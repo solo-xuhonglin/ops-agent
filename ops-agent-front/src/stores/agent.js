@@ -109,6 +109,20 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
+    /** 刷新当前会话消息 + 建议 + plan（approve/reject 后拉取 execute 结果消息）。 */
+    async refreshMessages(conversationId) {
+      const cid = conversationId || this.currentConversation?.conversationId
+      if (!cid) return
+      try {
+        const { data } = await agentApi.getConversationMessages(cid)
+        this.messages = (data.data || []).map((m) => ({ ...m, _thinkingOpen: true }))
+        this.fetchSuggestions()
+        this.fetchPlans(cid)
+      } catch (e) {
+        // 刷新失败不阻塞
+      }
+    },
+
     async deleteConversation(conversationId) {
       await agentApi.deleteConversation(conversationId)
       if (this.currentConversation?.conversationId === conversationId) {

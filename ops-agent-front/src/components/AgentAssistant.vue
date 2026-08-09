@@ -421,6 +421,7 @@ async function approve(s) {
   if (!ok) return
   try {
     await store.approve(s.suggestionId)
+    notifyExecuting()
   } catch (e) {
     notifyError(errMsg(e, '确认失败'))
   }
@@ -436,9 +437,23 @@ async function reject(s) {
   if (!ok) return
   try {
     await store.reject(s.suggestionId)
+    store.refreshMessages()
   } catch (e) {
     notifyError(errMsg(e, '操作失败'))
   }
+}
+
+// approve 后：execute 是异步任务，延迟轮询拉取结果消息（建议状态 + 执行消息 + plan 进度）
+function notifyExecuting() {
+  const cid = store.currentConversation?.conversationId
+  if (!cid) return
+  ;[1200, 3500, 7000].forEach((ms, i) => {
+    setTimeout(() => {
+      store.refreshMessages(cid)
+      // 最后一轮再拉一次建议，确保卡片状态收尾
+      if (i === 2) store.fetchSuggestions()
+    }, ms)
+  })
 }
 
 function toggleThinking(m) {

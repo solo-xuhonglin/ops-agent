@@ -298,6 +298,23 @@ def _collect_business_params(args: dict) -> dict:
             if k not in _APPROVE_CONTEXT_KEYS and v is not None}
 
 
+def _missing_required_params(write_tool: Optional[agent_pb2.ToolSchema], args: dict) -> list[str]:
+    """approve_<写工具> 校验：写工具 schema 的 required 业务参数是否齐全（顶层或 params 内）。"""
+    if write_tool is None:
+        return []
+    try:
+        schema = json.loads(write_tool.parameters or "{}")
+    except json.JSONDecodeError:
+        return []
+    required = schema.get("required") or []
+    if not required:
+        return []
+    merged = dict(args)
+    if isinstance(args.get("params"), dict):
+        merged.update(args["params"])
+    return [k for k in required if merged.get(k) is None]
+
+
 async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
                                 action_type: str = "") -> dict:
     """落一条 PENDING 写操作建议（系统参数注入）。
@@ -500,10 +517,17 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                                                "body": "plan_update unavailable (agent DB disabled)"}
             elif name.startswith("approve_"):
                 # 审批工具：落 PENDING 建议，action_type 由工具名推导（写工具本体绝不在本节点执行）
-                result = await handle_suggest_action(store, ctx, args,
-                                                     action_type=action_type_from_approve(name)) \
-                    if store is not None else {"status": 500,
-                                               "body": f"{name} unavailable (agent DB disabled)"}
+                action = action_type_from_approve(name)
+                write_tool = registry.get(action)
+                missing = _missing_required_params(write_tool, args) if write_tool else []
+                if missing:
+                    # 缺必填业务参数：返回 400 提示，模型会重新调用补齐（而不是落空参数建议导致 execute 400）
+                    result = {"status": 400,
+                              "body": f"{name} 缺少必填参数: {missing}，请补齐后重新调用"}
+                else:
+                    result = await handle_suggest_action(store, ctx, args, action_type=action) \
+                        if store is not None else {"status": 500,
+                                                   "body": f"{name} unavailable (agent DB disabled)"}
             else:
                 tool = registry.get(name)
                 if tool is None:
