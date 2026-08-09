@@ -366,13 +366,18 @@ def _missing_required_params(write_tool: Optional[agent_pb2.ToolSchema], args: d
 
 
 async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
-                                action_type: str = "") -> dict:
+                                action_type: str = "",
+                                client: Optional[GrpcClient] = None) -> dict:
     """落一条 PENDING 写操作建议（系统参数注入）。
 
     LLM 只填业务参数；conversation_id/source_task_id 由本层注入；
     可挂 plan_id + step_no（plan 的步骤建议）与 retry_of（决策轮重试）。
     action_type 由审批工具名推导（approve_training_create -> training_create），
     兼容旧调用从 args 读。
+
+    落库成功后立即推 `suggestion_created` SSE 事件，让前端用真实 suggestionId
+    渲染 APPROVAL 时间线行——避免前端必须等 fetchSuggestions 才能看到卡
+    （修复"授权卡要重新进入会话才出现"的体验断裂）。
     """
     if store is None or not store.enabled:
         log.warning("suggest_action unavailable: agent DB disabled")
@@ -397,6 +402,24 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     except Exception as e:  # noqa: BLE001
         log.warning("suggest_action persist failed: %s", e)
         return {"status": 500, "body": f"suggestion create failed: {e}"}
+    # 推 suggestion_created：前端收到后立即 upsert APPROVAL 行（独立事件，不在 tool_result 兜底）
+    if client is not None:
+        try:
+            await client.send_event(ctx.task_id, "suggestion_created",
+                                    json.dumps({
+                                        "suggestionId": sid,
+                                        "actionType": action,
+                                        "targetType": str(args.get("target_type", "")),
+                                        "targetId": int(args.get("target_id", 0) or 0),
+                                        "params": _collect_business_params(args),
+                                        "reason": str(args.get("reason", "")),
+                                        "priority": str(args.get("priority", "NORMAL")),
+                                        "planId": str(args.get("plan_id", "")),
+                                        "stepNo": int(args.get("step_no", 0) or 0),
+                                        "retryOf": str(args.get("retry_of", "")),
+                                    }, ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            log.warning("suggestion_created event failed (non-blocking): %s", e)
     body = json.dumps({"suggestion_id": sid}, ensure_ascii=False)
     log.info("suggestion suggested: %s action=%s", sid[:8], action)
     return {"status": 200, "body": body}
@@ -742,7 +765,8 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                     result = {"status": 400,
                               "body": f"{name} 缺少必填参数: {missing}，请补齐后重新调用"}
                 else:
-                    result = await handle_suggest_action(store, ctx, args, action_type=action) \
+                    result = await handle_suggest_action(store, ctx, args,
+                                                        action_type=action, client=client) \
                         if store is not None else {"status": 500,
                                                    "body": f"{name} unavailable (agent DB disabled)"}
             else:

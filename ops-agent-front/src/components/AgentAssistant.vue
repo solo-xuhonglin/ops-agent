@@ -311,29 +311,6 @@
               {{ store.reasoningEnabled ? '推理链 + 工具调用' : '快速回答' }}
             </span>
           </div>
-          <div v-if="store.pendingSuggestions.length" class="my-2">
-            <v-card v-for="s in store.pendingSuggestions.slice(0, 2)" :key="s.id"
-                    class="mb-1 suggestion-card" variant="outlined">
-              <v-card-text class="py-2">
-                <div class="d-flex align-center flex-wrap">
-                  <v-icon size="18" :color="priorityColor(s.priority)" class="mr-1">{{ actionIcon(s.actionType) }}</v-icon>
-                  <span class="text-body-small font-weight-bold">{{ actionText(s.actionType) }}</span>
-                  <span v-if="targetText(s)" class="text-body-small text-medium-emphasis ml-2">{{ targetText(s) }}</span>
-                  <v-chip :color="priorityColor(s.priority)" size="x-small" class="ml-2">{{ priorityText(s.priority) }}</v-chip>
-                  <v-spacer />
-                  <v-btn v-if="canWrite" size="x-small" color="primary" @click="approve(s)">确认</v-btn>
-                  <v-btn v-if="canWrite" size="x-small" variant="text" class="ml-1" @click="reject(s)">忽略</v-btn>
-                </div>
-                <div v-if="s.reason" class="text-body-small text-medium-emphasis mt-1">{{ s.reason }}</div>
-                <div v-if="paramsEntries(s).length" class="suggestion-params mt-2">
-                  <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
-                    <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
-                    <span class="text-body-small param-val">{{ p.v }}</span>
-                  </div>
-                </div>
-              </v-card-text>
-            </v-card>
-          </div>
           <v-textarea v-model="input" density="compact" hide-details rows="1" max-rows="3"
                       auto-grow
                       :placeholder="store.streaming ? '正在生成回复…' : '询问系统状态，如：最近有哪些异常？'"

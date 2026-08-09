@@ -68,7 +68,8 @@ export const useAgentStore = defineStore('agent', {
     reasoningEnabled: localStorage.getItem('agentReasoning') !== 'off'  // 「深度思考」开关（默认开，持久化）
   }),
   getters: {
-    pendingSuggestions: (s) => s.suggestions.filter((x) => x.status === 'PENDING')
+    // 待审批数（badge / 计数用；具体行渲染统一走时间线 kind=APPROVAL，不再在输入框下渲染独立卡）
+    pendingSuggestionsCount: (s) => s.suggestions.filter((x) => x.status === 'PENDING').length
   },
   actions: {
     toggleDrawer() {
@@ -403,11 +404,8 @@ export const useAgentStore = defineStore('agent', {
             const name = data?.name || 'tool'
             const args = data?.args
             this.upsertToolCallRow({ taskId, callId, name, args, isResult: false })
-            // 同步从本地 store 的 suggestions 里尝试找到对应的 PENDING 项以预填 meta；
-            // 同步的 fetchSuggestions 会异步拉 server 结果做最终落地
-            if (name.startsWith('approve_')) {
-              this._prefillApprovalFromTool(taskId, name, args, callId)
-            }
+            // approve_* 工具调用的 APPROVAL 行由 worker 推送的 suggestion_created 事件实时建
+            // （不需要再等 fetchSuggestions，避免"重新进入才出现"）
             lastEventWasToolResult = false
             break
           }
@@ -419,6 +417,23 @@ export const useAgentStore = defineStore('agent', {
             this.upsertToolCallRow({ taskId, callId, name, summary, isResult: true })
             // 标记轮次边界：下一次 thinking/delta 触发 rotateTurn
             lastEventWasToolResult = true
+            break
+          }
+          case 'suggestion_created': {
+            // worker 落审批建议后立即推送：用真实 suggestionId 建 APPROVAL 行（不依赖本地 suggestions）
+            this.upsertApprovalRow({
+              suggestionId: data?.suggestionId,
+              actionType: data?.actionType,
+              targetType: data?.targetType,
+              targetId: data?.targetId,
+              params: data?.params,
+              reason: data?.reason,
+              priority: data?.priority,
+              planId: data?.planId,
+              stepNo: data?.stepNo,
+              retryOf: data?.retryOf,
+              decision: 'PENDING'
+            })
             break
           }
           case 'plan_update': {
@@ -469,30 +484,9 @@ export const useAgentStore = defineStore('agent', {
      *  若本地无对应 suggestionId，先 upsert 一个 PENDING 占位行；后续 fetchSuggestions 会用真实 suggestionId 刷新。
      *  严格按当前 conversationId 过滤，避免把别的会话的 PENDING 错误预填进来。
      */
-    _prefillApprovalFromTool(taskId, name, args, callId) {
-      const currentCid = this.currentConversation?.conversationId
-      // 从本地 store.suggestions 中找同 taskId 的 PENDING，且 actionType 匹配、归属当前会话
-      const toolActionType = (name || '').replace(/^approve_/, '')
-      const cand = this.suggestions.find(
-        (s) => s.status === 'PENDING'
-          && s.actionType === toolActionType
-          && (!currentCid || s.conversationId === currentCid)
-      )
-      if (cand) {
-        this.upsertApprovalRow({
-          suggestionId: cand.suggestionId,
-          actionType: cand.actionType,
-          targetType: cand.targetType,
-          targetId: cand.targetId,
-          params: cand.params,
-          reason: cand.reason,
-          priority: cand.priority,
-          planId: cand.planId,
-          stepNo: cand.stepNo,
-          retryOf: cand.retryOf,
-          decision: 'PENDING'
-        })
-      }
+    _prefillApprovalFromTool() {
+      // 已废弃：APPROVAL 行改由 worker 推送的 suggestion_created 事件实时创建（带真实 suggestionId）。
+      // 保留空函数防御历史调用残留；新代码不应再触发。
     },
 
     /**
@@ -608,6 +602,22 @@ export const useAgentStore = defineStore('agent', {
             })
             // 标记轮次边界：下一次 thinking/delta 触发 rotateTurn
             lastEventWasToolResult = true
+            break
+          case 'suggestion_created':
+            // worker 审批后续若再提建议（少见但合法），实时建 APPROVAL 行
+            this.upsertApprovalRow({
+              suggestionId: data?.suggestionId,
+              actionType: data?.actionType,
+              targetType: data?.targetType,
+              targetId: data?.targetId,
+              params: data?.params,
+              reason: data?.reason,
+              priority: data?.priority,
+              planId: data?.planId,
+              stepNo: data?.stepNo,
+              retryOf: data?.retryOf,
+              decision: 'PENDING'
+            })
             break
           case 'done':
           case 'error': {

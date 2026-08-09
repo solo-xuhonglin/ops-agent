@@ -261,7 +261,7 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
         });
     }
 
-    /** 把 worker 事件转推给对应会话的 SSE 流（thinking/delta/tool_call/tool_result/error）。 */
+    /** 把 worker 事件转推给对应会话的 SSE 流（thinking/delta/tool_call/tool_result/suggestion_created/error）。 */
     private void forwardStreamEvent(TaskEvent event) {
         String type = event.getEventType();
         String taskId = event.getTaskId();
@@ -269,6 +269,9 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
             case "thinking", "delta" -> streamManager.pushByTask(taskId, type,
                     Map.of("delta", event.getContent()));
             case "tool_call", "tool_result" -> streamManager.pushByTask(taskId, type,
+                    parseJsonOrRaw(event.getContent()));
+            // worker 审批建议落库后立即推送，前端收到即可用真实 suggestionId 建 APPROVAL 行
+            case "suggestion_created" -> streamManager.pushByTask(taskId, type,
                     parseJsonOrRaw(event.getContent()));
             case "error" -> streamManager.pushByTask(taskId, "error",
                     Map.of("message", event.getContent()));
