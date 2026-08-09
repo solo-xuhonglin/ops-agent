@@ -163,7 +163,8 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
 def build_graph(llm: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient) -> Any:
     """构建并编译决策图。llm/http/registry/client 为进程级共享实例，ctx 走 state。
-    llm 需实现 astream(messages)（流式）与 aclose()；默认 DeepSeekReasonerLLM。"""
+    llm 需实现 astream(messages)（流式产出 AIMessageChunk）；默认 ChatDeepSeek
+    （langchain-deepseek，reasoning_content 挂 additional_kwargs 供 _chunk_reasoning 读取）。"""
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         """决策节点：工具清单注入 prompt 后流式调用 LLM。

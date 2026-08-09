@@ -3,11 +3,11 @@ import asyncio
 import logging
 from typing import Any
 
+from langchain_deepseek import ChatDeepSeek
 from langgraph.errors import NodeCancelledError
 
 from app.agent import core
 from app.config import Config
-from app.llm.reasoner import DeepSeekReasonerLLM
 from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -35,8 +35,9 @@ async def amain() -> None:
 
     registry = ToolRegistry()
     grants = GrantStore()
-    # deepseek-reasoner 专用：流式透出推理链(reasoning_content)，不支持 temperature/tools 参数
-    llm = DeepSeekReasonerLLM(
+    # deepseek-reasoner 专用（langchain-deepseek 官方封装）：流式透出推理链
+    # reasoning_content（ChatOpenAI 不提取第三方扩展字段），不支持 temperature/tools 参数
+    llm = ChatDeepSeek(
         base_url=cfg.deepseek_base_url,
         api_key=cfg.deepseek_api_key,
         model=cfg.deepseek_model,
@@ -56,7 +57,10 @@ async def amain() -> None:
     try:
         await client.run()
     finally:
-        await llm.aclose()
+        # 不同 langchain 模型的关闭接口不一致（ChatDeepSeek 无 aclose），防御处理
+        close = getattr(llm, "aclose", None)
+        if close is not None:
+            await close()
         await http.close()
 
 
