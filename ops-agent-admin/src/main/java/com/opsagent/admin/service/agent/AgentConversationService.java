@@ -8,6 +8,8 @@ import com.opsagent.admin.entity.Conversation;
 import com.opsagent.admin.entity.ConversationMessage;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
+import com.opsagent.admin.repository.AgentConversationRepository;
+import com.opsagent.admin.repository.AgentPlanRepository;
 import com.opsagent.admin.repository.ConversationMessageRepository;
 import com.opsagent.admin.repository.ConversationRepository;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,7 @@ public class AgentConversationService {
     private static final int HISTORY_LIMIT = 20;
 
     private final ConversationRepository conversationRepository;
+    private final AgentPlanRepository agentPlanRepository;
     private final ConversationMessageRepository messageRepository;
     private final AgentTaskService taskService;
     private final ConversationStreamManager streamManager;
@@ -174,6 +177,20 @@ public class AgentConversationService {
         String planId = suggestion.getPlanId();
         if (planId == null || planId.isBlank()) {
             log.debug("autoContinue skipped: suggestion has no plan_id: {}", suggestionId);
+            return;
+        }
+        // 1. 只对 execute 任务派 continue；continue 任务完成不要再触发新的 continue（防递归死循环）
+        if (!"execute".equals(taskOpt.get().getTaskType())) {
+            log.debug("autoContinue skipped: task type={} (only execute triggers)",
+                    taskOpt.get().getTaskType());
+            return;
+        }
+        // 2. plan 终态（已完成/失败/取消）也不再触发
+        if (agentPlanRepository.findByPlanId(planId).map(p -> {
+            String s = p.getStatus();
+            return "DONE".equals(s) || "FAILED".equals(s) || "CANCELLED".equals(s);
+        }).orElse(false)) {
+            log.info("autoContinue skipped: plan {} already terminal", planId);
             return;
         }
         // 3. 派 continue 任务

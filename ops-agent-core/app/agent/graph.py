@@ -227,7 +227,7 @@ BUILTIN_TOOL_SCHEMAS: dict[str, dict] = {
     ),
 }
 
-# 追加到每个 approve_<写工具> 的审批上下文参数（plan 步骤推进 / 决策轮重试 / 目标定位）
+# 追加到每个 approve_<写工具> 的审批上下文参数（plan 步骤推进 / 决策轮重试 / 目标定位 / 理由）
 _APPROVE_EXTRA_PROPERTIES: dict[str, dict] = {
     "plan_id": {"type": "string", "description": "所属计划 plan_id（可选，plan 步骤推进时填）"},
     "step_no": {"type": "integer", "description": "计划内步骤号（可选）"},
@@ -236,10 +236,12 @@ _APPROVE_EXTRA_PROPERTIES: dict[str, dict] = {
                     "enum": ["dataset", "training_job", "model_version", "serving_endpoint"],
                     "description": "操作目标类型（模型从上下文携带，如对数据集发起训练填 dataset）"},
     "target_id": {"type": "integer", "description": "操作目标对象 ID（与 target_type 配套）"},
+    "reason": {"type": "string",
+               "description": "建议理由/操作说明，告诉用户为什么要执行该操作（建议填写，展示在确认卡片）"},
 }
 
-# approve_* 的审批上下文键：不进业务 params，单独落建议行（plan 关联 / 目标定位 / 重试）
-_APPROVE_CONTEXT_KEYS = {"plan_id", "step_no", "retry_of", "target_type", "target_id"}
+# approve_* 的审批上下文键：不进业务 params，单独落建议行（plan 关联 / 目标定位 / 重试 / 理由）
+_APPROVE_CONTEXT_KEYS = {"plan_id", "step_no", "retry_of", "target_type", "target_id", "reason"}
 
 
 def _build_approve_schema(write_tool: agent_pb2.ToolSchema) -> dict:
