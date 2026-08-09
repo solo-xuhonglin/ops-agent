@@ -186,9 +186,9 @@ class EventBatcher:
 
 
 def _parse_tool_calls(content: str) -> list[dict]:
-    """从模型输出解析工具调用：单工具 {"tool":..,"args":..} 或并行 {"tools":[...]}。
+    """从模型输出解析工具调用（每次仅一个）：{"tool":..,"args":..}。
 
-    只认含 tool/tools 键的 JSON（与最终回答里的 suggestions 块天然区分）；
+    只认含 tool 键的 JSON（与最终回答天然区分）；
     返回 [{name, args, id}]，供 tools_node 执行；解析失败返回空（视为最终回答）。
     """
     candidates: list[str] = []
@@ -202,28 +202,21 @@ def _parse_tool_calls(content: str) -> list[dict]:
             data = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if not isinstance(data, dict) or ("tool" not in data and "tools" not in data):
+        if not isinstance(data, dict) or not data.get("tool"):
             continue
-        items = data.get("tools") if isinstance(data.get("tools"), list) else [data]
-        out: list[dict] = []
-        for item in items:
-            if not isinstance(item, dict) or not item.get("tool"):
-                continue
-            args = item.get("args") or item.get("arguments") or {}
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except json.JSONDecodeError:
-                    args = {}
-            if not isinstance(args, dict):
+        args = data.get("args") or data.get("arguments") or {}
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
                 args = {}
-            out.append({
-                "name": str(item["tool"]),
-                "args": args,
-                "id": f"call_{uuid.uuid4().hex[:8]}",
-            })
-        if out:
-            return out
+        if not isinstance(args, dict):
+            args = {}
+        return [{
+            "name": str(data["tool"]),
+            "args": args,
+            "id": f"call_{uuid.uuid4().hex[:8]}",
+        }]
     return []
 
 
@@ -261,11 +254,10 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         "【输出契约】",
         "1. 需要查询/执行时，只输出一个 JSON 代码块（不要包含其他内容）：",
         '   ```json {"tool": "<工具名>", "args": {...}} ```',
-        "   需要并行调用多个工具时：",
-        '   ```json {"tools": [{"tool": "a", "args": {...}}, {"tool": "b", "args": {...}}]} ```',
         "2. 工具名必须严格取自上面清单，args 必须符合对应参数 schema；会话/任务等系统参数无需填写。",
-        "3. 当所需信息已获取、无需再调用工具时，直接输出最终回答（markdown），不要输出 JSON。",
-        "4. 回答中的数据必须来自工具返回结果，严禁编造。",
+        "3. 每次只调用一个工具，等结果返回后再决定下一步。",
+        "4. 当所需信息已获取、无需再调用工具时，直接输出最终回答（markdown），不要输出 JSON。",
+        "5. 回答中的数据必须来自工具返回结果，严禁编造。",
     ]
     return "\n".join(lines)
 
