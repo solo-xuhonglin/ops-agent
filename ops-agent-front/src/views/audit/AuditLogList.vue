@@ -49,7 +49,6 @@
         </template>
         <template #item.action="{ item }">
           <v-chip variant="tonal" color="primary" size="small">{{ actionLabel(item.action) }}</v-chip>
-          <div v-if="!ACTION_LABELS[item.action]" class="text-caption text-medium-emphasis">{{ item.action }}</div>
         </template>
         <template #item.actor="{ item }">
           <div class="d-flex align-center">
