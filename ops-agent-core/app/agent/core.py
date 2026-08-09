@@ -10,9 +10,9 @@ import asyncio
 import json
 import logging
 import re
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.errors import NodeCancelledError
 
 from app.agent.context import TaskContext
@@ -90,7 +90,7 @@ def _extract_reasoning(messages: list) -> str:
 
 
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
-                          llm: ChatOpenAI, http: AdminHttpClient,
+                          llm: Any, http: AdminHttpClient,
                           msg: agent_pb2.ServerMessage, max_rounds: int = 10) -> None:
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,

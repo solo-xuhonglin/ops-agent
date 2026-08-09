@@ -2,11 +2,11 @@
 import asyncio
 import logging
 
-from langchain_openai import ChatOpenAI
 from langgraph.errors import NodeCancelledError
 
 from app.agent import core
 from app.config import Config
+from app.llm.reasoner import DeepSeekReasonerLLM
 from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -34,12 +34,12 @@ async def amain() -> None:
 
     registry = ToolRegistry()
     grants = GrantStore()
-    llm = ChatOpenAI(
+    # deepseek-reasoner 专用：流式透出推理链(reasoning_content)，不支持 temperature/tools 参数
+    llm = DeepSeekReasonerLLM(
         base_url=cfg.deepseek_base_url,
         api_key=cfg.deepseek_api_key,
         model=cfg.deepseek_model,
         timeout=cfg.llm_timeout_s,
-        # 注意：deepseek-reasoner 固定采样，不传 temperature/top_p（传了也无效）
     )
     http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id, grants)
     if not cfg.deepseek_api_key:

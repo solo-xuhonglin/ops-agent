@@ -19,7 +19,6 @@ import uuid
 from typing import Annotated, Any, Literal, Optional, TypedDict
 
 from langchain_core.messages import AIMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -161,9 +160,10 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
     return "\n".join(lines)
 
 
-def build_graph(llm: ChatOpenAI, http: AdminHttpClient,
+def build_graph(llm: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient) -> Any:
-    """构建并编译决策图。llm/http/registry/client 为进程级共享实例，ctx 走 state。"""
+    """构建并编译决策图。llm/http/registry/client 为进程级共享实例，ctx 走 state。
+    llm 需实现 astream(messages)（流式）与 aclose()；默认 DeepSeekReasonerLLM。"""
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         """决策节点：工具清单注入 prompt 后流式调用 LLM。
