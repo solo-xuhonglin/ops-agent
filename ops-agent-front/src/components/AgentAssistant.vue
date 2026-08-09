@@ -464,10 +464,10 @@ async function send() {
 
 // 新会话空状态快捷提示（样式 B）
 const quickPrompts = [
-  '诊断训练失败原因',
-  '检查可部署模型',
-  '采集杭州近 7 天天气数据',
-  '训练并部署 LSTM 预测模型'
+  '查询可训练的数据集',
+  '分析最新一次模型训练结果',
+  '测试最近部署的模型服务',
+  '使用杭州近7天的天气数据进行训练和部署'
 ]
 async function sendQuick(q) {
   if (store.streaming) return
