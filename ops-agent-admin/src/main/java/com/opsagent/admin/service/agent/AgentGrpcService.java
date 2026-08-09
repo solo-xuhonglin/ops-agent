@@ -89,6 +89,11 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
             handlePlanUpdate(event.getContent());
             return;
         }
+        if ("plan_advance".equals(type)) {
+            // worker 推进轮发起（task_id=plan_advance:{planId}）：绑定会话，后续事件/结果走现有通道
+            handlePlanAdvance(event.getTaskId(), event.getContent());
+            return;
+        }
         if ("tool_call".equals(type) || "tool_result".equals(type)) {
             forwardStreamEvent(event);
             persistToolMessage(type, event);
@@ -127,22 +132,13 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
 
             /** 结果只落对话消息（task/suggestion 状态由 worker 直写库）。
              *  execute 任务完成后额外刷新 APPROVAL 行（pending → approved → executed/failed）。
-             *  chat/continue 任务无 suggestionId，refreshApproval 会因 findByTaskId 返回空而自然跳过。 */
+             *  无 suggestionId 的任务（chat/推进轮），refreshApproval 会因 findByTaskId 返回空而自然跳过。 */
             private void handleResult(TaskResult result) {
                 touch();
                 String conversationId = streamManager.conversationOf(result.getTaskId());
                 if (conversationId != null) {
                     conversationService.finishAssistant(conversationId, result.getTaskId(),
                             result.getOk(), result.getConclusion(), result.getReasoning(), result.getError());
-                    // execute 成功后自动派 continue 推进 plan（仅当 suggestion 关联 plan）
-                    if (result.getOk()) {
-                        try {
-                            conversationService.autoContinueForPlanStep(conversationId,
-                                    result.getTaskId(), result.getConclusion());
-                        } catch (Exception e) {
-                            log.warn("autoContinue trigger failed: {}", e.getMessage());
-                        }
-                    }
                 }
                 // 不论是否对话任务，都尝试刷新建议审批行（execute 类任务一定有 suggestion）
                 try {
@@ -180,6 +176,34 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                             planId, status, conversationId);
                 } catch (Exception e) {
                     log.warn("plan_update parse failed: {}", e.getMessage());
+                }
+            }
+
+            /** plan_advance：worker 推进轮发起（task_id=plan_advance:{planId}）。
+             *  绑定 task→conversation（后续 thinking/tool_call/result 走现有通道落库）+ 落一条
+             *  assistant 消息 + SSE 通知前端 plan 卡片刷新。 */
+            private void handlePlanAdvance(String taskId, String content) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> data = objectMapper.readValue(content, Map.class);
+                    String conversationId = str(data.get("conversationId"));
+                    String planId = str(data.get("planId"));
+                    String status = str(data.get("status"));
+                    String message = str(data.get("message"));
+                    if (conversationId.isBlank() || "null".equals(conversationId)) {
+                        log.warn("plan_advance without conversationId, ignored: task={} plan={}",
+                                taskId, planId);
+                        return;
+                    }
+                    streamManager.bindTask(taskId, conversationId);
+                    String text = "计划推进中：" + (message.isBlank() ? "对象状态已变化" : message);
+                    conversationService.savePlanUpdateMessage(conversationId, text, planId);
+                    streamManager.push(conversationId, "plan_update",
+                            Map.of("planId", planId, "status", status, "message", text));
+                    log.info("plan_advance handled: task={} plan={} conversation={}",
+                            taskId, planId, conversationId);
+                } catch (Exception e) {
+                    log.warn("plan_advance parse failed: {}", e.getMessage());
                 }
             }
 
