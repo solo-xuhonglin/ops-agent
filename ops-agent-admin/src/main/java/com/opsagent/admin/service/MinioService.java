@@ -12,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import jakarta.annotation.PostConstruct;
 import java.io.InputStream;
@@ -45,23 +44,6 @@ public class MinioService {
         }
     }
 
-    public String upload(String objectKey, MultipartFile file) throws Exception {
-        return upload(minioConfig.getBucket(), objectKey, file);
-    }
-
-    public String upload(String bucket, String objectKey, MultipartFile file) throws Exception {
-        try (InputStream is = file.getInputStream()) {
-            minioClient.putObject(PutObjectArgs.builder()
-                    .bucket(bucket)
-                    .object(objectKey)
-                    .stream(is, file.getSize(), -1)
-                    .contentType(file.getContentType())
-                    .build());
-        }
-        return objectKey;
-    }
-
-    /** 从任意输入流上传对象（采集的 CSV、训练日志等不走 MultipartFile 的场景）。 */
     public String upload(String objectKey, InputStream is, long size, String contentType) throws Exception {
         return upload(minioConfig.getBucket(), objectKey, is, size, contentType);
     }

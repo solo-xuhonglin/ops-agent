@@ -42,7 +42,6 @@
 | GET | `/api/datasets/{id}` | 详情 |
 | PUT | `/api/datasets/{id}` | **仅更新元数据**（名称/描述/地区/日期范围），不再隐式采集 |
 | POST | `/api/datasets/{id}/collect` | **显式触发天气采集**（按当前 regions/日期范围重新拉取，覆盖 weather.csv 与 rowCount，状态 → READY/INVALID） |
-| POST | `/api/datasets/{id}/file` | 上传数据文件（multipart，上传后置 READY） |
 | GET | `/api/datasets/{id}/file/url` | 文件预签名 URL（`expiryMinutes` 默认 30） |
 | GET | `/api/datasets/{id}/weather` | 天气时间序列（小时粒度，按地区分组，供图表） |
 | DELETE | `/api/datasets/{id}` | 删除（连带 MinIO 对象） |

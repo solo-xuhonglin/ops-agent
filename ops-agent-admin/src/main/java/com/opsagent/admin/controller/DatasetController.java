@@ -13,7 +13,6 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
@@ -68,30 +67,6 @@ public class DatasetController {
     public ApiResponse<?> delete(@PathVariable Long id) {
         datasetService.delete(id);
         return ApiResponse.ok();
-    }
-
-    @PostMapping("/{id}/file")
-    @PreAuthorize("hasAuthority('dataset:write')")
-    public ApiResponse<?> uploadFile(@PathVariable Long id, @RequestParam("file") MultipartFile file) {
-        MinioService minio = minioService.orElseThrow(
-                () -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                        "Object storage (MinIO) is not enabled in this environment"));
-        try {
-            // 先校验数据集存在（缺失则抛 ResourceNotFoundException -> 404），
-            // 避免向不存在的数据集上传后在 MinIO 留下孤儿对象。
-            datasetService.getObjectKey(id);
-            String objectKey = id + "/" + file.getOriginalFilename();
-            minio.upload(objectKey, file);
-            Long rows = datasetService.countRows(file);
-            datasetService.updateObjectKeyAndRowCount(id, objectKey, rows);
-            return ApiResponse.ok(java.util.Map.of("objectKey", objectKey, "rowCount", rows));
-        } catch (ResourceNotFoundException e) {
-            // dataset missing -> propagate as 404 (mapped by global handler)
-            throw e;
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to upload file to object storage: " + e.getMessage());
-        }
     }
 
     @GetMapping("/{id}/file/url")

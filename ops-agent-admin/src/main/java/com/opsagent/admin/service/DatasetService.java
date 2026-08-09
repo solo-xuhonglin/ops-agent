@@ -13,11 +13,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -108,54 +104,9 @@ public class DatasetService {
         });
     }
 
-    @Transactional
-    public void updateObjectKey(Long id, String objectKey) {
-        Dataset d = find(id);
-        d.setObjectKey(objectKey);
-        datasetRepository.save(d);
-    }
-
-    @Transactional
-    public void updateObjectKeyAndRowCount(Long id, String objectKey, Long rowCount) {
-        Dataset d = find(id);
-        String oldKey = d.getObjectKey();
-        d.setObjectKey(objectKey);
-        d.setRowCount(rowCount);
-        // 用户上传了自己的数据文件，数据集已有真实数据 -> READY
-        d.setStatus("READY");
-        datasetRepository.save(d);
-        // 换新文件后清理旧对象（weather.csv 或上次上传），避免留下孤儿
-        if (oldKey != null && !oldKey.equals(objectKey) && !oldKey.startsWith("weather://")) {
-            String stale = oldKey;
-            minioService.ifPresent(minio -> {
-                try {
-                    minio.delete(stale);
-                } catch (Exception e) {
-                    log.warn("MinIO stale object delete failed datasetId={} objectKey={} error={}",
-                            id, stale, e.getMessage());
-                }
-            });
-        }
-    }
-
     @Transactional(readOnly = true)
     public String getObjectKey(Long id) {
         return find(id).getObjectKey();
-    }
-
-    /**
-     * 上传文件后统计行数（含表头减 1）。失败返回 null，不阻断上传主流程。
-     */
-    public Long countRows(MultipartFile file) {
-        try (BufferedReader br = new BufferedReader(
-                new InputStreamReader(file.getInputStream(), StandardCharsets.UTF_8))) {
-            long lines = 0;
-            while (br.readLine() != null) lines++;
-            return Math.max(0, lines - 1);
-        } catch (Exception e) {
-            log.warn("Failed to count file rows error={}", e.getMessage());
-            return null;
-        }
     }
 
     private void collectWeather(Dataset d) {
