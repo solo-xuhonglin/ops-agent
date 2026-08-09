@@ -264,12 +264,13 @@ public class AgentConversationService {
                                   boolean isResult, String summary) {
         if (conversationId == null || conversationId.isBlank()) return;
         if (callId == null || callId.isBlank()) callId = UUID.randomUUID().toString();
+        final String finalCallId = callId;
         try {
             ConversationMessage msg = messageRepository
                     .findFirstByToolCallId(conversationId, callId)
                     .orElseGet(() -> {
                         ConversationMessage m = new ConversationMessage();
-                        m.setMessageId("tc:" + callId);
+                        m.setMessageId("tc:" + finalCallId);
                         m.setConversationId(conversationId);
                         m.setKind(ConversationMessage.KIND_TOOL_CALL);
                         m.setStatus(isResult ? ConversationMessage.STATUS_COMPLETED : "running");

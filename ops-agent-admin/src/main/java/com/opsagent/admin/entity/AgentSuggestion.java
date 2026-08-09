@@ -88,6 +88,10 @@ public class AgentSuggestion {
     @Column(columnDefinition = "TEXT")
     private String result;
 
+    /** 重试来源建议（决策轮 retry 时挂） */
+    @Column(name = "retry_of", length = 64)
+    private String retryOf;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
