@@ -176,6 +176,9 @@ export const useAgentStore = defineStore('agent', {
         createdAt: new Date().toISOString()
       }
       this.messages.push(streamingMsg)
+      // 关键：必须用 push 后 Pinia 包出来的 reactive proxy 来更新流式内容
+      // （直接改原始对象引用不会触发 Vue 渲染 —— 流式效果/中间步骤全靠这个 proxy）
+      const streamingRef = this.messages[this.messages.length - 1]
 
       this.error = null
       try {
@@ -183,14 +186,14 @@ export const useAgentStore = defineStore('agent', {
         const { taskId } = data.data
         this.currentTaskId = taskId
         this.streaming = true
-        this.openStream(this.currentConversation.conversationId, taskId, streamingMsg)
+        this.openStream(this.currentConversation.conversationId, taskId, streamingRef)
         // 首条消息后刷新会话列表（标题/时间更新）
         this.fetchConversations()
         return { taskId }
       } catch (e) {
         this.error = e.response?.data?.message || '消息发送失败'
-        streamingMsg.status = 'failed'
-        streamingMsg.content = '发送失败：' + this.error
+        streamingRef.status = 'failed'
+        streamingRef.content = '发送失败：' + this.error
         this.streaming = false
         throw e
       }
@@ -234,7 +237,8 @@ export const useAgentStore = defineStore('agent', {
           }
           case 'tool_result': {
             flush()
-            const item = streamingMsg.toolCalls.find((t) => t.name === data?.name)
+            // 按"第一个同名的 running 项"匹配（兼容并行调用同名工具）
+            const item = streamingMsg.toolCalls.find((t) => t.name === data?.name && t.status === 'running')
             if (item) {
               item.summary = data?.summary || ''
               item.status = 'done'
