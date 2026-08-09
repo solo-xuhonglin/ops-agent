@@ -13,6 +13,7 @@ assistant 消息保留 reasoning_content 原样回传（V4 带 tools 轮次硬�
 agent 节点流式产出（astream）：推理链增量发 thinking、正文增量发 delta（工具轮 content 不展示），
 聚合推理链挂最终 AIMessage.additional_kwargs["reasoning_content"]（落库/回传复用）。
 """
+import asyncio
 import json
 import logging
 import uuid
@@ -37,6 +38,11 @@ WRITE_TRACK_MAP: dict[str, tuple[str, str, str]] = {
     "training_create": ("training_get", "training_job", "jobId"),
     "serving_deploy": ("serving_get", "serving_endpoint", "endpointId"),
 }
+
+# wait_until 轮询参数
+WAIT_POLL_INTERVAL_S = 4.0
+WAIT_MAX_CONSECUTIVE_FAILS = 3
+WAIT_TERMINAL_STATUSES = {"FAILED", "CANCELLED", "STOPPED"}
 
 
 def _extract_object_id(body: Any) -> Optional[int]:
@@ -223,6 +229,26 @@ BUILTIN_TOOL_SCHEMAS: dict[str, dict] = {
                 "note": {"type": "string", "description": "变更说明（展示给用户）"},
             },
             "required": ["plan_id"],
+        },
+    ),
+    "wait_until": _openai_function(
+        "wait_until",
+        "等待异步对象状态到达目标/发生变化，带超时与提前返回。系统代为循环查询，"
+        "对象状态变化、updated_at 更新、到达 target_status 或进入终态时立即返回最新状态；"
+        "wait_seconds 内无变化则返回当前最新状态（仍在进行中）。提交异步操作（训练/部署）后等待完成时使用。",
+        {
+            "type": "object",
+            "properties": {
+                "query_tool": {"type": "string", "enum": ["training_get", "serving_get", "dataset_get"],
+                               "description": "要等待的只读查询工具名"},
+                "jobId": {"type": "integer", "description": "训练任务 ID（query_tool=training_get 时）"},
+                "endpointId": {"type": "integer", "description": "服务端点 ID（query_tool=serving_get 时）"},
+                "datasetId": {"type": "integer", "description": "数据集 ID（query_tool=dataset_get 时）"},
+                "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 120, "default": 60,
+                                 "description": "最多等待秒数；超时返回当前状态并标记仍在进行中"},
+                "target_status": {"type": "string", "description": "期望状态（可选），如 SUCCEEDED；不填则等任意变化"},
+            },
+            "required": ["query_tool"],
         },
     ),
 }
@@ -443,6 +469,106 @@ async def handle_plan_update(store: Any, ctx: TaskContext, args: dict,
         {"plan_id": plan_id, "status": plan_status}, ensure_ascii=False)}
 
 
+def _extract_wait_fields(result: dict) -> tuple[Optional[str], str]:
+    """从查询结果提取 (status, updated_at)；解析失败返回 (None, '')。
+
+    status 统一大写便于比较；updated_at 兼容 updatedAt/updatedTime 命名，缺失则为空串
+    （此时 updated_at 提前返回条件自动退化，只按 status 判定）。
+    """
+    body = result.get("body")
+    if not isinstance(body, str):
+        return None, ""
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None, ""
+    node = data.get("data") if isinstance(data, dict) else None
+    if isinstance(node, dict):
+        status = node.get("status")
+        updated = (node.get("updated_at") or node.get("updatedAt")
+                   or node.get("updatedTime") or "")
+        return (str(status).upper() if status else None), str(updated)
+    if isinstance(node, list) and node:
+        status = node[0].get("status")
+        updated = (node[0].get("updated_at") or node[0].get("updatedAt")
+                   or node[0].get("updatedTime") or "")
+        return (str(status).upper() if status else None), str(updated)
+    return None, ""
+
+
+def _wait_result(result: dict, status: Optional[str], updated_at: str,
+                 still_in_progress: bool = False) -> dict:
+    """wait_until 返回：原始查询结果 + 提取的状态字段（避免模型二次猜测）。"""
+    try:
+        parsed = json.loads(result.get("body") or "{}")
+    except json.JSONDecodeError:
+        parsed = {"raw": result.get("body")}
+    body = json.dumps({
+        "data": parsed,
+        "status": status,
+        "updated_at": updated_at,
+        "_still_in_progress": still_in_progress,
+    }, ensure_ascii=False)
+    return {"status": result.get("status"), "body": body}
+
+
+async def handle_wait_until(registry: Any, http: AdminHttpClient, client: GrpcClient,
+                            ctx: TaskContext, args: dict) -> dict:
+    """wait_until 内置工具：循环查询直至 目标/终态/updated_at 变化/超时，带提前返回。
+
+    - 提前返回：命中 target_status / 终态集合（FAILED/CANCELLED/STOPPED）/ updated_at 变化；
+    - 超时返回：wait_seconds 用尽 → 返回当前最新状态 + still_in_progress=true；
+    - 连续查询失败 WAIT_MAX_CONSECUTIVE_FAILS 次 → 提前返回错误（避免空转）；
+    - 等待期间发 progress 事件（前端时间线可见，不干等）。
+    """
+    query_tool = str(args.get("query_tool", ""))
+    tool = registry.get(query_tool) if registry is not None else None
+    if tool is None:
+        return {"status": 0, "body": f"unknown query_tool: {query_tool}"}
+    id_arg = next((k for k in ("jobId", "endpointId", "datasetId") if args.get(k)), None)
+    if id_arg is None:
+        return {"status": 400, "body": "one of jobId/endpointId/datasetId is required"}
+    query_args = {id_arg: int(args[id_arg])}
+    raw_wait = args.get("wait_seconds")
+    wait_seconds = max(0, min(int(raw_wait if raw_wait is not None else 60), 120))
+    target_status = str(args.get("target_status", "")).upper()
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + wait_seconds
+    last_status = ""
+    last_updated_at = ""
+    fail_count = 0
+    last_result: dict = {"status": 0, "body": ""}
+    while True:
+        last_result = await http.call(tool, query_args, ctx)
+        status, updated_at = _extract_wait_fields(last_result)
+        if status is None:
+            fail_count += 1
+            if fail_count >= WAIT_MAX_CONSECUTIVE_FAILS:
+                log.warning("wait_until query failed %d times: %s", fail_count, query_tool)
+                return _wait_result(last_result, None, "", still_in_progress=False)
+        else:
+            fail_count = 0
+            if ctx.task_id:
+                await client.send_event(ctx.task_id, "progress",
+                                        f"等待 {query_tool} 完成，当前状态 {status}")
+            # 提前返回①：到达目标状态
+            if target_status and status == target_status:
+                return _wait_result(last_result, status, updated_at)
+            # 提前返回②：进入终态（失败也要让 agent 看到，而非等到超时）
+            if status in WAIT_TERMINAL_STATUSES:
+                return _wait_result(last_result, status, updated_at)
+            # 提前返回③：数据有更新（updated_at 变化，状态可能未变但细节在推进）
+            if updated_at and last_updated_at and updated_at != last_updated_at:
+                return _wait_result(last_result, status, updated_at)
+            last_status = status
+            if updated_at:
+                last_updated_at = updated_at
+        if loop.time() >= deadline:
+            return _wait_result(last_result, status or last_status,
+                                last_updated_at, still_in_progress=True)
+        await asyncio.sleep(WAIT_POLL_INTERVAL_S)
+
+
 def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient,
                 tracker: Any = None, store: Any = None) -> Any:
@@ -521,6 +647,9 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 result = await handle_plan_update(store, ctx, args, notify=tracker_notify) \
                     if store is not None else {"status": 500,
                                                "body": "plan_update unavailable (agent DB disabled)"}
+            elif name == "wait_until":
+                # 长查询：超时 + 提前返回（agent 自主轮询异步对象状态，无需外部 continue）
+                result = await handle_wait_until(registry, http, client, ctx, args)
             elif name.startswith("approve_"):
                 # 审批工具：落 PENDING 建议，action_type 由工具名推导（写工具本体绝不在本节点执行）
                 action = action_type_from_approve(name)
