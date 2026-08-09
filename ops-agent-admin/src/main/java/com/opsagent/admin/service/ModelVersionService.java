@@ -6,10 +6,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
+
+import jakarta.persistence.criteria.Predicate;
 
 @Service
 @RequiredArgsConstructor
@@ -21,19 +26,24 @@ public class ModelVersionService {
     private final com.opsagent.admin.config.MinioConfig minioConfig;
 
     @Transactional(readOnly = true)
-    public Page<ModelVersion> list(Pageable pageable) {
-        return modelVersionRepository.findAll(pageable);
+    public Page<ModelVersion> list(Pageable pageable, String status, Long datasetId) {
+        Specification<ModelVersion> spec = (root, query, cb) -> {
+            List<Predicate> ps = new ArrayList<>();
+            if (status != null && !status.isBlank()) {
+                ps.add(cb.equal(root.get("status"), status));
+            }
+            if (datasetId != null) {
+                ps.add(cb.equal(root.get("datasetId"), datasetId));
+            }
+            return cb.and(ps.toArray(new Predicate[0]));
+        };
+        return modelVersionRepository.findAll(spec, pageable);
     }
 
     @Transactional(readOnly = true)
     public ModelVersion get(Long id) {
         return modelVersionRepository.findById(id)
                 .orElseThrow(() -> new com.opsagent.admin.common.ResourceNotFoundException("模型版本不存在: " + id));
-    }
-
-    @Transactional
-    public ModelVersion save(ModelVersion mv) {
-        return modelVersionRepository.save(mv);
     }
 
     @Transactional

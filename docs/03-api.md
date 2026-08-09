@@ -62,9 +62,8 @@
 |------|------|------|
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | `/api/models` | `model:read` | 分页列表（`page`/`size`，按 id 倒序） |
+| GET | `/api/models` | `model:read` | 分页列表（`page`/`size`，按 id 倒序；可选 `status`、`datasetId` 筛选） |
 | GET | `/api/models/{id}` | `model:read` | 详情（指标 / 超参） |
-| POST | `/api/models` | `model:write` | 手动新增版本（实体 JSON） |
 | GET | `/api/models/{id}/download` | `model:read` | 返回 `models/<id>/model.pt` 的 MinIO 预签名 URL（`expiryMinutes` 默认 30） |
 | DELETE | `/api/models/{id}` | `model:write` | 删除 |
 
@@ -86,7 +85,7 @@
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
 | POST | `/api/training/jobs` | `training:write` | 创建任务：建 ModelVersion + Job，随即起训练容器，立即返回 |
-| GET | `/api/training/jobs` | `training:read` | 分页列表 |
+| GET | `/api/training/jobs` | `training:read` | 分页列表（可选 `status`、`datasetId` 筛选） |
 | GET | `/api/training/jobs/{id}` | `training:read` | 任务详情（状态 / 容器 ID / 起止时间） |
 | GET | `/api/training/jobs/{id}/logs` | `training:read` | 返回 `artifacts/<jobId>/logs.txt` 预签名 URL（任务结束后才有） |
 | DELETE | `/api/training/jobs/{id}` | `training:write` | 删除任务记录（先停删运行中容器，并清理 MinIO 日志） |
@@ -106,13 +105,14 @@
 
 | 方法 | 路径 | 权限 | 说明 |
 |------|------|------|------|
-| GET | `/api/serving/endpoints` | `serving:read` | endpoint 列表（分页） |
+| GET | `/api/serving/endpoints` | `serving:read` | endpoint 列表（分页；可选 `status`、`modelVersionId` 筛选） |
 | GET | `/api/serving/endpoints/{id}` | `serving:read` | endpoint 详情 |
-| POST | `/api/serving/deploy` | `serving:write` | 部署：body `{modelVersionId}`（须 READY）→ 起 serving 容器 → 返回 CREATING 端点，就绪由轮询判定 |
+| POST | `/api/serving/endpoints/deploy` | `serving:write` | 部署：body `{modelVersionId}`（须 READY）→ 起 serving 容器 → 返回 CREATING 端点，就绪由轮询判定 |
 | POST | `/api/serving/endpoints/{id}/undeploy` | `serving:write` | 下线：停删容器 → 置 STOPPED（记录保留，供审计） |
 | DELETE | `/api/serving/endpoints/{id}` | `serving:write` | 物理删除记录：先停删容器再删记录（幂等） |
-| POST | `/api/serving-proxy/{endpointId}/predict` | `serving:read` | 推理代理：JWT 鉴权后内网转发给对应 serving 容器（非 DEPLOYED 返回 409） |
-| GET | `/api/serving/tools` | `serving:read` | 供 agent 使用的工具清单（仅 `status=DEPLOYED` 的端点，含 `name=lstm_predict`、`url`、`endpointId`） |
+| POST | `/api/serving/endpoints/{id}/predict` | `serving:read` | 推理代理：JWT 鉴权后内网转发给对应 serving 容器（非 DEPLOYED 返回 409） |
+
+serving 全部端点统一收敛在 `/api/serving/endpoints` 资源路径下；能力发现走 `/api/agent/tools` 注册表。
 
 > **当前实现状态**：`/api/datasets`、`/api/models`、`/api/training/jobs`、`/api/serving` 均为完整实现。serving 已接 Docker 动态编排（`ServingLauncher` 起容器 + `ServingHealthPoller` 就绪轮询/探活 + 状态机 CREATING→DEPLOYED/FAILED→STOPPING→STOPPED/UNHEALTHY），推理统一经 `/api/serving-proxy` 代理，serving 容器自身不设鉴权（仅内网）。
 

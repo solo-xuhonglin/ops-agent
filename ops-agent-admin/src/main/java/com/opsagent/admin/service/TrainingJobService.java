@@ -16,12 +16,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
+import jakarta.persistence.criteria.Predicate;
 
 @Service
 @RequiredArgsConstructor
@@ -39,8 +43,18 @@ public class TrainingJobService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Transactional(readOnly = true)
-    public Page<TrainingJob> list(Pageable pageable) {
-        return trainingJobRepository.findAll(pageable);
+    public Page<TrainingJob> list(Pageable pageable, String status, Long datasetId) {
+        Specification<TrainingJob> spec = (root, query, cb) -> {
+            List<Predicate> ps = new ArrayList<>();
+            if (status != null && !status.isBlank()) {
+                ps.add(cb.equal(root.get("status"), status));
+            }
+            if (datasetId != null) {
+                ps.add(cb.equal(root.get("datasetId"), datasetId));
+            }
+            return cb.and(ps.toArray(new Predicate[0]));
+        };
+        return trainingJobRepository.findAll(spec, pageable);
     }
 
     @Transactional(readOnly = true)

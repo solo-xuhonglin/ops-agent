@@ -2,6 +2,16 @@
   <div>
     <div class="page-toolbar">
       <v-spacer />
+      <v-select
+        v-model="filterStatus"
+        :items="statusOptions"
+        label="状态"
+        density="compact"
+        clearable
+        hide-details
+        style="max-width: 160px"
+        @update:model-value="load"
+      />
       <v-btn v-if="canTrain" color="primary" prepend-icon="mdi-rocket-launch" @click="openTrain">训练模型</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
@@ -152,11 +162,13 @@ const total = ref(0)
 const loading = ref(false)
 const pageSize = ref(10)
 const page = ref(0)
+const filterStatus = ref(null)
+const statusOptions = ['TRAINING', 'READY', 'FAILED']
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await api.get('/models', { params: { page: page.value, size: pageSize.value } })
+    const { data } = await api.get('/models', { params: { page: page.value, size: pageSize.value, status: filterStatus.value || undefined } })
     items.value = data.data.content
     total.value = data.data.totalElements
   } finally { loading.value = false }
@@ -212,7 +224,7 @@ async function deploy(item) {
   })
   if (!ok) return
   try {
-    await api.post('/serving/deploy', { modelVersionId: item.id })
+    await api.post('/serving/endpoints/deploy', { modelVersionId: item.id })
     router.push('/serving')
   } catch (e) {
     notifyError(errMsg(e, '部署失败'))

@@ -24,9 +24,11 @@ public class TrainingController {
     @GetMapping
     @PreAuthorize("hasAuthority('training:read')")
     public ApiResponse<?> list(@RequestParam(defaultValue = "0") int page,
-                               @RequestParam(defaultValue = "20") int size) {
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) String status,
+                               @RequestParam(required = false) Long datasetId) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
-        return ApiResponse.ok(trainingJobService.list(pageable));
+        return ApiResponse.ok(trainingJobService.list(pageable, status, datasetId));
     }
 
     @GetMapping("/{id}")

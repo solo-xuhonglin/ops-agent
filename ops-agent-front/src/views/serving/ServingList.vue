@@ -5,6 +5,16 @@
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
       </v-chip>
       <v-spacer />
+      <v-select
+        v-model="filterStatus"
+        :items="statusOptions"
+        label="状态"
+        density="compact"
+        clearable
+        hide-details
+        style="max-width: 160px"
+        @update:model-value="load"
+      />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-rocket-launch" @click="openDeploy">部署模型</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
@@ -135,13 +145,15 @@ const total = ref(0)
 const loading = ref(false)
 const pageSize = ref(10)
 const page = ref(0)
+const filterStatus = ref(null)
+const statusOptions = ['CREATING', 'DEPLOYED', 'UNHEALTHY', 'STOPPING', 'STOPPED', 'FAILED']
 
 const hasActive = computed(() => items.value.some(ep => ['CREATING', 'STOPPING'].includes(ep.status)))
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await api.get('/serving/endpoints', { params: { page: page.value, size: pageSize.value } })
+    const { data } = await api.get('/serving/endpoints', { params: { page: page.value, size: pageSize.value, status: filterStatus.value || undefined } })
     items.value = data.data.content
     total.value = data.data.totalElements
   } finally { loading.value = false }
@@ -185,7 +197,7 @@ async function openDeploy() {
 async function doDeploy() {
   deploying.value = true
   try {
-    await api.post('/serving/deploy', { modelVersionId: deployModelId.value })
+    await api.post('/serving/endpoints/deploy', { modelVersionId: deployModelId.value })
     deployDialog.value = false
     load()
   } catch (e) {
@@ -253,7 +265,7 @@ async function doTest() {
   testError.value = ''
   testResult.value = null
   try {
-    const { data } = await api.post(`/serving-proxy/${testItem.value.id}/predict`, { values, horizon })
+    const { data } = await api.post(`/serving/endpoints/${testItem.value.id}/predict`, { values, horizon })
     testResult.value = data.data.predictions
   } catch (e) {
     testError.value = errMsg(e, '推理调用失败')

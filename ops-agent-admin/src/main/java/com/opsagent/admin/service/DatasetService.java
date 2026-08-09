@@ -11,8 +11,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import jakarta.persistence.criteria.Predicate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,8 +33,18 @@ public class DatasetService {
     private final Optional<MinioService> minioService;
 
     @Transactional(readOnly = true)
-    public Page<DatasetDto.Response> list(Pageable pageable) {
-        return datasetRepository.findAll(pageable).map(this::toResponse);
+    public Page<DatasetDto.Response> list(Pageable pageable, String region, String status) {
+        Specification<Dataset> spec = (root, query, cb) -> {
+            List<Predicate> ps = new ArrayList<>();
+            if (status != null && !status.isBlank()) {
+                ps.add(cb.equal(root.get("status"), status));
+            }
+            if (region != null && !region.isBlank()) {
+                ps.add(cb.like(root.join("regions"), "%" + region + "%"));
+            }
+            return cb.and(ps.toArray(new Predicate[0]));
+        };
+        return datasetRepository.findAll(spec, pageable).map(this::toResponse);
     }
 
     @Transactional(readOnly = true)

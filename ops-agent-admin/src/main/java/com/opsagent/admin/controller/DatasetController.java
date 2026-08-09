@@ -29,9 +29,11 @@ public class DatasetController {
     @GetMapping
     @PreAuthorize("hasAuthority('dataset:read')")
     public ApiResponse<?> list(@RequestParam(defaultValue = "0") int page,
-                               @RequestParam(defaultValue = "20") int size) {
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) String region,
+                               @RequestParam(required = false) String status) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
-        return ApiResponse.ok(datasetService.list(pageable));
+        return ApiResponse.ok(datasetService.list(pageable, region, status));
     }
 
     @GetMapping("/{id}")

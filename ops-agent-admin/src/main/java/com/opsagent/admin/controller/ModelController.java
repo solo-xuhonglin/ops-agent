@@ -1,7 +1,6 @@
 package com.opsagent.admin.controller;
 
 import com.opsagent.admin.common.ApiResponse;
-import com.opsagent.admin.entity.ModelVersion;
 import com.opsagent.admin.service.ModelVersionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -20,21 +19,17 @@ public class ModelController {
     @GetMapping
     @PreAuthorize("hasAuthority('model:read')")
     public ApiResponse<?> list(@RequestParam(defaultValue = "0") int page,
-                               @RequestParam(defaultValue = "20") int size) {
+                               @RequestParam(defaultValue = "20") int size,
+                               @RequestParam(required = false) String status,
+                               @RequestParam(required = false) Long datasetId) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
-        return ApiResponse.ok(modelVersionService.list(pageable));
+        return ApiResponse.ok(modelVersionService.list(pageable, status, datasetId));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('model:read')")
     public ApiResponse<?> get(@PathVariable Long id) {
         return ApiResponse.ok(modelVersionService.get(id));
-    }
-
-    @PostMapping
-    @PreAuthorize("hasAuthority('model:write')")
-    public ApiResponse<?> create(@RequestBody ModelVersion mv) {
-        return ApiResponse.ok(modelVersionService.save(mv));
     }
 
     @DeleteMapping("/{id}")

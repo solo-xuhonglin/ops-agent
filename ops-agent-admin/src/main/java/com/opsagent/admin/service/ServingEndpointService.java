@@ -12,10 +12,15 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import jakarta.persistence.criteria.Predicate;
 
 @Service
 @RequiredArgsConstructor
@@ -31,8 +36,18 @@ public class ServingEndpointService {
     private final ServingLauncher servingLauncher;
 
     @Transactional(readOnly = true)
-    public Page<ServingEndpoint> list(Pageable pageable) {
-        return servingEndpointRepository.findAll(pageable);
+    public Page<ServingEndpoint> list(Pageable pageable, String status, Long modelVersionId) {
+        Specification<ServingEndpoint> spec = (root, query, cb) -> {
+            List<Predicate> ps = new ArrayList<>();
+            if (status != null && !status.isBlank()) {
+                ps.add(cb.equal(root.get("status"), status));
+            }
+            if (modelVersionId != null) {
+                ps.add(cb.equal(root.get("modelVersionId"), modelVersionId));
+            }
+            return cb.and(ps.toArray(new Predicate[0]));
+        };
+        return servingEndpointRepository.findAll(spec, pageable);
     }
 
     @Transactional(readOnly = true)

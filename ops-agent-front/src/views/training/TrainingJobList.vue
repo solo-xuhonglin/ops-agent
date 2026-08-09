@@ -5,6 +5,16 @@
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
       </v-chip>
       <v-spacer />
+      <v-select
+        v-model="filterStatus"
+        :items="statusOptions"
+        label="状态"
+        density="compact"
+        clearable
+        hide-details
+        style="max-width: 160px"
+        @update:model-value="load"
+      />
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
@@ -94,13 +104,15 @@ const total = ref(0)
 const loading = ref(false)
 const pageSize = ref(10)
 const page = ref(0)
+const filterStatus = ref(null)
+const statusOptions = ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED']
 
 const hasActive = computed(() => items.value.some(j => ['PENDING', 'RUNNING'].includes(j.status)))
 
 async function load() {
   loading.value = true
   try {
-    const { data } = await api.get('/training/jobs', { params: { page: page.value, size: pageSize.value } })
+    const { data } = await api.get('/training/jobs', { params: { page: page.value, size: pageSize.value, status: filterStatus.value || undefined } })
     items.value = data.data.content
     total.value = data.data.totalElements
   } finally { loading.value = false }

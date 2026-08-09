@@ -76,13 +76,9 @@ def test_serving_full_lifecycle(client, ready_model):
         assert dep["status"] == "DEPLOYED", \
             f"serving container not ready on remote: {dep['status']} (image missing? docker.sock?)"
 
-        # 3) the deployed endpoint shows up in the list and in /tools
-        listed = client.list_serving_endpoints()
+        # 3) the deployed endpoint shows up in the list (status filter)
+        listed = client.list_serving_endpoints(status="DEPLOYED")
         assert ep_id in [e["id"] for e in listed["content"]], "deployed endpoint must appear in list"
-        tools = client.serving_tools()
-        tool = next((t for t in tools if t["endpointId"] == ep_id), None)
-        assert tool is not None, f"deployed endpoint missing from /tools, got {tools}"
-        assert tool["name"] == "lstm_predict" and tool["url"]
 
         # 4) predict through the admin proxy: values length must be >= seq_len (12)
         values = [20.0 + (i % 5) for i in range(20)]

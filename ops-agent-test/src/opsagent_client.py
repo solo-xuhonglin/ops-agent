@@ -163,18 +163,18 @@ class OpsAgentClient:
             params={"expiryMinutes": expiry_minutes},
         )["data"]
 
-    # ---- serving endpoint helpers (verified against ServingController/ServingProxyController) ----
-    def list_serving_endpoints(self, page: int = 0, size: int = 20) -> dict:
-        return self.get("/api/serving/endpoints", params={"page": page, "size": size})["data"]
+    # ---- serving endpoint helpers (verified against ServingController) ----
+    def list_serving_endpoints(self, page: int = 0, size: int = 20, status: str | None = None) -> dict:
+        params = {"page": page, "size": size}
+        if status:
+            params["status"] = status
+        return self.get("/api/serving/endpoints", params=params)["data"]
 
     def get_serving_endpoint(self, ep_id: int) -> dict:
         return self.get(f"/api/serving/endpoints/{ep_id}")["data"]
 
-    def serving_tools(self) -> list:
-        return self.get("/api/serving/tools")["data"]
-
     def deploy_serving(self, model_version_id: int) -> dict:
-        return self.post("/api/serving/deploy", json={"modelVersionId": model_version_id})["data"]
+        return self.post("/api/serving/endpoints/deploy", json={"modelVersionId": model_version_id})["data"]
 
     def undeploy_serving(self, ep_id: int) -> dict:
         return self.post(f"/api/serving/endpoints/{ep_id}/undeploy")["data"]
@@ -184,7 +184,7 @@ class OpsAgentClient:
 
     def serving_predict(self, ep_id: int, values: list, horizon: int = 1) -> dict:
         return self.post(
-            f"/api/serving-proxy/{ep_id}/predict",
+            f"/api/serving/endpoints/{ep_id}/predict",
             json={"values": values, "horizon": horizon},
         )["data"]
 
