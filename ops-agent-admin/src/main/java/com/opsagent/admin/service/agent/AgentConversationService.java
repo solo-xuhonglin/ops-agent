@@ -171,6 +171,7 @@ public class AgentConversationService {
         done.put("reasoning", msg.getReasoning());
         done.put("taskId", taskId);
         streamManager.push(conversationId, "done", done);
+        streamManager.completeStream(conversationId);  // 收尾事件已推，关闭连接避免悬挂
         streamManager.unbindTask(taskId);
         log.info("conversation assistant message saved: conversation={}, task={}, ok={}",
                 conversationId, taskId, ok);
