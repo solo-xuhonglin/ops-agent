@@ -262,11 +262,14 @@ class TaskTracker:
             graph = build_graph(llm_runtime=self.llm, http=self.http,
                                 registry=self.registry, client=self.client,
                                 tracker=self, store=self.store)
-            final = await run_graph(graph, ctx,
+            final, hit_limit = await run_graph(graph, ctx,
                                     [SystemMessage(content=ADVANCE_SYSTEM),
                                      HumanMessage(content=human)],
                                     max_rounds=ADVANCE_MAX_ROUNDS)
             conclusion = _extract_conclusion(final).strip()
+            if hit_limit:
+                conclusion = (f"⚠️ 推进轮因工具调用轮次达到上限（{ADVANCE_MAX_ROUNDS} 轮）而停止。"
+                              f"\n\n{conclusion}")
         except Exception as e:  # noqa: BLE001 - 推进轮失败不阻塞
             log.error("advance round failed: %s", e, exc_info=True)
         if not conclusion:

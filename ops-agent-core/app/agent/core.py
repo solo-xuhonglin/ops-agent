@@ -52,6 +52,8 @@ SYSTEM_PROMPT = (
     "并在后台持续观察对象状态。\n"
     "5. **观察对象状态**：审批后的写操作由系统执行（异步接口会跟踪对象直至终态）；"
     "执行中可用 `wait_until` 主动确认对象状态，回复前先确认对象当前状态，**不要假设它已成功**。\n"
+    "   - 提交异步写操作后**必须**用 `wait_until` 等待对象到达终态，**禁止**直接反复调同名只读查询"
+    "（如连续 `training_get` 调查训练状态）；系统会拒绝重复只读调用并提示改用 `wait_until`。\n"
     "6. **检查任务列表**：用只读工具核对真实状态（`training_get`/`serving_get`/`training_list`/"
     "`serving_list`/`dataset_get` 等），确认步骤结果是成功、失败还是仍在进行中，禁止凭记忆或推断。\n"
     "7. **再决定后续步骤**：基于观察结果推进计划——步骤成功先用 `plan_update` 把该步骤标记为 done，"
@@ -77,6 +79,9 @@ SYSTEM_PROMPT = (
     "- **不要滥用 wait_until**：普通状态查询直接用 training_get/serving_get 等只读工具；"
     "已确认到达终态不等待；非异步操作不等待。wait_until 占用任务轮次，连续等待不要超过数分钟；"
     "超时返回仍在进行中且预算将尽时，汇报「仍在进行中，系统会在完成时继续处理」，不要无限等待。\n"
+    "- **sleep 用于纯等待**：当你需要给后端操作留时间（限流、缓存写入、冷却）而不关心对象状态变化时，"
+    "用 `sleep(seconds)` 在当前任务内纯等待 N 秒（单次 1-300 秒）；**不要**用 sleep 替代 wait_until"
+    "——等待异步对象状态变化仍应使用 wait_until。\n"
     "- **禁止重复调用**：禁止在没有新信息的情况下，为同一请求重复调用同一个工具。\n"
     "- 若用户未提供工具所需的必要参数（如数据集 ID、目标 ID），主动、一次性地询问所有缺失信息。\n"
     "\n"
@@ -181,11 +186,15 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     try:
         graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
                             tracker=tracker, store=store)
-        final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
+        final_messages, hit_limit = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
         content = _extract_conclusion(final_messages)
         # 写操作建议由 approve_<写操作名> / plan_create 工具落库，收敛后不再解析 JSON 建议块
         conclusion = content.strip()
+        if hit_limit:
+            conclusion = (f"⚠️ 任务因工具调用轮次达到上限（{max_rounds} 轮）而自动停止。"
+                          f"\n\n{conclusion}\n\n"
+                          f"建议：精简任务再继续对话，或明确拆分多步计划（plan_create）后逐步推进。")
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  reasoning=_extract_reasoning(final_messages))
         if store is not None and store.enabled:
@@ -305,8 +314,12 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
         ]
         graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
                             tracker=tracker, store=store)
-        final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
+        final_messages, hit_limit = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
         conclusion = _extract_conclusion(final_messages).strip()
+        if hit_limit:
+            conclusion = (f"⚠️ 任务因工具调用轮次达到上限（{max_rounds} 轮）而自动停止。"
+                          f"\n\n{conclusion}\n\n"
+                          f"建议：精简任务再继续对话，或用 plan_create 拆分多步计划。")
     except Exception as e:  # noqa: BLE001 - 图内闭环失败不阻塞 execute 收尾
         log.warning("execute graph loop failed: %s", e)
     if not conclusion:

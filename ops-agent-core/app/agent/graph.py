@@ -256,6 +256,20 @@ BUILTIN_TOOL_SCHEMAS: dict[str, dict] = {
             "required": ["query_tool"],
         },
     ),
+    "sleep": _openai_function(
+        "sleep",
+        "在当前任务内纯等待 N 秒（不查询任何对象，仅放慢决策节奏）。"
+        "用于限流/给后端操作留时间/冷却等场景；不要用于等待异步对象状态变化（应改用 wait_until）。"
+        "等待期间发 progress 事件；单次上限 300 秒，避免长挂。",
+        {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "integer", "minimum": 1, "maximum": 300, "default": 10,
+                            "description": "休眠秒数"},
+            },
+            "required": ["seconds"],
+        },
+    ),
 }
 
 # 追加到每个 approve_<写工具> 的审批上下文参数（plan 步骤推进 / 决策轮重试 / 目标定位 / 理由）
@@ -600,6 +614,40 @@ def _extract_conclusion(messages: list) -> str:
     return "no conclusion produced (max tool rounds reached)"
 
 
+def _find_recent_repeat_read(messages: list, name: str, args_hash: str) -> bool:
+    """检查当前轮之前的 AI 消息是否已以相同 name+args 调过只读工具——防 LLM 反复调查询。
+
+    跳过列表末尾的当前轮 AI 消息（agent_node 刚 append 的），仅在更早的历史里查重。
+    只查只读工具（registry.is_write=False）；写工具/审批工具/内置工具由其他机制保护。
+    """
+    seen_current = False
+    for m in reversed(messages[-6:]):
+        if getattr(m, "type", "") != "ai":
+            continue
+        if not seen_current:
+            seen_current = True
+            continue  # 当前轮，跳过
+        for tc in (getattr(m, "tool_calls", None) or []):
+            tname = tc.get("name") or ""
+            targs = json.dumps(tc.get("args") or {}, sort_keys=True, ensure_ascii=False)
+            if tname == name and targs == args_hash:
+                return True
+    return False
+
+
+async def handle_sleep(client: GrpcClient, ctx: TaskContext, args: dict) -> dict:
+    """sleep 内置工具：在当前任务内纯等待 N 秒（无查询），用于限流/冷却。
+
+    返回 `{status:200, body: "slept N seconds"}`；agent 可在下一轮继续决策。
+    """
+    seconds = max(1, min(int(args.get("seconds", 10) or 10), 300))
+    if ctx.task_id:
+        await client.send_event(ctx.task_id, "progress", f"sleep {seconds}s ...")
+    await asyncio.sleep(seconds)
+    return {"status": 200, "body": json.dumps(
+        {"slept_seconds": seconds, "message": f"已休眠 {seconds} 秒，请继续决策"}, ensure_ascii=False)}
+
+
 def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient,
                 tracker: Any = None, store: Any = None) -> Any:
@@ -681,6 +729,9 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
             elif name == "wait_until":
                 # 长查询：超时 + 提前返回（agent 自主轮询异步对象状态，无需外部 continue）
                 result = await handle_wait_until(registry, http, client, ctx, args)
+            elif name == "sleep":
+                # 纯等待 N 秒（限流/冷却；非等待异步对象）
+                result = await handle_sleep(client, ctx, args)
             elif name.startswith("approve_"):
                 # 审批工具：落 PENDING 建议，action_type 由工具名推导（写工具本体绝不在本节点执行）
                 action = action_type_from_approve(name)
@@ -699,8 +750,20 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 if tool is None:
                     result = {"status": 0, "body": f"unknown tool: {name}"}
                 else:
-                    result = await http.call(tool, args, ctx)
-                    await _maybe_register_tracker(tracker, store, ctx, tool, result)
+                    # 只读工具重复检测：避免 LLM 反复调同一查询而不切换到 wait_until
+                    if not tool.is_write and _find_recent_repeat_read(
+                            state.get("messages") or [], name,
+                            json.dumps(args, sort_keys=True, ensure_ascii=False)):
+                        result = {
+                            "status": 400,
+                            "body": (f"已检测到对 {name} 的重复调用（相同参数）。"
+                                     f"请改用 wait_until(query_tool='{name}', object_id, "
+                                     f"wait_seconds=60~120, target_status='SUCCEEDED') "
+                                     "由系统代为轮询；或调 sleep(seconds) 限流等待。"),
+                        }
+                    else:
+                        result = await http.call(tool, args, ctx)
+                        await _maybe_register_tracker(tracker, store, ctx, tool, result)
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",
@@ -726,11 +789,11 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
 
 
 async def run_graph(graph: Any, ctx: TaskContext,
-                    messages: list[Any], max_rounds: int = 10) -> list[Any]:
-    """执行图，返回收敛后的完整消息列表。
+                    messages: list[Any], max_rounds: int = 10) -> tuple[list[Any], bool]:
+    """执行图，返回 (收敛后的完整消息列表, 是否触发 recursion_limit)。
 
     达到 recursion 上限（LLM 持续调工具）时抛 GraphRecursionError —— 从 checkpoint
-    快照取已产生的消息，保证"轮数耗尽也能正常收敛产出结论"。
+    快照取已产生的消息；调用方根据 hit_recursion_limit 决定是否在结论前缀注明「任务停止」。
     """
     config = {
         "configurable": {"thread_id": ctx.task_id},
@@ -738,8 +801,8 @@ async def run_graph(graph: Any, ctx: TaskContext,
     }
     try:
         result = await graph.ainvoke({"messages": messages, "ctx": ctx, "pending_tools": []}, config=config)
-        return result["messages"]
+        return result["messages"], False
     except GraphRecursionError:
         log.warning("graph recursion limit reached: task=%s", ctx.task_id)
         snapshot = await graph.aget_state(config)
-        return (snapshot.values or {}).get("messages") or messages
+        return (snapshot.values or {}).get("messages") or messages, True
