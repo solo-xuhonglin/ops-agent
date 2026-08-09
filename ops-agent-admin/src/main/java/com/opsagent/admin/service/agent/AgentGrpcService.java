@@ -94,6 +94,15 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 if (conversationId != null) {
                     conversationService.finishAssistant(conversationId, result.getTaskId(),
                             result.getOk(), result.getConclusion(), result.getReasoning(), result.getError());
+                    // execute 成功后自动派 continue 推进 plan（仅当 suggestion 关联 plan）
+                    if (result.getOk()) {
+                        try {
+                            conversationService.autoContinueForPlanStep(conversationId,
+                                    result.getTaskId(), result.getConclusion());
+                        } catch (Exception e) {
+                            log.warn("autoContinue trigger failed: {}", e.getMessage());
+                        }
+                    }
                 }
             }
 

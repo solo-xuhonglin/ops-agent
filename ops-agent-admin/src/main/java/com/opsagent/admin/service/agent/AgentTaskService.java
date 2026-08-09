@@ -171,6 +171,50 @@ public class AgentTaskService {
         return task;
     }
 
+    /**
+     * 派发 continue 任务：execute 成功后自动触发，让 worker 复用决策轮推进 plan 步骤。
+     * query 字段携带执行观察（admin 组装"步骤已成功 + 上下文"，worker 直接当 observation）。
+     * 不落 agent_tasks（worker 收到后自写 continue 类型）。
+     */
+    @Transactional
+    public AgentTask dispatchContinuePlanStep(String conversationId, String planId,
+                                              Integer stepNo, String suggestionId,
+                                              String observation, Long triggeredBy) {
+        String taskId = UUID.randomUUID().toString();
+        AgentTask task = buildPending(taskId, "continue", conversationId, observation);
+        task.setSuggestionId(suggestionId);
+        WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);
+        if (worker == null) {
+            task.setStatus(STATUS_FAILED);
+            task.setConclusion("no agent worker online");
+            log.warn("continue dispatch skipped, no online worker: plan={} step={}", planId, stepNo);
+            return task;
+        }
+        // 长 TTL：覆盖决策轮与可能的下一轮 execute
+        long ttlMs = executeTokenTtlSeconds * 1000;
+        String taskToken = jwtUtil.generateScopedToken(triggeredBy,
+                resolveFullPermissions(triggeredBy), taskId, ttlMs);
+        String query = String.format(
+                "【自动推进】计划 %s 第 %d 步已成功完成（关联建议 %s）。观察：%s。请继续推进计划并决定下一步。",
+                planId, stepNo == null ? 0 : stepNo, suggestionId,
+                observation == null || observation.isBlank() ? "（无）" : observation);
+        TaskDispatch.Builder b = TaskDispatch.newBuilder()
+                .setTaskId(taskId)
+                .setTaskType("continue")
+                .setTaskToken(taskToken)
+                .setQuery(query)
+                .setSuggestionId(suggestionId == null ? "" : suggestionId)
+                .setReasoningEnabled(false);  // continue 是后台推进，fast 模式省 token
+        if (conversationId != null && !conversationId.isBlank()) {
+            b.setConversationId(conversationId);
+            streamManager.bindTask(taskId, conversationId);  // continue 结果也要落库
+        }
+        pushAfterCommit(worker, taskId, ServerMessage.newBuilder().setTaskDispatch(b).build());
+        log.info("continue dispatched: task={} plan={} step={} suggestion={}",
+                taskId, planId, stepNo, suggestionId);
+        return task;
+    }
+
     /** 用户/前端取消：发 CancelTask（worker 自治置 CANCELLED 并回写关联状态），admin 不落库。 */
     public void cancel(String taskId, String reason) {
         WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);

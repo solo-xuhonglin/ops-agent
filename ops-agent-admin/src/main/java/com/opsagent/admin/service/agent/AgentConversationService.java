@@ -2,9 +2,12 @@ package com.opsagent.admin.service.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opsagent.admin.common.ResourceNotFoundException;
+import com.opsagent.admin.entity.AgentSuggestion;
 import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.entity.Conversation;
 import com.opsagent.admin.entity.ConversationMessage;
+import com.opsagent.admin.repository.AgentSuggestionRepository;
+import com.opsagent.admin.repository.AgentTaskRepository;
 import com.opsagent.admin.repository.ConversationMessageRepository;
 import com.opsagent.admin.repository.ConversationRepository;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +49,8 @@ public class AgentConversationService {
     private final AgentTaskService taskService;
     private final ConversationStreamManager streamManager;
     private final ObjectMapper objectMapper;
+    private final AgentTaskRepository taskRepository;
+    private final AgentSuggestionRepository suggestionRepository;
 
     // ==================== conversation CRUD ====================
 
@@ -139,6 +144,51 @@ public class AgentConversationService {
     }
 
     // ==================== assistant result (called from AgentGrpcService) ====================
+
+    /**
+     * execute 成功后自动派发 continue 任务：复用决策轮推进 plan 步骤。
+     * 仅当 suggestion 关联了 plan（plan_id 非空）才触发，避免对单步建议空跑决策。
+     * 由 AgentGrpcService.handleResult 在 TaskResult 到达时调用。
+     */
+    public void autoContinueForPlanStep(String conversationId, String taskId,
+                                        String conclusion) {
+        if (conversationId == null || conversationId.isBlank()) return;
+        // 1. taskId 反查 suggestion_id
+        java.util.Optional<AgentTask> taskOpt = taskRepository.findByTaskId(taskId);
+        if (taskOpt.isEmpty()) {
+            log.debug("autoContinue skipped: task not found: {}", taskId);
+            return;
+        }
+        String suggestionId = taskOpt.get().getSuggestionId();
+        if (suggestionId == null || suggestionId.isBlank()) {
+            log.debug("autoContinue skipped: task has no suggestion_id: {}", taskId);
+            return;
+        }
+        // 2. suggestionId 查 plan_id
+        java.util.Optional<AgentSuggestion> sugOpt = suggestionRepository.findBySuggestionId(suggestionId);
+        if (sugOpt.isEmpty()) {
+            log.debug("autoContinue skipped: suggestion not found: {}", suggestionId);
+            return;
+        }
+        AgentSuggestion suggestion = sugOpt.get();
+        String planId = suggestion.getPlanId();
+        if (planId == null || planId.isBlank()) {
+            log.debug("autoContinue skipped: suggestion has no plan_id: {}", suggestionId);
+            return;
+        }
+        // 3. 派 continue 任务
+        try {
+            taskService.dispatchContinuePlanStep(conversationId, planId,
+                    suggestion.getStepNo(), suggestionId,
+                    conclusion == null ? "" : conclusion,
+                    null);  // execute 任务行未记录触发人，fallback 到 read-only 权限
+            log.info("autoContinue dispatched: plan={} step={} conv={}",
+                    planId, suggestion.getStepNo(), conversationId);
+        } catch (Exception e) {
+            log.warn("autoContinue dispatch failed: plan={} step={}: {}",
+                    planId, suggestion.getStepNo(), e.getMessage());
+        }
+    }
 
     /**
      * 内部任务完成：落 assistant 消息（completed/failed）并推 SSE done 事件、解绑 task。

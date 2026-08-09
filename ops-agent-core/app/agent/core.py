@@ -16,7 +16,9 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.errors import NodeCancelledError
 
 from app.agent.context import TaskContext
+from app.agent.decision import run_decision_round
 from app.agent.graph import build_graph, run_graph, _maybe_register_tracker
+from app.agent.tracker import Monitor
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -147,6 +149,11 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     # execute 任务（已审批写操作）直调写工具，不过决策图
     if d.task_type == "execute":
         await handle_execute(client, registry, llm, http, ctx, d, store, tracker)
+        return
+
+    # continue 任务（execute 成功后 admin 自动派发推进 plan 步骤）：复用决策轮
+    if d.task_type == "continue":
+        await handle_continue(client, registry, llm, http, ctx, d, store, tracker)
         return
 
     hint, user_prompt = _build_prompt(d)
@@ -294,6 +301,76 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
             log.warning("execute task finish failed: %s", e)
     await client.send_result(ctx.task_id, ok=ok, conclusion=conclusion)
     log.info("execute done: %s ok=%s", ctx.task_id[:8], ok)
+
+
+async def handle_continue(client: GrpcClient, registry: ToolRegistry, llm: Any,
+                          http: AdminHttpClient, ctx: TaskContext,
+                          d: agent_pb2.TaskDispatch, store: Any,
+                          tracker: Any = None) -> None:
+    """continue 任务：admin 在 execute 成功且 suggestion 关联 plan 时自动派发，
+    让模型复用决策轮推进 plan（提下一步 approve_<写操作> 或 plan_update 收尾）。
+
+    observation：d.query 整段作为执行观察（admin 派发时把执行总结 + 上下文编码进 query）。
+    无 plan_id 的建议直接跳过（单步任务无需推进）。
+    """
+    if store is None or not store.enabled:
+        log.warning("continue unavailable: agent DB disabled")
+        await client.send_result(ctx.task_id, ok=False, conclusion="agent DB disabled")
+        return
+    try:
+        suggestion = await store.get_suggestion(ctx.suggestion_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("continue: load suggestion failed: %s", e)
+        await client.send_result(ctx.task_id, ok=False, conclusion=f"load suggestion failed: {e}")
+        return
+    if not suggestion or not suggestion.get("plan_id"):
+        log.info("continue skipped: no plan_id on suggestion=%s", ctx.suggestion_id)
+        await client.send_result(ctx.task_id, ok=True, conclusion="（该建议无关联计划，无需推进）")
+        return
+    try:
+        await store.insert_task(d.task_id, "continue", d.conversation_id,
+                                query=d.query or "")
+    except Exception as e:  # noqa: BLE001
+        log.warning("continue task insert failed: %s", e)
+
+    monitor = Monitor(
+        object_type=suggestion.get("target_type", ""),
+        object_id=suggestion.get("target_id", 0),
+        conversation_id=ctx.conversation_id,
+        task_id=ctx.task_id,
+        task_token=ctx.task_token,
+        query_tool="", query_args={},
+        plan_id=suggestion["plan_id"],
+        suggestion_id=ctx.suggestion_id,
+        action_type=suggestion.get("action_type", ""),
+    )
+    observation = d.query or "（无）"
+    try:
+        decision_text = await run_decision_round(
+            llm, http, registry, client, store, tracker,
+            monitor, terminal_status="SUCCEEDED", observation=observation)
+        conclusion = decision_text or "（决策完成，无说明）"
+        await client.send_result(ctx.task_id, ok=True, conclusion=conclusion)
+        try:
+            await store.finish_task(ctx.task_id, "SUCCEEDED", conclusion)
+        except Exception as e:  # noqa: BLE001
+            log.warning("continue finish persist failed: %s", e)
+        log.info("continue done: plan=%s step=%s -> %s",
+                 monitor.plan_id, suggestion.get("step_no"), conclusion[:60])
+    except (asyncio.CancelledError, NodeCancelledError):
+        log.info("continue cancelled: %s", ctx.task_id)
+        try:
+            await store.cancel_task(ctx.task_id, "cancelled by admin")
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+    except Exception as e:  # noqa: BLE001 - 单任务失败不拖垮 worker
+        log.error("continue failed: %s", e, exc_info=True)
+        try:
+            await store.finish_task(ctx.task_id, "FAILED", str(e))
+        except Exception:  # noqa: BLE001
+            pass
+        await client.send_result(ctx.task_id, ok=False, conclusion=f"continue failed: {e}")
 
 
 def _extract_conclusion(messages: list) -> str:
