@@ -224,17 +224,23 @@ conversations ──< agent_memories (session_id)
 
 ## 6. 审计
 
-### audit_logs（规划中）
+### audit_logs（2026-08-09 已实现）
+系统写入（人类写操作经 AuditInterceptor、agent 写操作经 GrantCheckAspect），无写接口。
+
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
-| user_id | BIGINT | FK→users | |
-| action | VARCHAR(64) | | 如 `model:deploy` |
-| target_type | VARCHAR(64) | | |
-| target_id | BIGINT | | |
-| detail | JSONB | | |
-| ip | VARCHAR(64) | | |
+| action | VARCHAR(64) | NOT NULL | 写操作码：`dataset:create` / `serving:deploy` … |
+| actor_type | VARCHAR(16) | NOT NULL | `USER` / `AGENT`（即"是否 agent 执行"） |
+| actor_name | VARCHAR(128) | | 执行人：人类用户名 或 `Agent` |
+| approver_name | VARCHAR(128) | | agent 写操作的审批人（人类） |
+| target_type | VARCHAR(64) | | 操作对象类型 |
+| target_id | BIGINT | | 操作对象 id |
+| params | JSONB | | 参数（人类=请求体脱敏；agent=建议 params） |
+| ip | VARCHAR(64) | | 来源 IP |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
+
+> 已刻意精简：去掉 `actor_user_id` / `approver_user_id` / `task_id` / `worker_id` / `success`，溯源靠 `params` + `target`。
 
 ## 7. MinIO 目录约定（多桶）
 
@@ -250,4 +256,4 @@ conversations ──< agent_memories (session_id)
 
 - 外键列建索引：`datasets(created_by)`、`model_versions(dataset_id, status)`、`training_jobs(status)`、`serving_endpoints(status)`、`agent_tasks(status)`、`agent_suggestions(status)`、`agent_events(task_id)`。
 - `agent_tools(name)` 唯一索引（建表已带）。
-- `audit_logs(created_at)`。
+- `audit_logs(created_at)`、`audit_logs(actor_type)`、`audit_logs(action)`。

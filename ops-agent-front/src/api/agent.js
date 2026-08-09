@@ -39,13 +39,14 @@ export function streamConversation(conversationId, taskId, onEvent) {
   const token = localStorage.getItem('token')
   const url = `/api/agent/conversations/${conversationId}/stream${taskId ? `?taskId=${taskId}` : ''}`
   let settled = false // 已收到 done/error 收尾事件：后续连接关闭属正常收尾，不再视为错误
-  // idle 超时：30s 没收到任何事件视为断流（reader.read 长时间不返回 = 网络半关闭）。
-  // 收尾事件（done/error）会清掉 timer；任意 read 收到数据会重置。
-  const IDLE_TIMEOUT_MS = 30_000
+  // idle 超时：120s 没收到任何事件视为断流（reader.read 长时间不返回 = 网络半关闭）。
+  // 服务端每 15s 推一个 keepalive 事件，正常流式期间会持续重置 timer，不会误触发；
+  // 仅在连接真的半关闭 / 服务端无响应时才超时。收尾事件（done/error）会清掉 timer。
+  const IDLE_TIMEOUT_MS = 120_000
   const triggerIdle = () => {
     if (settled) return
     settled = true
-    onEvent('error', { message: '流式连接空闲超时（30s）' })
+    onEvent('error', { message: '流式连接空闲超时（120s）' })
     controller.abort()
   }
   let idleTimer = setTimeout(triggerIdle, IDLE_TIMEOUT_MS)

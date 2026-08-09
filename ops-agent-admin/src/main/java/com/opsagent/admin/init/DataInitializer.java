@@ -62,7 +62,8 @@ public class DataInitializer implements CommandLineRunner {
             java.util.Map.entry("serving:read", "查看模型服务"),
             java.util.Map.entry("serving:write", "管理模型服务"),
             java.util.Map.entry("agent:read", "查看Agent任务"),
-            java.util.Map.entry("agent:write", "派发Agent任务"));
+            java.util.Map.entry("agent:write", "派发Agent任务"),
+            java.util.Map.entry("audit:read", "查看审计日志"));
 
     private static final List<String> PERMISSION_CODES = List.copyOf(PERMISSION_DESCRIPTIONS.keySet());
 

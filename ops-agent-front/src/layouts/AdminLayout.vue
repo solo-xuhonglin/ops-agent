@@ -112,7 +112,8 @@ const menus = computed(() => {
     { to: '/training/jobs', title: '训练任务', icon: 'mdi-rocket-launch', perm: 'training:read' },
     { to: '/models', title: '模型管理', icon: 'mdi-cube-outline', perm: 'model:read' },
     { to: '/serving', title: '模型服务', icon: 'mdi-server', perm: 'serving:read' },
-    { to: '/agent/tools', title: 'Agent 工具', icon: 'mdi-wrench-outline', perm: 'agent:read' }
+    { to: '/agent/tools', title: 'Agent 工具', icon: 'mdi-wrench-outline', perm: 'agent:read' },
+    { to: '/audit/logs', title: '审计日志', icon: 'mdi-history', perm: 'audit:read' }
   ]
   return all.filter((m) => !m.perm || auth.hasPerm(m.perm))
 })

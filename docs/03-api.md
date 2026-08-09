@@ -225,20 +225,27 @@ event: done
 data: {"conversationId": 1}
 ```
 
-## 9. 审计 Audit（规划中）
+## 9. 审计 Audit（2026-08-09 已实现）
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/audit/logs` | 审计日志（ADMIN） |
+| 方法 | 路径 | 权限 | 说明 |
+|------|------|------|------|
+| GET | `/api/audit/logs` | `audit:read` | 审计日志（仅 ADMIN） |
+
+过滤参数（均可空）：`action` / `actorType`(USER\|AGENT) / `actorName` / `approverName` / `targetType` / `from` / `to`（ISO 时间）；分页 `page`/`size`。
 
 ```jsonc
-// GET /api/audit/logs?page=0&size=20
+// GET /api/audit/logs?actorType=AGENT&page=0&size=20
 { "content": [
-    { "id": 99, "userId": 1, "action": "model:deploy",
-      "targetType": "model_version", "targetId": 1,
-      "ip": "10.0.0.5", "createdAt": "2026-08-07T20:30:00Z" }
-  ], "totalElements": 1 }
+    { "id": 99, "action": "serving:deploy", "actorType": "AGENT", "actorName": "Agent",
+      "approverName": "管理员", "targetType": "serving_endpoint", "targetId": 5,
+      "params": "{\"modelVersionId\":1}", "ip": "10.0.0.5", "createdAt": "2026-08-09T20:30:00Z" },
+    { "id": 98, "action": "dataset:create", "actorType": "USER", "actorName": "user",
+      "targetType": "dataset", "targetId": 12,
+      "params": "{\"name\":\"北京气象\"}", "ip": "10.0.0.7", "createdAt": "2026-08-09T19:10:00Z" }
+  ], "totalElements": 2, "number": 0, "size": 20 }
 ```
+
+> 写操作由系统自动记录：人类写操作经 `AuditInterceptor` 捕获（参数对 `password/token/grantKey/secret` 脱敏）；agent 写操作经 `GrantCheckAspect` 在 grantKey 消费成功后记录（`actorName=Agent`、`approverName`=审批人）。
 
 ## 10. serving 容器推理接口（内部）
 

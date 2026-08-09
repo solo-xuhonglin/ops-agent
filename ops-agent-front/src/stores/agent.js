@@ -168,9 +168,10 @@ export const useAgentStore = defineStore('agent', {
 
     /** 自然语言问询 / 列表页诊断：落到当前会话（无会话则新建），返回 {messageId, taskId}。 */
     async dispatch({ query = '', taskType, targetType, targetId } = {}) {
-      // stale 兜底：streaming 状态卡 >30s 通常是 SSE 网络半关闭/服务端没推 done 事件；
-      // 之前直接 return null 会让用户的"再次发消息"被静默吃掉，这里强制收尾
-      if (this.streaming && this._streamStartedAt && Date.now() - this._streamStartedAt > 30_000) {
+      // stale 兜底：streaming 状态卡 >120s（与前端 SSE 空闲超时一致）通常是 SSE 网络半关闭/
+      // 服务端既没推 done 也没推 keepalive 事件；服务端已有 15s 心跳，正常慢思考不会触发。
+      // 若命中则强制收尾，避免用户的"再次发消息"被静默吃掉
+      if (this.streaming && this._streamStartedAt && Date.now() - this._streamStartedAt > 120_000) {
         if (this.streamController) this.streamController.abort()
         this.streamController = null
         this.streaming = false

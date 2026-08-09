@@ -16,7 +16,8 @@ const routes = [
       { path: 'training/jobs', name: 'training-jobs', component: () => import('../views/training/TrainingJobList.vue'), meta: { title: '训练任务', perm: 'training:read' } },
       { path: 'models', name: 'models', component: () => import('../views/models/ModelList.vue'), meta: { title: '模型管理', perm: 'model:read' } },
       { path: 'serving', name: 'serving', component: () => import('../views/serving/ServingList.vue'), meta: { title: '模型服务', perm: 'serving:read' } },
-      { path: 'agent/tools', name: 'agent-tools', component: () => import('../views/agent/AgentTools.vue'), meta: { title: 'Agent 工具', perm: 'agent:read' } }
+      { path: 'agent/tools', name: 'agent-tools', component: () => import('../views/agent/AgentTools.vue'), meta: { title: 'Agent 工具', perm: 'agent:read' } },
+      { path: 'audit/logs', name: 'audit-logs', component: () => import('../views/audit/AuditLogList.vue'), meta: { title: '审计日志', perm: 'audit:read' } }
     ]
   },
   { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('../views/NotFound.vue'), meta: { public: true } }
