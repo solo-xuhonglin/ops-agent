@@ -40,6 +40,7 @@ public final class ActionMapper {
             Map.entry("DELETE:/permissions/{id}", new ActionMeta("permission:delete", "permission")),
 
             Map.entry("POST:/agent/tasks", new ActionMeta("agent:dispatch", "agent_task")),
+            Map.entry("POST:/agent/tasks/{id}/cancel", new ActionMeta("agent:task_cancel", "agent_task")),
             Map.entry("POST:/agent/suggestions/{id}/approve", new ActionMeta("agent:suggestion_approve", "agent_suggestion")),
             Map.entry("POST:/agent/suggestions/{id}/reject", new ActionMeta("agent:suggestion_reject", "agent_suggestion")),
             Map.entry("POST:/agent/conversations", new ActionMeta("agent:conversation_create", "conversation")),

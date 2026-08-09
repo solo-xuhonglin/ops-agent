@@ -49,7 +49,7 @@
         </template>
         <template #item.action="{ item }">
           <v-chip variant="tonal" color="primary" size="small">{{ actionLabel(item.action) }}</v-chip>
-          <div class="text-caption text-medium-emphasis">{{ item.action }}</div>
+          <div v-if="!ACTION_LABELS[item.action]" class="text-caption text-medium-emphasis">{{ item.action }}</div>
         </template>
         <template #item.actor="{ item }">
           <div class="d-flex align-center">
@@ -129,6 +129,7 @@ const ACTION_LABELS = {
   'permission:update': '更新权限',
   'permission:delete': '删除权限',
   'agent:dispatch': '派发任务',
+  'agent:task_cancel': '取消任务',
   'agent:suggestion_approve': '批准建议',
   'agent:suggestion_reject': '拒绝建议',
   'agent:conversation_create': '创建会话',
@@ -136,16 +137,28 @@ const ACTION_LABELS = {
   'agent:message': '发送消息',
   'agent_tool:delete': '删除工具'
 }
+// fallback: 将 method:resource 格式化为可读中文
+const METHOD_LABELS = { post: '创建', put: '更新', delete: '删除', patch: '修改' }
+const RESOURCE_LABELS = {
+  agent: 'Agent 任务', dataset: '数据集', model: '模型', training: '训练',
+  serving: '服务', user: '用户', role: '角色', permission: '权限',
+  conversation: '会话', tool: '工具'
+}
+
+function actionLabel(a) {
+  if (ACTION_LABELS[a]) return ACTION_LABELS[a]
+  //兜底：post:agent → "创建 Agent 任务"
+  const [method, resource] = a.split(':')
+  const mLabel = METHOD_LABELS[method] || method
+  const rLabel = RESOURCE_LABELS[resource] || resource
+  return `${mLabel}${rLabel}`
+}
 const actionOptions = Object.entries(ACTION_LABELS).map(([value, title]) => ({ title, value }))
 const agentOptions = [
   { title: '全部', value: null },
   { title: '人工', value: 'USER' },
   { title: 'Agent', value: 'AGENT' }
 ]
-
-function actionLabel(a) {
-  return ACTION_LABELS[a] || a
-}
 
 const headers = [
   { title: '时间', key: 'createdAt', width: 150 },
