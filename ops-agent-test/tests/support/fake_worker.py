@@ -13,15 +13,15 @@ remote host, attached to the docker network where the admin gRPC server
 Behaviour (deterministic, no LLM):
 - Registers as worker `e2e-fake-<suffix>` with one agent; writes /e2e/ready
   once RegisterAck arrives (runner polls this file to know registration done).
-- On TaskDispatch:
+- On TaskDispatch (chat):
     * always sends one progress TaskEvent first
     * if the query contains "e2e-suggest" -> TaskResult ok=true with one
       Suggestion(action_type=serving_undeploy, target=serving_endpoint/999)
       -> this is what lets tests exercise the approve/reject suggestion flow
     * otherwise -> TaskResult ok=true, conclusion "e2e ok"
-- On AuthorizationGrant -> appends the grant (JSON) to /e2e/grants.log
-  (approve() pushes it down the stream; the runner reads the file to prove the
-  grant really reached the worker).
+- On TaskDispatch (execute, v3): grant_key arrives inside TaskDispatch ->
+  appends the grant (JSON) to /e2e/grants.log and replies TaskResult ok=true.
+  (approve() sends execute dispatch with grant_key in the message.)
 - Answers Ping with Pong so the registry keeps us alive.
 - Appends every dispatched task id to /e2e/results.log for the runner report.
 """
@@ -102,6 +102,20 @@ async def main() -> None:
             if td.history:
                 with open(HISTORY_FILE, "a") as f:
                     f.write(f"{td.task_id}\t{td.history}\n")
+            # execute 任务（v3）：grant_key 随 TaskDispatch 下发，写入 grants.log 并回 result
+            if td.task_type == "execute" and td.grant_key:
+                with open(GRANT_FILE, "a") as f:
+                    f.write(json.dumps({
+                        "action": td.action_type, "target": td.target_type,
+                        "targetId": td.target_id, "grantKey": td.grant_key,
+                        "suggestionId": td.suggestion_id,
+                    }) + "\n")
+                _log(f"execute grant received action={td.action_type} key={td.grant_key}")
+                seq += 1
+                await stream.write(agent_pb2.ClientMessage(
+                    task_result=agent_pb2.TaskResult(
+                        task_id=td.task_id, ok=True, conclusion="e2e execute ok")))
+                continue
             # progress event
             await stream.write(agent_pb2.ClientMessage(
                 task_event=agent_pb2.TaskEvent(
@@ -141,15 +155,6 @@ async def main() -> None:
                         task_id=td.task_id, ok=True, conclusion="e2e ok",
                         reasoning="e2e reasoning full")))
             _log(f"task done task={td.task_id}")
-        elif kind == "authorization_grant":
-            g = msg.authorization_grant
-            with open(GRANT_FILE, "a") as f:
-                f.write(json.dumps({
-                    "action": g.action_type, "target": g.target_type,
-                    "targetId": g.target_id, "grantKey": g.grant_key,
-                    "ttlSeconds": g.ttl_seconds,
-                }) + "\n")
-            _log(f"grant received action={g.action_type} key={g.grant_key}")
         else:
             _log(f"unhandled server message kind={kind}")
 
