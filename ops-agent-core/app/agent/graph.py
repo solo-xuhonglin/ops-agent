@@ -512,7 +512,8 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
             args = tc.get("args") or {}
             call_id = tc.get("id") or ""
             await client.send_event(ctx.task_id, "tool_call",
-                                    json.dumps({"name": name, "args": args}, ensure_ascii=False))
+                                    json.dumps({"id": call_id, "name": name, "args": args},
+                                               ensure_ascii=False))
             if name == "plan_create":
                 result = await handle_plan_create(store, ctx, args) if store is not None else {
                     "status": 500, "body": "plan_create unavailable (agent DB disabled)"}
@@ -543,7 +544,8 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",
-                                    json.dumps({"name": name, "summary": summary}, ensure_ascii=False))
+                                    json.dumps({"id": call_id, "name": name, "summary": summary},
+                                               ensure_ascii=False))
             tool_msgs.append(ToolMessage(
                 content=json.dumps(result, ensure_ascii=False), tool_call_id=call_id))
         return {"messages": tool_msgs, "pending_tools": []}

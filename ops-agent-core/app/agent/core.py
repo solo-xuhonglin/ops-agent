@@ -10,6 +10,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -247,13 +248,17 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
         except (json.JSONDecodeError, TypeError):
             log.warning("execute params invalid, ignored: %s", str(d.params)[:100])
 
+    # execute_suggestion 单步执行：写工具本体（仅一次），带 call_id 便于 admin 端配对 call/result
+    call_id = f"exec_{uuid.uuid4().hex[:8]}"
     await client.send_event(ctx.task_id, "tool_call",
-                            json.dumps({"name": tool.name, "args": params}, ensure_ascii=False))
+                            json.dumps({"id": call_id, "name": tool.name, "args": params},
+                                       ensure_ascii=False))
     result = await http.call(tool, params, ctx)
     body = result.get("body") if isinstance(result, dict) else result
     summary = str(body)[:500] if body is not None else ""
     await client.send_event(ctx.task_id, "tool_result",
-                            json.dumps({"name": tool.name, "summary": summary}, ensure_ascii=False))
+                            json.dumps({"id": call_id, "name": tool.name, "summary": summary},
+                                       ensure_ascii=False))
     ok = isinstance(result, dict) and result.get("status") in (200, 201, 202)
 
     # 落 RUNNING 任务行（admin 端 TaskResult 反查 suggestionId 需要；与 chat/continue 一致）

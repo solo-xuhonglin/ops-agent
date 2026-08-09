@@ -28,6 +28,7 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
     private final ToolSchemaService toolSchemaService;
     private final ConversationStreamManager streamManager;
     private final AgentConversationService conversationService;
+    private final AgentSuggestionService suggestionService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -78,16 +79,55 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 log.info("register ack sent to {}: {} read tools", register.getWorkerId(), tools.size());
             }
 
-            /** 事件只转发 SSE；plan_update 额外落一条 assistant 消息（对话通信）。 */
-            private void handleEvent(TaskEvent event) {
-                touch();
-                forwardStreamEvent(event);
-                if ("plan_update".equals(event.getEventType())) {
-                    handlePlanUpdate(event.getContent());
-                }
-            }
+    /** 事件只转发 SSE；plan_update 额外落一条 assistant 消息（对话通信）。
+     *  tool_call/tool_result 同步落消息库（kind=TOOL_CALL/TOOL_RESULT），刷新/重连后历史可见。 */
+    private void handleEvent(TaskEvent event) {
+        touch();
+        String type = event.getEventType();
+        if ("plan_update".equals(type)) {
+            forwardStreamEvent(event);
+            handlePlanUpdate(event.getContent());
+            return;
+        }
+        if ("tool_call".equals(type) || "tool_result".equals(type)) {
+            forwardStreamEvent(event);
+            persistToolMessage(type, event);
+            return;
+        }
+        forwardStreamEvent(event);
+    }
 
-            /** 结果只落对话消息（task/suggestion 状态由 worker 直写库）。 */
+    /**
+     * 落 TOOL_CALL/TOOL_RESULT 一行到消息流。
+     * - 从 streamManager 反查会话（pushByTask 用的就是 taskId↔conversationId 映射）
+     * - payload 字段映射：tool_call → {id,name,args} ；tool_result → {id,name,summary}
+     * - 失败 / 离线任务（无 conversationId）静默忽略
+     */
+    private void persistToolMessage(String type, TaskEvent event) {
+        String taskId = event.getTaskId();
+        String cid = streamManager.conversationOf(taskId);
+        if (cid == null || cid.isBlank()) return;
+        Object parsed = parseJsonOrRaw(event.getContent());
+        if (!(parsed instanceof Map<?, ?> data)) {
+            return;
+        }
+        String name = str(data.get("name"));
+        String callId = str(data.get("id"));
+        Object args = data.get("args");
+        String argsJson;
+        try {
+            argsJson = (args == null) ? "{}" : objectMapper.writeValueAsString(args);
+        } catch (Exception e) {
+            argsJson = "{}";
+        }
+        boolean isResult = "tool_result".equals(type);
+        String summary = isResult ? str(data.get("summary")) : "";
+        conversationService.upsertToolCallRow(cid, taskId, callId, name, argsJson, isResult, summary);
+    }
+
+            /** 结果只落对话消息（task/suggestion 状态由 worker 直写库）。
+             *  execute 任务完成后额外刷新 APPROVAL 行（pending → approved → executed/failed）。
+             *  chat/continue 任务无 suggestionId，refreshApproval 会因 findByTaskId 返回空而自然跳过。 */
             private void handleResult(TaskResult result) {
                 touch();
                 String conversationId = streamManager.conversationOf(result.getTaskId());
@@ -103,6 +143,12 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                             log.warn("autoContinue trigger failed: {}", e.getMessage());
                         }
                     }
+                }
+                // 不论是否对话任务，都尝试刷新建议审批行（execute 类任务一定有 suggestion）
+                try {
+                    suggestionService.refreshApprovalAfterExecuteTask(result.getTaskId());
+                } catch (Exception e) {
+                    log.debug("refreshApproval skipped (no-op for non-execute tasks): {}", e.getMessage());
                 }
             }
 

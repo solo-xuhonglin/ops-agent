@@ -1,4 +1,10 @@
 // AI Agent 多轮会话状态：会话列表⇄聊天两视图、SSE 流式（80ms 节流）、建议审批闭环、plan 卡片
+// 时间线模型：messages[] 是按时间序的扁平数组，按 kind 分发渲染：
+//   USER / ASSISTANT —— 对话气泡
+//   TOOL_CALL —— 工具调用独立成行（callId 唯一标识；同 call 后续 result 落同行的 toolSummary）
+//   APPROVAL —— 建议审批独立成行（payload_json 含 suggestionId；同 suggestionId upsert 累计状态）
+// 端上 streaming 期间按 SSE 事件实时 append/upsert 消息行，落库由 server 同步写入，
+// refreshMessages 时按 (taskId+toolCallId) 或 (payload.suggestionId) 去重与合并。
 import { defineStore } from 'pinia'
 import * as agentApi from '../api/agent'
 
@@ -18,6 +24,27 @@ function sortSuggestions(list) {
 // 流式渲染节流：SSE 事件按 80ms 窗口合并，避免每次 delta 全量重渲染
 const STREAM_FLUSH_MS = 80
 
+/**
+ * 从服务端行/前端临时行中归一化 kind（兼容历史老消息只有 role 字段）。
+ * 解析 service 字段（payload_json 字符串）→ 对象，便于模板使用。
+ */
+function normalizeMessage(m) {
+  if (!m) return m
+  let kind = m.kind
+  if (!kind) {
+    if (m.role === 'user') kind = 'USER'
+    else if (m.role === 'assistant') kind = 'ASSISTANT'
+    else if (m.role === 'tool') kind = 'TOOL_CALL'
+    else if (m.role === 'approval') kind = 'APPROVAL'
+    else kind = 'ASSISTANT'
+  }
+  let payload = m.payload
+  if (m.payloadJson && !payload) {
+    try { payload = JSON.parse(m.payloadJson) } catch (e) { payload = null }
+  }
+  return { ...m, kind, payload }
+}
+
 export const useAgentStore = defineStore('agent', {
   state: () => ({
     drawerOpen: false,
@@ -25,7 +52,7 @@ export const useAgentStore = defineStore('agent', {
     conversations: [],
     totalConversations: 0,
     currentConversation: null,
-    messages: [],                  // 当前会话消息（含流式中临时消息）
+    messages: [],                  // 当前会话消息流（kind 字段统一，按时间序扁平）
     streaming: false,              // 是否有活跃 SSE 流
     currentTaskId: null,
     streamController: null,        // AbortController（停止生成）
@@ -103,7 +130,7 @@ export const useAgentStore = defineStore('agent', {
       this.currentTaskId = null
       try {
         const { data } = await agentApi.getConversationMessages(conversationId)
-        this.messages = (data.data || []).map((m) => ({ ...m, _thinkingOpen: true }))
+        this.messages = (data.data || []).map((m) => normalizeMessage({ ...m, _thinkingOpen: true }))
         this.currentConversation =
           this.conversations.find((c) => c.conversationId === conversationId) || null
         this.fetchPlans(conversationId)
@@ -113,17 +140,27 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
-    /** 刷新当前会话消息 + 建议 + plan（approve/reject 后拉取 execute 结果消息）。 */
+    /** 刷新当前会话消息 + 建议 + plan（approve/reject 后拉取 execute 结果消息）。
+     *  与本地流式占位行（status='streaming'）合并，跳过 SSE 已 append 但服务器尚未落库的 TOOL_CALL 重复行（callId 一致则用服务器行覆盖）。 */
     async refreshMessages(conversationId) {
       const cid = conversationId || this.currentConversation?.conversationId
       if (!cid) return
       try {
         const { data } = await agentApi.getConversationMessages(cid)
-        const serverMsgs = (data.data || []).map((m) => ({ ...m, _thinkingOpen: true }))
-        // 保留本地"执行中"占位：execute 结果消息未落库前，轮询整体覆盖会把它清掉
-        // （done/error 后占位 status 已改为 completed/failed，不再保留，由落库消息替代）
-        const pending = this.messages.filter((m) => m.status === 'executing')
-        this.messages = pending.length ? [...serverMsgs, ...pending] : serverMsgs
+        const serverMsgs = (data.data || []).map((m) => normalizeMessage({ ...m, _thinkingOpen: true }))
+
+        // 流式中占位行：保留，refresh 后由 done 后的落库消息替代
+        const pending = this.messages.filter((m) => m.status === 'streaming' || m.status === 'executing')
+        // 去重：本地已有的 TOOL_CALL/APPROVAL 与服务器返回同一行（同 taskId+callId / payload.suggestionId）以服务器行为准
+        const seenCalls = new Set(serverMsgs.filter((m) => m.kind === 'TOOL_CALL').map((m) => `${m.taskId}:${m.toolCallId}`))
+        const seenApprovals = new Set(serverMsgs.filter((m) => m.kind === 'APPROVAL').map((m) => m.payload?.suggestionId).filter(Boolean))
+        const localOnly = this.messages.filter((m) => {
+          if (m.status === 'streaming' || m.status === 'executing') return true // 占位行保留
+          if (m.kind === 'TOOL_CALL') return !seenCalls.has(`${m.taskId}:${m.toolCallId}`)
+          if (m.kind === 'APPROVAL' && m.payload?.suggestionId) return !seenApprovals.has(m.payload.suggestionId)
+          return false
+        })
+        this.messages = [...serverMsgs, ...localOnly].sort((a, b) => (a.id || 0) - (b.id || 0))
         this.fetchSuggestions()
         this.fetchPlans(cid)
       } catch (e) {
@@ -164,6 +201,62 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
+    // ==================== 工具/审批 消息行 upsert（仅前端，SSE 事件源） ====================
+
+    /** 追加/更新一行 TOOL_CALL 消息（按 taskId+callId upsert）：
+     *  - tool_call 事件：append 新行（status=running）
+     *  - tool_result 事件：find existing, fill toolSummary + status=completed */
+    upsertToolCallRow({ taskId, callId, name, args, summary, isResult }) {
+      const idx = this.messages.findIndex(
+        (m) => m.kind === 'TOOL_CALL' && m.taskId === taskId && m.toolCallId === callId
+      )
+      if (idx >= 0) {
+        const row = this.messages[idx]
+        if (isResult) {
+          row.toolSummary = summary || ''
+          row.status = 'completed'
+        }
+        return
+      }
+      this.messages.push({
+        messageId: `local-tc-${callId || Date.now()}`,
+        kind: 'TOOL_CALL',
+        taskId,
+        toolCallId: callId,
+        toolName: name || 'tool',
+        toolArgs: isResult ? null : (typeof args === 'string' ? args : JSON.stringify(args || {})),
+        toolSummary: isResult ? (summary || '') : '',
+        status: isResult ? 'completed' : 'running',
+        createdAt: new Date().toISOString()
+      })
+    },
+
+    /** 追加/更新一行 APPROVAL 消息（按 payload.suggestionId upsert）：
+     *  - PENDING 创建（approve_* 工具调用截图过来）：insert 新行
+     *  - 后续 approve/reject/execute 变更：在原行 payload.decision 上更新 */
+    upsertApprovalRow({ suggestionId, actionType, targetType, targetId, params, reason, priority,
+                        planId, stepNo, retryOf, decision, confirmedBy, confirmedAt, executedAt, result }) {
+      if (!suggestionId) return
+      const existing = this.messages.find((m) => m.kind === 'APPROVAL' && m.payload?.suggestionId === suggestionId)
+      const payload = {
+        suggestionId, actionType, targetType, targetId, params, reason, priority,
+        planId, stepNo, retryOf, decision, confirmedBy, confirmedAt, executedAt, result
+      }
+      if (existing) {
+        existing.payload = { ...(existing.payload || {}), ...payload }
+        existing.decision = decision || existing.decision
+        return
+      }
+      this.messages.push({
+        messageId: `local-ap-${suggestionId}`,
+        kind: 'APPROVAL',
+        decision: decision || 'PENDING',
+        payload,
+        status: 'completed',
+        createdAt: new Date().toISOString()
+      })
+    },
+
     // ==================== 发消息 + 流式 ====================
 
     /** 自然语言问询 / 列表页诊断：落到当前会话（无会话则新建），返回 {messageId, taskId}。 */
@@ -187,22 +280,22 @@ export const useAgentStore = defineStore('agent', {
       const localText = text || (targetType ? `诊断 ${targetType}#${targetId}` : '')
       const localUserMsg = {
         messageId: `local-${Date.now()}`,
-        role: 'user',
+        kind: 'USER',
         content: localText,
         status: 'completed',
         createdAt: new Date().toISOString()
       }
       this.messages.push(localUserMsg)
 
-      // 占位 assistant 流式消息（thinking 默认展开）
+      // 占位 assistant 流式消息（thinking 默认展开）；工具调用与审批不再挂在消息上，
+      // 而是用 upsertToolCallRow / upsertApprovalRow 落到顶层 messages[]（按时间序）
       const streamingMsg = {
         messageId: `stream-${Date.now()}`,
-        role: 'assistant',
+        kind: 'ASSISTANT',
         content: '',
         reasoning: '',
         status: 'streaming',
         _thinkingOpen: true,
-        toolCalls: [],          // [{name, args, summary}] 工具时间线
         createdAt: new Date().toISOString()
       }
       this.messages.push(streamingMsg)
@@ -232,7 +325,9 @@ export const useAgentStore = defineStore('agent', {
 
     /**
      * 启动 SSE 流：delta/thinking 按 80ms 窗口节流合并后增量更新 streamingMsg；
-     * done/error 收尾（done 后拉建议与 plan）；plan_update 事件刷新 plan 卡片。
+     * tool_call/tool_result → upsertToolCallRow（同 callId 一行）；
+     * approve_<写工具> 工具调用 → 衍生 APPROVAL 行（占位 PENDING，approve/reject 后由 fetchSuggestions 补 decision）；
+     * done/error 收尾；plan_update 事件刷新 plan 卡片。
      */
     openStream(conversationId, taskId, streamingMsg) {
       let pending = { thinking: '', delta: '' }
@@ -258,23 +353,23 @@ export const useAgentStore = defineStore('agent', {
             break
           case 'tool_call': {
             flush()
-            streamingMsg.toolCalls.push({
-              name: data?.name || 'tool',
-              args: data?.args,
-              summary: '',
-              status: 'running',
-              _summaryOpen: false
-            })
+            const callId = data?.id || data?.callId || null
+            const name = data?.name || 'tool'
+            const args = data?.args
+            this.upsertToolCallRow({ taskId, callId, name, args, isResult: false })
+            // 同步从本地 store 的 suggestions 里尝试找到对应的 PENDING 项以预填 meta；
+            // 同步的 fetchSuggestions 会异步拉 server 结果做最终落地
+            if (name.startsWith('approve_')) {
+              this._prefillApprovalFromTool(taskId, name, args, callId)
+            }
             break
           }
           case 'tool_result': {
             flush()
-            // 按"第一个同名的 running 项"匹配（兼容并行调用同名工具）
-            const item = streamingMsg.toolCalls.find((t) => t.name === data?.name && t.status === 'running')
-            if (item) {
-              item.summary = data?.summary || ''
-              item.status = 'done'
-            }
+            const callId = data?.id || data?.callId || null
+            const name = data?.name || 'tool'
+            const summary = data?.summary || ''
+            this.upsertToolCallRow({ taskId, callId, name, summary, isResult: true })
             break
           }
           case 'plan_update': {
@@ -318,9 +413,35 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
+    /** approve_<写工具> 工具调用：从前端本地 memory 里反查本轮已 fetch 的 PENDING 建议（PENDING 来自 SSE 早期，worker 也异步直写库）。
+     *  若本地无对应 suggestionId，先 upsert 一个 PENDING 占位行；后续 fetchSuggestions 会用真实 suggestionId 刷新。
+     */
+    _prefillApprovalFromTool(taskId, name, args, callId) {
+      // 从本地 store.suggestions 中找同 taskId 的 PENDING，且 actionType 匹配（args.action / args.plan 等）。
+      const toolActionType = (name || '').replace(/^approve_/, '')
+      const cand = this.suggestions.find(
+        (s) => s.status === 'PENDING' && s.actionType === toolActionType
+      )
+      if (cand) {
+        this.upsertApprovalRow({
+          suggestionId: cand.suggestionId,
+          actionType: cand.actionType,
+          targetType: cand.targetType,
+          targetId: cand.targetId,
+          params: cand.params,
+          reason: cand.reason,
+          priority: cand.priority,
+          planId: cand.planId,
+          stepNo: cand.stepNo,
+          retryOf: cand.retryOf,
+          decision: 'PENDING'
+        })
+      }
+    },
+
     /**
      * approve 后监听 execute 任务的实时事件（会话级流，不绑 taskId）：
-     * - tool_call/tool_result → 更新本地"执行中"占位消息的工具时间线（chat 流已关，无其他接收端）
+     * - tool_call/tool_result → upsertToolCallRow（同一行累计）
      * - 占位消息每秒刷新已等待秒数（_elapsed），done/error 前一直可见
      * - done/error → 清计时 + 占位标记 completed/failed（refreshMessages 不再保留）→ 刷新（落库结果替代占位）
      * execute 通常秒级返回，流会很快收到 done 自动关闭；重复 approve 时旧的监听让位。
@@ -334,15 +455,14 @@ export const useAgentStore = defineStore('agent', {
       // 本地占位：execute 结果消息落库前先展示执行状态（落库后 refreshMessages 会替换掉）
       this.messages.push({
         messageId: `exec-${Date.now()}`,
-        role: 'assistant',
+        kind: 'ASSISTANT',
         content: label,
         status: 'executing',
-        toolCalls: [],
         _elapsed: 0,
         _thinkingOpen: true,
         createdAt: new Date().toISOString()
       })
-      const proxy = this.messages[this.messages.length - 1] // 必须取 reactive proxy（Pinia 坑）
+      const proxy = this.messages[this.messages.length - 1]
       const startTs = Date.now()
       const timer = setInterval(() => {
         proxy._elapsed = Math.round((Date.now() - startTs) / 1000)
@@ -350,27 +470,27 @@ export const useAgentStore = defineStore('agent', {
       this.executeController = agentApi.streamConversation(conversationId, null, (event, data) => {
         switch (event) {
           case 'tool_call':
-            proxy.toolCalls.push({
+            this.upsertToolCallRow({
+              taskId: data?.taskId || null,
+              callId: data?.id || data?.callId || null,
               name: data?.name || 'tool',
               args: data?.args,
-              summary: '',
-              status: 'running',
-              _summaryOpen: false
+              isResult: false
             })
             break
-          case 'tool_result': {
-            const item = proxy.toolCalls.find((t) => t.name === data?.name && t.status === 'running')
-            if (item) {
-              item.summary = data?.summary || ''
-              item.status = 'done'
-            }
+          case 'tool_result':
+            this.upsertToolCallRow({
+              taskId: data?.taskId || null,
+              callId: data?.id || data?.callId || null,
+              name: data?.name || 'tool',
+              summary: data?.summary || '',
+              isResult: true
+            })
             break
-          }
           case 'done':
           case 'error': {
             clearInterval(timer)
             this.executeController = null
-            // 标记占位收尾（refreshMessages 按 status==='executing' 才保留）
             proxy.status = event === 'done' ? 'completed' : 'failed'
             if (event === 'done' && data?.content) proxy.content = data.content
             this.refreshMessages(conversationId)
@@ -380,19 +500,28 @@ export const useAgentStore = defineStore('agent', {
       })
     },
 
-    /** 任务结束：拉该轮任务的建议（approve/reject 授权卡数据挂在消息上）。 */
+    /** 任务结束：拉该轮任务的建议（approve/reject 授权卡数据挂在消息上）。
+     *  同时把每条 PENDING 建议 upsert 成 APPROVAL 行（持 suggestionId + plan 关联）。 */
     async attachSuggestions(taskId) {
       if (!taskId) return
       try {
         const { data } = await agentApi.listSuggestions({ page: 0, size: 100 })
         const list = data.data.content || []
-        const suggestions = list.filter((s) => s.sourceTaskId === taskId || s.taskId === taskId)
-        const last = [...this.messages].reverse().find((m) => m.role === 'assistant')
-        if (last && (last.status === 'completed' || last.status === 'failed')) {
-          last.suggestions = suggestions
+        for (const s of list.filter((x) => x.status === 'PENDING' && x.sourceTaskId === taskId)) {
+          this.upsertApprovalRow({
+            suggestionId: s.suggestionId,
+            actionType: s.actionType,
+            targetType: s.targetType,
+            targetId: s.targetId,
+            params: s.params,
+            reason: s.reason,
+            priority: s.priority,
+            planId: s.planId,
+            stepNo: s.stepNo,
+            retryOf: s.retryOf,
+            decision: s.status
+          })
         }
-        // 同时兜底挂载当前会话其他 PENDING 建议（防多建议/多轮 race）
-        this._attachPendingSuggestionsToMessages(list)
       } catch (e) {
         // 建议拉取失败不阻塞 UI
       }
@@ -413,7 +542,7 @@ export const useAgentStore = defineStore('agent', {
       this._streamStartedAt = 0
       // 未收尾的流式消息标记为中断
       this.messages.forEach((m) => {
-        if (m.role === 'assistant' && m.status === 'streaming') {
+        if (m.kind === 'ASSISTANT' && m.status === 'streaming') {
           m.status = 'failed'
           m.error = m.error || '已停止'
         }
@@ -428,39 +557,49 @@ export const useAgentStore = defineStore('agent', {
         const list = sortSuggestions(data.data.content || [])
         this.suggestions = list
         this.pendingCount = list.filter((s) => s.status === 'PENDING').length
-        // 兜底：把当前会话的 PENDING 建议挂载到对应 assistant 消息（修复 done 事件与落库 race 导致消息区授权卡缺失）
-        this._attachPendingSuggestionsToMessages(list)
+        // 同步每个已知 suggestion 的最新决策到 APPROVAL 行（即便不是当前轮生成的）
+        for (const s of list) {
+          if (!s.suggestionId) continue
+          this.upsertApprovalRow({
+            suggestionId: s.suggestionId,
+            actionType: s.actionType,
+            targetType: s.targetType,
+            targetId: s.targetId,
+            params: s.params,
+            reason: s.reason,
+            priority: s.priority,
+            planId: s.planId,
+            stepNo: s.stepNo,
+            retryOf: s.retryOf,
+            decision: s.status,
+            confirmedBy: s.confirmedBy,
+            confirmedAt: s.confirmedAt,
+            executedAt: s.executedAt,
+            result: s.result
+          })
+        }
       } catch (e) {
         // 忽略：抽屉打开时随会话刷新
       }
     },
 
-    /**
-     * 把 PENDING 建议按 sourceTaskId 挂载到对应 assistant 消息（若消息区尚未挂载）。
-     * fetchSuggestions / done / approve 后都会走这里，确保授权卡既在消息里也在底部待审批区。
-     */
-    _attachPendingSuggestionsToMessages(list) {
-      const assistantMsgs = this.messages.filter((m) => m.role === 'assistant')
-      if (!assistantMsgs.length) return
-      for (const s of list.filter((x) => x.status === 'PENDING')) {
-        if (!s.sourceTaskId) continue
-        const target = assistantMsgs.find((m) => m.taskId === s.sourceTaskId)
-        if (!target) continue
-        target.suggestions = target.suggestions || []
-        if (!target.suggestions.some((x) => x.suggestionId === s.suggestionId)) {
-          target.suggestions.push(s)
-        }
-      }
-    },
-
     async approve(suggestionId) {
       const { data } = await agentApi.approveSuggestion(suggestionId)
+      // 即时乐观更新 APPROVAL 行：用户操作先可见，不等 server
+      this.upsertApprovalRow({
+        suggestionId,
+        decision: 'APPROVED'
+      })
       await this.fetchSuggestions()
       return data.data
     },
 
     async reject(suggestionId) {
       const { data } = await agentApi.rejectSuggestion(suggestionId)
+      this.upsertApprovalRow({
+        suggestionId,
+        decision: 'REJECTED'
+      })
       await this.fetchSuggestions()
       return data.data
     }

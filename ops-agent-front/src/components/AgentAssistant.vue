@@ -158,17 +158,18 @@
             </div>
           </div>
 
-          <div v-for="m in store.messages" :key="m.messageId" class="msg-row"
-               :class="m.role === 'user' ? 'msg-row--user' : 'msg-row--assistant'">
-            <!-- 用户消息：右对齐气泡 -->
-            <div v-if="m.role === 'user'" class="msg-bubble msg-bubble--user">
+          <!-- 时间线：按消息 kind 路由渲染（USER / ASSISTANT / TOOL_CALL / APPROVAL）-->
+          <div v-for="m in store.messages" :key="m.messageId || m._localId" class="msg-row"
+               :class="kindClass(m)">
+            <!-- USER：右对齐气泡 -->
+            <div v-if="kindOf(m) === 'USER'" class="msg-bubble msg-bubble--user">
               <div class="text-body-medium msg-text">{{ m.content }}</div>
             </div>
 
-            <!-- assistant 消息：卡片 + 思考折叠 + markdown + 授权卡 -->
-            <div v-else class="msg-bubble msg-bubble--assistant">
-              <!-- 思考过程（推理链 + 工具时间线）折叠面板 -->
-              <div v-if="(m.reasoning || m.toolCalls?.length)" class="thinking-box">
+            <!-- ASSISTANT：思考过程（仅 thinking）+ 答复 + 流式光标 + 失败 -->
+            <div v-else-if="kindOf(m) === 'ASSISTANT'" class="msg-bubble msg-bubble--assistant">
+              <!-- 思考过程：仅推理链，工具调用在时间线另一行单独展示 -->
+              <div v-if="(m.reasoning || m._thinkingOpen) && m.reasoning" class="thinking-box">
                 <div class="thinking-head" @click="toggleThinking(m)">
                   <v-icon size="14" class="mr-1">mdi-brain</v-icon>
                   <span>思考过程</span>
@@ -176,19 +177,7 @@
                   <v-icon size="14">{{ m._thinkingOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
                 </div>
                 <div v-if="m._thinkingOpen" class="thinking-body">
-                  <div v-if="m.reasoning" class="thinking-text">{{ m.reasoning }}</div>
-                  <div v-for="(t, i) in m.toolCalls" :key="i" class="tool-item">
-                    <v-icon size="14" :icon="t.status === 'done' ? 'mdi-check' : 'mdi-wrench'"
-                            :color="t.status === 'done' ? 'success' : 'info'" class="mr-1" />
-                    <span class="text-body-small font-weight-medium">{{ t.name }}</span>
-                    <span v-if="t.args && Object.keys(t.args).length" class="tool-args">{{ prettyArgs(t.args) }}</span>
-                    <v-btn v-if="t.summary" variant="text" size="x-small" class="tool-toggle px-1"
-                           @click="t._summaryOpen = !t._summaryOpen">
-                      {{ t._summaryOpen ? '收起结果' : '查看结果' }}
-                      <v-icon size="13">{{ t._summaryOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
-                    </v-btn>
-                    <div v-if="t.summary && t._summaryOpen" class="tool-summary text-caption">{{ t.summary }}</div>
-                  </div>
+                  <div class="thinking-text">{{ m.reasoning }}</div>
                 </div>
               </div>
 
@@ -206,48 +195,95 @@
               </div>
               <div v-else-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
 
-              <!-- 授权卡：该轮建议（approve/reject 闭环） -->
-              <div v-if="m.suggestions?.length" class="mt-2">
-                <v-card v-for="s in m.suggestions" :key="s.id" variant="outlined" class="suggestion-card mb-1">
-                  <v-card-text class="py-3">
-                    <!-- 标题行：操作图标 + 操作名 + 状态 + 目标 -->
-                    <div class="d-flex align-center mb-1">
-                      <v-icon size="22" :color="priorityColor(s.priority)" class="mr-1">{{ actionIcon(s.actionType) }}</v-icon>
-                      <span class="text-title-medium font-weight-bold">{{ actionText(s.actionType) }}</span>
-                      <v-chip :color="s.status === 'PENDING' ? 'warning' : sugColor(s.status)" size="x-small" class="ml-2">
-                        {{ sugText(s.status) }}
-                      </v-chip>
-                      <v-spacer />
-                      <span class="text-body-small text-medium-emphasis">{{ targetText(s) }}</span>
-                    </div>
-                    <!-- 原因 -->
-                    <div v-if="s.reason" class="text-body-medium mt-1">{{ s.reason }}</div>
-                    <!-- 业务参数 -->
-                    <div v-if="paramsEntries(s).length" class="suggestion-params mt-2">
-                      <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
-                        <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
-                        <span class="text-body-small param-val">{{ p.v }}</span>
-                      </div>
-                    </div>
-                    <!-- 重试标记 -->
-                    <div v-if="s.retryOf" class="text-body-small text-warning mt-1">
-                      <v-icon size="14" class="mr-1">mdi-restart</v-icon>重试：原建议 {{ s.retryOf }}
-                    </div>
-                    <!-- 审批动作 / 结果 -->
-                    <div v-if="s.status === 'PENDING' && canWrite" class="mt-2">
-                      <v-btn size="small" color="primary" @click="approve(s)">确认执行</v-btn>
-                      <v-btn size="small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
-                    </div>
-                    <div v-else-if="s.status === 'EXECUTED' && s.result"
-                         class="text-caption text-success mt-1 suggestion-result"
-                         v-html="renderMarkdown(s.result)" />
-                  </v-card-text>
-                </v-card>
-              </div>
-
               <!-- 失败/错误 -->
               <div v-if="m.status === 'failed'" class="text-body-small text-error mt-1">
                 <v-icon size="14" class="mr-1">mdi-alert-circle</v-icon>{{ m.error || '生成失败' }}
+              </div>
+            </div>
+
+            <!-- TOOL_CALL：工具调用独立一行（callId 一致合并 call/result） -->
+            <div v-else-if="kindOf(m) === 'TOOL_CALL'" class="msg-card msg-card--tool">
+              <div class="msg-card__head">
+                <v-icon size="13" :icon="m.status === 'completed' ? 'mdi-check-circle-outline' : 'mdi-progress-clock'"
+                        :color="m.status === 'completed' ? 'success' : 'info'" class="mr-1" />
+                <span class="msg-tool__name">{{ m.toolName || 'tool' }}</span>
+                <v-chip v-if="m.status === 'running'" size="x-small" color="info" variant="tonal"
+                        class="ml-1">调用中</v-chip>
+                <v-chip v-else size="x-small" color="success" variant="tonal" class="ml-1">已返回</v-chip>
+                <v-spacer />
+                <!-- 入参 / 结果 toggle（合并到一行右侧；默认都收起，hover 高亮）-->
+                <v-btn v-if="hasArgs(m)" variant="text" size="x-small"
+                       class="msg-tool-toggle" @click="m._argsOpen = !m._argsOpen">
+                  {{ m._argsOpen ? '收起参数' : '查看参数' }}
+                  <v-icon size="13">{{ m._argsOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                </v-btn>
+                <v-btn v-if="m.toolSummary" variant="text" size="x-small"
+                       class="msg-tool-toggle" @click="m._summaryOpen = !m._summaryOpen">
+                  {{ m._summaryOpen ? '收起结果' : '查看结果' }}
+                  <v-icon size="13">{{ m._summaryOpen ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
+                </v-btn>
+              </div>
+              <!-- 入参预览：单行省略，hover 显示 tooltip -->
+              <div v-if="hasArgs(m)" class="msg-tool__preview msg-meta">
+                {{ prettyArgsPreview(m.toolArgs) }}
+              </div>
+              <!-- 入参详情 / 结果详情（默认折叠，按需展开；统一字号小、左侧带细线）-->
+              <pre v-if="hasArgs(m) && m._argsOpen" class="msg-tool__panel">{{ prettyJson(m.toolArgs) }}</pre>
+              <pre v-if="m.toolSummary && m._summaryOpen" class="msg-tool__panel">{{ m.toolSummary }}</pre>
+            </div>
+
+            <!-- APPROVAL：审批/建议独立一行（PENDING → APPROVED/REJECTED → EXECUTED/FAILED 原地刷新） -->
+            <div v-else-if="kindOf(m) === 'APPROVAL'" class="msg-card msg-card--approval"
+                 :class="approvalClass(m)">
+              <div class="msg-card__head">
+                <v-icon size="16" :color="priorityColor(approvalPayload(m).priority)" class="mr-1">
+                  {{ actionIcon(approvalPayload(m).actionType) }}
+                </v-icon>
+                <span class="font-weight-bold">{{ actionText(approvalPayload(m).actionType) || '建议操作' }}</span>
+                <v-chip :color="approvalColor(m)" size="x-small" class="ml-2" variant="tonal">
+                  {{ approvalText(m) }}
+                </v-chip>
+                <v-spacer />
+                <span class="msg-meta">{{ approvalTargetText(approvalPayload(m)) }}</span>
+              </div>
+              <!-- 原因 / 重试标记 / 业务参数：单一展示区，默认仅显示 reason，行尾 toggle 参数 -->
+              <div v-if="approvalPayload(m).reason" class="msg-approval__reason">
+                {{ approvalPayload(m).reason }}
+              </div>
+              <div v-if="approvalPayload(m).retryOf" class="msg-approval__retry">
+                <v-icon size="13" class="mr-1">mdi-restart</v-icon>重试：原建议 {{ approvalPayload(m).retryOf }}
+              </div>
+              <!-- 参数 key-value：默认折叠展开（长 JSON 不再强制露）-->
+              <div v-if="approvalParams(m).length" class="msg-approval__params-wrap">
+                <div class="msg-meta msg-approval__params-toggle" @click="m._paramsOpen = !m._paramsOpen">
+                  {{ m._paramsOpen ? '收起参数' : '查看参数（' + approvalParams(m).length + '）' }}
+                </div>
+                <div v-if="m._paramsOpen" class="suggestion-params">
+                  <div v-for="(p, i) in approvalParams(m)" :key="i" class="d-flex align-start">
+                    <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
+                    <span class="text-body-small param-val">{{ p.v }}</span>
+                  </div>
+                </div>
+              </div>
+              <!-- PENDING：原 确认执行 / 忽略 动作（保持现有 confirm 流）-->
+              <div v-if="approvalPending(m) && canWrite" class="msg-approval__actions">
+                <v-btn size="x-small" color="primary" @click="approve(approvalPayload(m).suggestionId)">确认执行</v-btn>
+                <v-btn size="x-small" variant="text" class="ml-1" @click="reject(approvalPayload(m).suggestionId)">忽略</v-btn>
+              </div>
+              <!-- 结果：执行成功/失败的 markdown 反馈（折叠）-->
+              <div v-else-if="approvalPayload(m).result" class="msg-approval__result">
+                <div class="msg-meta msg-approval__params-toggle" @click="m._resultOpen = !m._resultOpen">
+                  {{ m._resultOpen ? '收起执行结果' : '查看执行结果' }}
+                </div>
+                <div v-if="m._resultOpen" class="suggestion-result mt-1"
+                     v-html="renderMarkdown(approvalPayload(m).result)" />
+              </div>
+              <!-- 决策元信息 -->
+              <div v-if="!approvalPending(m) && (approvalPayload(m).confirmedBy || approvalPayload(m).confirmedAt)"
+                   class="msg-meta msg-approval__meta">
+                <v-icon size="12" class="mr-1">mdi-account-check-outline</v-icon>
+                {{ approvalPayload(m).confirmedBy || '' }}
+                <span v-if="approvalPayload(m).confirmedAt" class="ml-2">{{ fmtDateTime(approvalPayload(m).confirmedAt) }}</span>
               </div>
             </div>
           </div>
@@ -486,35 +522,45 @@ async function sendQuick(q) {
   }
 }
 
-async function approve(s) {
+async function approve(input) {
+  // 兼容：完整建议对象（底部待审批区/历史建议视图）或纯 suggestionId（消息行内）
+  const suggestionId = typeof input === 'string' ? input : input?.suggestionId
+  const actionType = typeof input === 'string' ? '' : (input?.actionType || '')
+  const targetStr = typeof input === 'string' ? '' : targetText(input)
   const ok = await confirmDialog({
     title: '确认执行处置',
-    message: `确认执行「${actionText(s.actionType)}」(${targetText(s)})？将向 agent 签发临时授权并自动执行，操作可审计。`,
+    message: actionType
+      ? `确认执行「${actionText(actionType)}」(${targetStr})？将向 agent 签发临时授权并自动执行，操作可审计。`
+      : '确认执行该写操作？将向 agent 签发临时授权并自动执行，操作可审计。',
     confirmText: '确认执行',
     danger: true
   })
   if (!ok) return
   try {
-    await store.approve(s.suggestionId)
-    // 实时监听 execute 事件（tool_call/tool_result/done），落库后轮询兜底刷新
+    await store.approve(suggestionId)
     store.listenExecute(store.currentConversation?.conversationId,
-      `正在执行「${actionText(s.actionType)}」…`)
+      actionType ? `正在执行「${actionText(actionType)}」…` : '正在执行已审批的写操作…')
     notifyExecuting()
   } catch (e) {
     notifyError(errMsg(e, '确认失败'))
   }
 }
 
-async function reject(s) {
+async function reject(input) {
+  const suggestionId = typeof input === 'string' ? input : input?.suggestionId
+  const actionType = typeof input === 'string' ? '' : (input?.actionType || '')
+  const targetStr = typeof input === 'string' ? '' : targetText(input)
   const ok = await confirmDialog({
     title: '忽略建议',
-    message: `确定忽略「${actionText(s.actionType)}」(${targetText(s)}) 吗？`,
+    message: actionType
+      ? `确定忽略「${actionText(actionType)}」(${targetStr}) 吗？`
+      : '确认忽略该建议吗？',
     confirmText: '忽略',
     danger: true
   })
   if (!ok) return
   try {
-    await store.reject(s.suggestionId)
+    await store.reject(suggestionId)
     store.refreshMessages()
   } catch (e) {
     notifyError(errMsg(e, '操作失败'))
@@ -535,17 +581,86 @@ function notifyExecuting() {
   })
 }
 
-function toggleThinking(m) {
-  m._thinkingOpen = !m._thinkingOpen
+// ===== 时间线渲染辅助：按消息 kind 派发 =====
+function kindOf(m) {
+  return m.kind || 'ASSISTANT'
+}
+function kindClass(m) {
+  const k = kindOf(m)
+  if (k === 'USER') return 'msg-row--user'
+  if (k === 'TOOL_CALL') return 'msg-row--tool'
+  if (k === 'APPROVAL') return 'msg-row--approval'
+  return 'msg-row--assistant'
 }
 
-function prettyArgs(args) {
+// ===== 工具行 / 审批行 helpers =====
+function hasArgs(m) {
+  return m.toolArgs && m.toolArgs !== '{}' && m.toolArgs !== 'null'
+}
+function prettyJson(s) {
+  if (!s) return ''
   try {
-    const s = JSON.stringify(args)
-    return s.length > 60 ? s.slice(0, 60) + '…' : s
+    return JSON.stringify(JSON.parse(s), null, 2)
   } catch (e) {
-    return String(args)
+    return String(s)
   }
+}
+function prettyArgsPreview(s) {
+  if (!s) return ''
+  try {
+    const obj = JSON.parse(s)
+    const flat = JSON.stringify(obj)
+    return flat.length > 80 ? flat.slice(0, 80) + '…' : flat
+  } catch (e) {
+    return s.length > 80 ? s.slice(0, 80) + '…' : s
+  }
+}
+
+// ===== 审批行 helpers =====
+// APPROVAL payload 兼容 store 直接赋的 payload 字段与 server 行（payloadJson）
+function approvalPayload(m) {
+  return m.payload || {}
+}
+function approvalPending(m) {
+  return (m.decision || approvalPayload(m).decision || 'PENDING') === 'PENDING'
+}
+function approvalDecision(m) {
+  return m.decision || approvalPayload(m).decision || 'PENDING'
+}
+function approvalText(m) {
+  return SUG_STATUS[approvalDecision(m)]?.text || approvalDecision(m)
+}
+function approvalColor(m) {
+  return SUG_STATUS[approvalDecision(m)]?.color || 'grey'
+}
+function approvalClass(m) {
+  if (approvalPending(m)) return 'msg-card--approval-pending'
+  if (approvalDecision(m) === 'REJECTED' || approvalDecision(m) === 'EXPIRED') return 'msg-card--approval-rejected'
+  if (approvalDecision(m) === 'EXECUTED') return 'msg-card--approval-success'
+  if (approvalDecision(m) === 'FAILED') return 'msg-card--approval-failed'
+  return ''
+}
+function approvalTargetText(p) {
+  const tt = TARGETS[p.targetType] || p.targetType
+  const tid = p.targetId
+  if (tt == null || tt === '') return ''
+  return tid == null || tid === '' || Number(tid) === 0 ? tt : `${tt}:${tid}`
+}
+function approvalParams(m) {
+  return paramsEntries({ params: approvalPayload(m).params })
+}
+
+// 已知 suggestionId 直接调 store，避免传入完整对象（旧 approve(s) 假设有 s.suggestionId）
+// 已由下方重写后的 approve/reject 兼容（接受 string 或 完整对象），不再单独定义
+async function approveBySuggestion(suggestionId) {
+  return approve(suggestionId)
+}
+async function rejectBySuggestion(suggestionId) {
+  return reject(suggestionId)
+}
+
+function toggleThinking(m) {
+  m._thinkingOpen = !m._thinkingOpen
 }
 
 /** 建议卡片参数：把 s.params（对象或 JSON 字符串）展开为 [{k, v}] 供 key-value 展示。 */
@@ -810,6 +925,132 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   background: rgba(0, 0, 0, 0.03);
   border-left: 2px solid rgba(0, 0, 0, 0.12);
   border-radius: 0 4px 4px 0;
+}
+
+/* ---- 工具调用 / 审批 独立消息行（紧凑字号、不撑大整页）---- */
+.msg-row--tool,
+.msg-row--approval {
+  justify-content: flex-start;
+  margin-bottom: 6px;
+}
+.msg-card {
+  max-width: 92%;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(0, 0, 0, 0.02);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.msg-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+}
+.msg-card--tool {
+  background: color-mix(in srgb, rgb(var(--v-theme-info)) 4%, rgba(0, 0, 0, 0.02));
+  border-color: color-mix(in srgb, rgb(var(--v-theme-info)) 14%, transparent);
+}
+.msg-card--tool .msg-card__head {
+  font-size: 12px;
+}
+.msg-tool__name {
+  font-weight: 600;
+  font-size: 12px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.msg-tool-toggle {
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 11px;
+  color: rgb(var(--v-theme-primary));
+}
+.msg-tool__preview {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.msg-tool__panel {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  color: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.03);
+  border-left: 2px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0 4px 4px 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.msg-meta {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+/* ---- 审批 / 建议卡片 ---- */
+.msg-card--approval {
+  background: rgba(0, 0, 0, 0.03);
+  border-left: 3px solid rgb(var(--v-theme-warning));
+}
+.msg-card--approval-pending {
+  border-left-color: rgb(var(--v-theme-warning));
+}
+.msg-card--approval-rejected {
+  border-left-color: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.015);
+  opacity: 0.85;
+}
+.msg-card--approval-success {
+  border-left-color: rgb(var(--v-theme-success));
+}
+.msg-card--approval-failed {
+  border-left-color: rgb(var(--v-theme-error));
+}
+.msg-approval__reason {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.msg-approval__retry {
+  margin-top: 2px;
+  font-size: 11px;
+  color: rgb(var(--v-theme-warning));
+}
+.msg-approval__params-wrap {
+  margin-top: 4px;
+}
+.msg-approval__params-toggle {
+  display: inline-block;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+.msg-approval__params-toggle:hover {
+  color: rgb(var(--v-theme-primary));
+}
+.msg-approval__actions {
+  margin-top: 6px;
+}
+.msg-approval__result {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.msg-approval__meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.45);
 }
 
 /* ---- 流式光标 ---- */

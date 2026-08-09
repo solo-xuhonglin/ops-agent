@@ -114,6 +114,7 @@ public class AgentConversationService {
         ConversationMessage userMsg = new ConversationMessage();
         userMsg.setMessageId(UUID.randomUUID().toString());
         userMsg.setConversationId(conv.getConversationId());
+        userMsg.setKind(ConversationMessage.KIND_USER);
         userMsg.setRole(ROLE_USER);
         userMsg.setContent(text);
         userMsg.setStatus(STATUS_COMPLETED);
@@ -222,6 +223,7 @@ public class AgentConversationService {
         if (isNew) {
             msg.setMessageId(UUID.randomUUID().toString());
             msg.setConversationId(conversationId);
+            msg.setKind(ConversationMessage.KIND_ASSISTANT);
             msg.setRole(ROLE_ASSISTANT);
         }
         msg.setTaskId(taskId);
@@ -248,6 +250,116 @@ public class AgentConversationService {
 
     // ==================== helpers ====================
 
+    // ==================== event-typed messages (timeline persistence) ====================
+
+    /**
+     * 落/更新一行 TOOL_CALL 消息：以 callId 作为 messageId 的派生键（IDEMPOTENT upsert）。
+     * - 首次 tool_call 事件：插入新行（status=running）
+     * - 配对 tool_result 事件到达：原地更新 tool_summary + status=completed
+     * - 历史按 callId（一 call 一行）渲染，避免工具调用与结果分散到两条消息上不便阅读
+     */
+    @Transactional
+    public void upsertToolCallRow(String conversationId, String taskId,
+                                  String callId, String name, String argsJson,
+                                  boolean isResult, String summary) {
+        if (conversationId == null || conversationId.isBlank()) return;
+        if (callId == null || callId.isBlank()) callId = UUID.randomUUID().toString();
+        try {
+            ConversationMessage msg = messageRepository
+                    .findFirstByToolCallId(conversationId, callId)
+                    .orElseGet(() -> {
+                        ConversationMessage m = new ConversationMessage();
+                        m.setMessageId("tc:" + callId);
+                        m.setConversationId(conversationId);
+                        m.setKind(ConversationMessage.KIND_TOOL_CALL);
+                        m.setStatus(isResult ? ConversationMessage.STATUS_COMPLETED : "running");
+                        return m;
+                    });
+            msg.setTaskId(taskId);
+            msg.setToolCallId(callId);
+            msg.setToolName(name);
+            if (isResult) {
+                msg.setToolSummary(summary == null ? "" : summary);
+                msg.setStatus(ConversationMessage.STATUS_COMPLETED);
+                msg.setContent(String.format("调用工具 %s · 已返回", name == null ? "tool" : name));
+            } else {
+                msg.setToolArgs(argsJson);
+                msg.setContent(String.format("调用工具 %s", name == null ? "tool" : name));
+            }
+            messageRepository.save(msg);
+        } catch (Exception e) {
+            log.warn("upsert tool message failed (ignored): conv={}, callId={}, err={}",
+                    conversationId, callId, e.getMessage());
+        }
+    }
+
+    /**
+     * 落/更新 APPROVAL 消息：以 suggestionId 作为 messageId 的派生键（IDEMPOTENT upsert）。
+     * 同一建议只占一行：approve/reject/执行结果都在原行上更新 decision 与 payload_json。
+     * 历史渲染按 id asc + payload.suggestionId 即可识别，同 suggestionId 只保留一条最新版。
+     */
+    @Transactional
+    public void saveApprovalDecision(String conversationId, String taskId,
+                                     String suggestionId, String decision,
+                                     String payloadJson) {
+        if (conversationId == null || conversationId.isBlank()) return;
+        if (suggestionId == null || suggestionId.isBlank()) {
+            log.warn("saveApprovalDecision skipped: missing suggestionId, conv={}", conversationId);
+            return;
+        }
+        try {
+            ConversationMessage msg = messageRepository
+                    .findFirstByPayloadSuggestionId(conversationId, suggestionId)
+                    .orElseGet(() -> {
+                        ConversationMessage m = new ConversationMessage();
+                        m.setMessageId(UUID.randomUUID().toString());
+                        m.setConversationId(conversationId);
+                        m.setKind(ConversationMessage.KIND_APPROVAL);
+                        m.setStatus(ConversationMessage.STATUS_COMPLETED);
+                        return m;
+                    });
+            msg.setTaskId(taskId);
+            msg.setDecision(decision);
+            msg.setPayloadJson(payloadJson);
+            msg.setContent(buildApprovalSummary(payloadJson, decision));
+            messageRepository.save(msg);
+        } catch (Exception e) {
+            log.warn("save approval message failed (ignored): conv={}, sug={}, err={}",
+                    conversationId, suggestionId, e.getMessage());
+        }
+    }
+
+    /** 从 payload JSON 提取 actionType/decision/target 拼一行简短摘要（前端气泡副标题）。 */
+    private String buildApprovalSummary(String payloadJson, String decision) {
+        String action = "";
+        String target = "";
+        if (payloadJson != null && !payloadJson.isBlank()) {
+            try {
+                Map<String, Object> data = objectMapper.readValue(payloadJson, Map.class);
+                action = String.valueOf(data.getOrDefault("actionType", ""));
+                Object tt = data.get("targetType");
+                Object ti = data.get("targetId");
+                if (tt != null) {
+                    target = (ti == null || String.valueOf(ti).isBlank() || "0".equals(String.valueOf(ti)))
+                            ? String.valueOf(tt) : tt + ":" + ti;
+                }
+            } catch (Exception ignored) {
+                // 解析失败不影响消息写入
+            }
+        }
+        String head = switch (decision) {
+            case "APPROVED" -> "已授权";
+            case "REJECTED" -> "已忽略";
+            case "EXECUTING" -> "执行中";
+            case "EXECUTED" -> "已执行";
+            case "FAILED" -> "执行失败";
+            case "EXPIRED" -> "已过期";
+            default -> "待审批";
+        };
+        if (action.isBlank()) return head;
+        return target.isBlank() ? head + " · " + action : head + " · " + action + " (" + target + ")";
+    }
+
     /**
      * plan_update 事件落一条 assistant 消息（agent 直写库后经 gRPC 上报，用户可见 plan 进度变更）。
      * 非对话通信收口（不回 done 事件，仅落库 + 前端自行刷新 plan 卡片）。
@@ -260,6 +372,7 @@ public class AgentConversationService {
         ConversationMessage msg = new ConversationMessage();
         msg.setMessageId(UUID.randomUUID().toString());
         msg.setConversationId(conversationId);
+        msg.setKind(ConversationMessage.KIND_ASSISTANT);
         msg.setRole(ROLE_ASSISTANT);
         msg.setContent(message == null || message.isBlank() ? "（计划状态更新）" : message);
         msg.setStatus(STATUS_COMPLETED);
@@ -277,7 +390,12 @@ public class AgentConversationService {
         List<Map<String, String>> history = new ArrayList<>();
         for (int i = recent.size() - 1; i >= 0; i--) {
             ConversationMessage m = recent.get(i);
-            if (!ROLE_USER.equals(m.getRole()) && !ROLE_ASSISTANT.equals(m.getRole())) {
+            String role = m.getRole();
+            // 新消息用 kind 区分；历史用 role 区分（kind 字段新增前的老消息 role=user/assistant/system）
+            boolean isUserLike = ConversationMessage.KIND_USER.equals(m.getKind()) || "user".equals(role);
+            boolean isAssistantLike = ConversationMessage.KIND_ASSISTANT.equals(m.getKind())
+                    || "assistant".equals(role);
+            if (!isUserLike && !isAssistantLike) {
                 continue;
             }
             String content = m.getContent();
@@ -285,7 +403,7 @@ public class AgentConversationService {
                 continue;
             }
             Map<String, String> item = new LinkedHashMap<>();
-            item.put("role", m.getRole());
+            item.put("role", isUserLike ? "user" : "assistant");
             item.put("content", content);
             history.add(item);
         }

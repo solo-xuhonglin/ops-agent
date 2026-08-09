@@ -73,14 +73,16 @@ async def _run_decision_loop(llm: Any, messages: list[Any], ctx: TaskContext,
             for tc in tool_calls:
                 name = tc.get("name") or ""
                 args = tc.get("args") or {}
+                call_id = tc.get("id") or ""
                 await client.send_event(ctx.task_id, "tool_call",
-                                        json.dumps({"name": name, "args": args}, ensure_ascii=False))
+                                        json.dumps({"id": call_id, "name": name, "args": args},
+                                                   ensure_ascii=False))
                 result = await _execute_decision_tool(name, args, store, http, registry,
                                                       ctx, tracker)
                 body = result.get("body") if isinstance(result, dict) else result
                 summary = str(body)[:500] if body is not None else ""
                 await client.send_event(ctx.task_id, "tool_result",
-                                        json.dumps({"name": name, "summary": summary},
+                                        json.dumps({"id": call_id, "name": name, "summary": summary},
                                                    ensure_ascii=False))
                 messages.append(ToolMessage(
                     content=json.dumps(result, ensure_ascii=False),

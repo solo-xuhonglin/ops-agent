@@ -1,5 +1,6 @@
 package com.opsagent.admin.service.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opsagent.admin.entity.AgentSuggestion;
 import com.opsagent.admin.entity.AgentTask;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
@@ -14,12 +15,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 处置建议闭环：suggestion 业务行（PENDING 创建、EXECUTED/FAILED 结果）由 worker 直写；
  * admin 只写审批动作：approve → APPROVED + grantKey(Redis) + 派发 execute 任务；reject → REJECTED；
  * expireScan → EXPIRED（grantKey 过期未执行）。
+ * 审批/执行动作同步落 APPROVAL 消息（AgentConversationService.saveApprovalDecision），
+ * 会话历史按时间序能看见完整审批闭环（pending → approved/rejected → executed/failed/expired）。
  */
 @Service
 @RequiredArgsConstructor
@@ -31,6 +36,8 @@ public class AgentSuggestionService {
     private final WorkerRegistry workerRegistry;
     private final GrantService grantService;
     private final AgentTaskService taskService;
+    private final AgentConversationService conversationService;
+    private final ObjectMapper objectMapper;
 
     public Page<AgentSuggestion> list(int page, int size) {
         return suggestionRepository.findAllByOrderByIdDesc(
@@ -65,6 +72,9 @@ public class AgentSuggestionService {
                 suggestion.getActionType(), suggestion.getTargetType(), suggestion.getTargetId(),
                 suggestion.getParams(), grantKey, confirmedBy);
 
+        // 历史落库：APPROVAL 消息（pending → approved 状态变更，调用方按需再刷新执行结果）
+        recordApproval(suggestion, "APPROVED");
+
         log.info("suggestion approved: id={} grantKey={} worker={}, execute task={} dispatched",
                 suggestionId, grantKey, worker.getWorkerId(), task.getTaskId());
         return suggestion;
@@ -78,8 +88,40 @@ public class AgentSuggestionService {
         suggestion.setConfirmedBy(confirmedBy);
         suggestion.setConfirmedAt(OffsetDateTime.now());
         suggestionRepository.save(suggestion);
+
+        // 历史落库：APPROVAL 消息 REJECTED
+        recordApproval(suggestion, "REJECTED");
+
         log.info("suggestion rejected: id={}", suggestionId);
         return suggestion;
+    }
+
+    /**
+     * execute 任务完成后刷新 APPROVAL 消息：按 taskId 反查 suggestion，更新决策行。
+     * 由 AgentGrpcService 在收 TaskResult 时调用（execute 任务的结论落库后再次更新历史）。
+     * 若 suggestion 已是终态（REJECTED/EXPIRED）则跳过，避免被异步执行结果反向覆盖用户拒绝的决策。
+     */
+    @Transactional
+    public void refreshApprovalAfterExecuteTask(String taskId) {
+        if (taskId == null || taskId.isBlank()) return;
+        try {
+            java.util.Optional<AgentTask> taskOpt = taskRepository.findByTaskId(taskId);
+            if (taskOpt.isEmpty()) return;
+            String suggestionId = taskOpt.get().getSuggestionId();
+            if (suggestionId == null || suggestionId.isBlank()) return;
+            java.util.Optional<AgentSuggestion> sugOpt =
+                    suggestionRepository.findBySuggestionId(suggestionId);
+            if (sugOpt.isEmpty()) return;
+            AgentSuggestion s = sugOpt.get();
+            // 不允许反向覆盖用户主动拒绝/已过期的状态
+            if ("REJECTED".equals(s.getStatus()) || "EXPIRED".equals(s.getStatus())) {
+                return;
+            }
+            recordApproval(s, s.getStatus());
+        } catch (Exception e) {
+            log.warn("refresh approval after execute failed (ignored): task={}, err={}",
+                    taskId, e.getMessage());
+        }
     }
 
     /**
@@ -99,8 +141,41 @@ public class AgentSuggestionService {
                 }
                 s.setStatus("EXPIRED");
                 suggestionRepository.save(s);
+                recordApproval(s, "EXPIRED");
                 log.info("suggestion expired: id={} key={}", s.getSuggestionId(), s.getGrantKey());
             }
+        }
+    }
+
+    /**
+     * 写一条 APPROVAL 消息（或 upsert 同 suggestionId 的现有行）。失败静默（主流程不能因为审计失败而被阻断）。
+     * payload 含审批完整快照：action/target/params/reason/priority/decision/confirmedBy/executedAt/result。
+     */
+    private void recordApproval(AgentSuggestion s, String decision) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("suggestionId", s.getSuggestionId());
+            payload.put("planId", s.getPlanId());
+            payload.put("stepNo", s.getStepNo());
+            payload.put("actionType", s.getActionType());
+            payload.put("targetType", s.getTargetType());
+            payload.put("targetId", s.getTargetId());
+            payload.put("params", s.getParams());
+            payload.put("reason", s.getReason());
+            payload.put("priority", s.getPriority());
+            payload.put("decision", decision);
+            payload.put("confirmedBy", s.getConfirmedBy());
+            payload.put("confirmedAt", s.getConfirmedAt() == null ? null : s.getConfirmedAt().toString());
+            payload.put("executedAt", s.getExecutedAt() == null ? null : s.getExecutedAt().toString());
+            payload.put("result", s.getResult());
+            payload.put("retryOf", s.getRetryOf());
+            String payloadJson = objectMapper.writeValueAsString(payload);
+            String taskId = s.getSuggestionId(); // APPROVAL 用 suggestionId 锚定（行粒度，而非一次任务）
+            conversationService.saveApprovalDecision(
+                    s.getConversationId(), taskId, s.getSuggestionId(), decision, payloadJson);
+        } catch (Exception e) {
+            log.warn("record approval failed (ignored): sug={}, err={}",
+                    s.getSuggestionId(), e.getMessage());
         }
     }
 
