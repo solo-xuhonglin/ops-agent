@@ -54,13 +54,13 @@ public class AuditLogService {
         saveAsync(log);
     }
 
-    private void saveAsync(AuditLog log) {
+    private void saveAsync(AuditLog record) {
         CompletableFuture.runAsync(() -> {
             try {
-                auditLogRepository.save(log);
+                auditLogRepository.save(record);
             } catch (Exception e) {
                 log.warn("audit log save failed action={} actor={} error={}",
-                        log.getAction(), log.getActorName(), e.getMessage());
+                        record.getAction(), record.getActorName(), e.getMessage());
             }
         });
     }
