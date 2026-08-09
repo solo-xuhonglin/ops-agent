@@ -5,8 +5,11 @@ node_modules/
 **/node_modules/
 dist/
 **/dist/
+dist-old-*/
+**/dist-old-*/
 build/
 **/build/
+build-out/
 
 # 服务器部署时生成的项目内 Maven 本地仓库与构建标记缓存（可复用，不入库）
 .m2/
