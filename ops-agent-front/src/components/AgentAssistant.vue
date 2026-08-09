@@ -170,7 +170,7 @@
               </div>
 
               <!-- 答复：流式中纯文本（pre-wrap，零 markdown 重渲染开销），完成后一次 markdown 渲染 -->
-              <div v-if="m.content && m.status === 'streaming'" class="msg-text">{{ m.content }}</div>
+              <div v-if="m.content && (m.status === 'streaming' || m.status === 'executing')" class="msg-text">{{ m.content }}</div>
               <div v-else-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
 
               <!-- 授权卡：该轮建议（approve/reject 闭环） -->
@@ -421,6 +421,9 @@ async function approve(s) {
   if (!ok) return
   try {
     await store.approve(s.suggestionId)
+    // 实时监听 execute 事件（tool_call/tool_result/done），落库后轮询兜底刷新
+    store.listenExecute(store.currentConversation?.conversationId,
+      `正在执行「${actionText(s.actionType)}」…`)
     notifyExecuting()
   } catch (e) {
     notifyError(errMsg(e, '确认失败'))

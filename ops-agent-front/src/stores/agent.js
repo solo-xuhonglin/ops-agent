@@ -29,6 +29,7 @@ export const useAgentStore = defineStore('agent', {
     streaming: false,              // 是否有活跃 SSE 流
     currentTaskId: null,
     streamController: null,        // AbortController（停止生成）
+    executeController: null,       // AbortController（approve 后监听 execute 实时事件）
     suggestions: [],
     pendingCount: 0,
     plans: [],                     // 当前会话的规划（plan 卡片）
@@ -296,6 +297,57 @@ export const useAgentStore = defineStore('agent', {
         clearInterval(this._streamTimer)
         this._streamTimer = null
       }
+    },
+
+    /**
+     * approve 后监听 execute 任务的实时事件（会话级流，不绑 taskId）：
+     * - tool_call/tool_result → 更新本地"执行中"占位消息的工具时间线（chat 流已关，无其他接收端）
+     * - done/error → 关流 + 刷新消息（落库的 execute 结果消息覆盖占位）
+     * execute 通常秒级返回，流会很快收到 done 自动关闭；重复 approve 时旧的监听让位。
+     */
+    listenExecute(conversationId, label = '正在执行已审批的写操作…') {
+      if (!conversationId) return
+      if (this.executeController) {
+        this.executeController.abort()
+        this.executeController = null
+      }
+      // 本地占位：execute 结果消息落库前先展示执行状态（落库后 refreshMessages 会替换掉）
+      this.messages.push({
+        messageId: `exec-${Date.now()}`,
+        role: 'assistant',
+        content: label,
+        status: 'executing',
+        toolCalls: [],
+        _thinkingOpen: true,
+        createdAt: new Date().toISOString()
+      })
+      const proxy = this.messages[this.messages.length - 1] // 必须取 reactive proxy（Pinia 坑）
+      this.executeController = agentApi.streamConversation(conversationId, null, (event, data) => {
+        switch (event) {
+          case 'tool_call':
+            proxy.toolCalls.push({
+              name: data?.name || 'tool',
+              args: data?.args,
+              summary: '',
+              status: 'running'
+            })
+            break
+          case 'tool_result': {
+            const item = proxy.toolCalls.find((t) => t.name === data?.name && t.status === 'running')
+            if (item) {
+              item.summary = data?.summary || ''
+              item.status = 'done'
+            }
+            break
+          }
+          case 'done':
+          case 'error': {
+            this.executeController = null
+            this.refreshMessages(conversationId)
+            break
+          }
+        }
+      })
     },
 
     /** 任务结束：拉该轮任务的建议（approve/reject 授权卡数据挂在消息上）。 */
