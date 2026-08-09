@@ -90,10 +90,10 @@ function analyze(item) {
 }
 
 const headers = [
-  { title: 'ID', key: 'id', width: 70 },
+  { title: 'ID', key: 'id', width: 80 },
   { title: '数据集', key: 'datasetId', width: 110 },
   { title: '模型版本', key: 'modelVersionId', width: 110 },
-  { title: '状态', key: 'status', width: 120 },
+  { title: '状态', key: 'status', width: 110 },
   { title: '开始时间', key: 'startedAt', width: 150 },
   { title: '结束时间', key: 'finishedAt', width: 150 },
   { title: '操作', key: 'actions', sortable: false, width: 130 }

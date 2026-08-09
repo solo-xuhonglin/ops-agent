@@ -182,7 +182,7 @@ function analyze(item) {
 }
 
 const headers = [
-  { title: 'ID', key: 'id', width: 70 },
+  { title: 'ID', key: 'id', width: 80 },
   { title: '名称', key: 'name' },
   { title: '地区', key: 'regions' },
   { title: '日期范围', key: 'dateRange' },

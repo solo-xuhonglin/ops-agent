@@ -28,12 +28,6 @@
         <template #item.status="{ item }">
           <v-chip :color="statusColor(item.status)">{{ statusText(item.status) }}</v-chip>
         </template>
-        <template #item.metrics="{ item }">
-          <span v-if="metricsOf(item)">
-            MAE {{ metricsOf(item).mae }} · RMSE {{ metricsOf(item).rmse }}
-          </span>
-          <span v-else class="text-medium-emphasis">—</span>
-        </template>
         <template #item.createdAt="{ item }">
           {{ fmtDateTime(item.createdAt) }}
         </template>
@@ -146,13 +140,12 @@ function analyze(item) {
 }
 
 const headers = [
-  { title: 'ID', key: 'id', width: 70 },
-  { title: '名称', key: 'name' },
+  { title: 'ID', key: 'id', width: 80 },
+  { title: '名称', key: 'name', width: 220 },
   { title: '版本', key: 'version', width: 90 },
   { title: '算法', key: 'algorithm', width: 100 },
   { title: '数据集', key: 'datasetId', width: 100 },
   { title: '状态', key: 'status', width: 110 },
-  { title: '关键指标', key: 'metrics' },
   { title: '创建时间', key: 'createdAt', width: 150 },
   { title: '操作', key: 'actions', sortable: false, width: 190 }
 ]
