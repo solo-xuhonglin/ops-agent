@@ -93,13 +93,14 @@ class TaskTracker:
             return
         payload = json.dumps({
             "planId": plan_id,
+            "conversationId": plan.get("conversation_id", ""),
             "status": status,
             "summary": plan.get("summary", ""),
             "message": message,
         }, ensure_ascii=False)
         try:
-            # task_id 用来源执行任务（若已 unbind 则 admin 只落库不推送，可接受）
-            await self.client.send_event(plan.get("conversation_id", ""), "plan_update", payload)
+            # task_id 用 plan_id 占位；admin 从 content.conversationId 定位会话（见 AgentGrpcService.handlePlanUpdate）
+            await self.client.send_event(plan_id, "plan_update", payload)
             log.info("plan_update sent: plan=%s status=%s", plan_id[:8], status)
         except Exception as e:  # noqa: BLE001
             log.warning("plan_update send failed: %s", e)

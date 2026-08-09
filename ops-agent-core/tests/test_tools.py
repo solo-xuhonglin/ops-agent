@@ -1,6 +1,5 @@
 import pytest
 
-from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient, TaskContext
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -93,7 +92,7 @@ async def test_write_tool_without_grant_skipped():
 
 @pytest.mark.asyncio
 async def test_write_tool_with_grant_injects_key():
-    """写工具有授权：按 action+targetId 匹配注入 X-Grant-Key。"""
+    """写工具带 grant_key（TaskDispatch 下发，v3）：注入 X-Grant-Key。"""
     http = make_http()
     captured = {}
 
@@ -106,20 +105,17 @@ async def test_write_tool_with_grant_injects_key():
         return FakeResp()
 
     http._http.request = fake_request  # type: ignore[assignment]
-    grant = agent_pb2.AuthorizationGrant(
-        action_type="serving_undeploy", target_type="serving_endpoint",
-        target_id=3, grant_key="agent:grant:test-key", ttl_seconds=600)
-    http.grants.add(grant)
     tool = make_tool("serving_undeploy", "POST", "/api/serving/endpoints/{endpointId}")
     tool.is_write = True
     result = await http.call(tool, {"endpointId": 3},
-                             TaskContext(task_id="t1", task_token="tok1"))
+                             TaskContext(task_id="t1", task_token="tok1",
+                                         grant_key="agent:grant:test-key"))
     assert result["status"] == 200
     assert captured["headers"]["X-Grant-Key"] == "agent:grant:test-key"
 
 
-def test_grant_store_ttl_expiry():
-    """grant 过期后 lookup 返回 None。"""
-    store = GrantStore()
-    store._grants["serving_undeploy"] = {"3": ("k", -1.0)}  # 已过期
-    assert store.lookup("serving_undeploy", ["3"]) is None
+@pytest.mark.asyncio
+async def test_write_tool_grant_key_from_context_only():
+    """v3：grant_key 只能来自 TaskContext（TaskDispatch 下发），不再有独立 GrantStore。"""
+    http = make_http()
+    assert not hasattr(http, "grants")

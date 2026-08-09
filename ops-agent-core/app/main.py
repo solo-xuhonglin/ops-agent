@@ -11,7 +11,6 @@ from app.agent.task_store import TaskStore
 from app.agent.tracker import TaskTracker
 from app.config import Config
 from app.db import Database
-from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -37,7 +36,6 @@ async def amain() -> None:
     client = GrpcClient(cfg, AGENTS)
 
     registry = ToolRegistry()
-    grants = GrantStore()
     # deepseek-reasoner 专用（langchain-deepseek 官方封装）：流式透出推理链
     # reasoning_content（ChatOpenAI 不提取第三方扩展字段），不支持 temperature/tools 参数
     llm = ChatDeepSeek(
@@ -46,7 +44,7 @@ async def amain() -> None:
         model=cfg.deepseek_model,
         timeout=cfg.llm_timeout_s,
     )
-    http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id, grants)
+    http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id)
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
@@ -60,7 +58,6 @@ async def amain() -> None:
     await tracker.start()
 
     client.on("register_ack", lambda m: _load_tools(registry, m))
-    client.on("authorization_grant", lambda m: _on_grant(grants, m))
     client.on("task_dispatch",
               lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds,
                                   tracker, store))
@@ -83,10 +80,6 @@ async def amain() -> None:
 
 async def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> None:
     registry.load(list(msg.register_ack.tools))
-
-
-async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
-    grants.add(msg.authorization_grant)
 
 
 async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: Any,

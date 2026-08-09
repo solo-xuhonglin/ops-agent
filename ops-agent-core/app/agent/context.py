@@ -10,4 +10,5 @@ class TaskContext:
     target_type: str = ""
     target_id: int = 0
     conversation_id: str = ""   # 所属会话（agent 定位 Plan；非会话任务为空）
-    suggestion_id: int = 0      # >0：执行已审批写操作（grantKey 已下发，可调写工具）
+    suggestion_id: str = ""     # 非空：执行已审批写操作（grant_key 随 TaskDispatch 下发）
+    grant_key: str = ""         # approve 后签发（写工具调用时注入，不进 LLM 上下文）

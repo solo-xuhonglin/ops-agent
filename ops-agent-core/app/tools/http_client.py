@@ -1,7 +1,8 @@
 """工具执行层：HTTP 直调 admin 现有 REST API。
 
-安全约定（设计第 5 节）：系统参数（taskToken / worker 标识 / taskId / grantKey）
-全部由本层代码注入，LLM 只能填业务参数 —— prompt injection 碰不到鉴权链路。
+安全约定（设计第 5 节）：系统参数（taskToken / worker 标识 / taskId / grantKey）全部由本层代码注入，
+LLM 只能填业务参数 —— prompt injection 碰不到鉴权链路。
+v3：grant_key 由 admin 随 TaskDispatch 下发（ctx 携带），不再经 AuthorizationGrant 单独推送/GrantStore。
 """
 import logging
 from typing import Any, Optional
@@ -10,27 +11,25 @@ import httpx
 
 from app.agent.context import TaskContext
 from app.transport import agent_pb2
-from app.tools.grants import GrantStore
 
 log = logging.getLogger("tools.http_client")
 
 
 class AdminHttpClient:
-    def __init__(self, base_url: str, worker_id: str, grants: Optional[GrantStore] = None,
+    def __init__(self, base_url: str, worker_id: str,
                  timeout_s: float = 30.0):
         self.base_url = base_url.rstrip("/")
         self.worker_id = worker_id
-        self.grants = grants or GrantStore()
         self._http = httpx.AsyncClient(timeout=timeout_s)
 
     async def close(self) -> None:
         await self._http.aclose()
 
     async def call(self, tool: agent_pb2.ToolSchema, args: dict, ctx: TaskContext) -> dict[str, Any]:
-        """执行一次工具调用：写工具先查 grant（无授权不执行）→ 注入系统头 → 请求 → 返回 {status, body}。"""
+        """执行一次工具调用：写工具先校验 grant_key（无授权不执行）→ 注入系统头 → 请求 → 返回 {status, body}。"""
         if tool.is_write:
-            grant_key = self.grants.lookup(tool.name, self._candidate_target_ids(tool, args))
-            if grant_key is None:
+            grant_key = ctx.grant_key
+            if not grant_key:
                 log.warning("write tool without grant, skipped: %s (await human approval)", tool.name)
                 return {"status": 403,
                         "body": "write operation not granted yet (await human approval then retry)"}
@@ -57,17 +56,6 @@ class AdminHttpClient:
         except httpx.HTTPError as e:
             return {"status": 0, "body": f"HTTP error: {e}"}
         return {"status": resp.status_code, "body": text}
-
-    @staticmethod
-    def _candidate_target_ids(tool: agent_pb2.ToolSchema, args: dict) -> list[str]:
-        """候选 targetId：路径模板变量 + 数值参数（写工具授权按 action+targetId 匹配）。"""
-        ids: list[str] = []
-        for key, value in args.items():
-            if "{" + key + "}" in tool.path_template:
-                ids.append(str(value))
-            elif isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
-                ids.append(str(value))
-        return ids
 
     def _render(self, tool: agent_pb2.ToolSchema, args: dict) -> tuple[str, dict, Optional[dict]]:
         """{jobId} 之类模板变量填入 path；GET 剩余参数走 query，POST/DELETE 走 body。"""

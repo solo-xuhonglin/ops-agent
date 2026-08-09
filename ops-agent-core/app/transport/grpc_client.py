@@ -78,42 +78,6 @@ class GrpcClient:
             msg.task_result.suggestions.extend(suggestions)
         await self._send(msg)
 
-    async def send_async_suggestion(self, conversation_id: str, task_id: str,
-                                    action_type: str, target_type: str,
-                                    target_id: int, params: str = "{}",
-                                    reason: str = "", priority: str = "NORMAL") -> None:
-        """agent 推进 Plan 时上报的写操作建议（admin 落 PENDING 待审批）。"""
-        await self._send(agent_pb2.ClientMessage(
-            async_suggestion=agent_pb2.AsyncSuggestion(
-                conversation_id=conversation_id, task_id=task_id,
-                action_type=action_type, target_type=target_type,
-                target_id=int(target_id), params=params,
-                reason=reason, priority=priority)))
-
-    async def send_plan(self, plan: dict) -> None:
-        """任务计划（Plan）持久化上报（admin 仅落库）。plan 结构见 tracker.py。"""
-        steps = [
-            agent_pb2.PlanStep(
-                action_type=str(s.get("action_type", "")),
-                target_type=str(s.get("target_type", "")),
-                target_id=int(s.get("target_id", 0)),
-                params=s.get("params") or "{}",
-                reason=s.get("reason") or "",
-                priority=s.get("priority") or "NORMAL",
-                status=s.get("status") or "pending",
-                object_type=s.get("object_type") or "",
-                object_id=int(s.get("object_id", 0)),
-            )
-            for s in plan.get("steps", [])
-        ]
-        await self._send(agent_pb2.ClientMessage(
-            task_plan=agent_pb2.TaskPlan(
-                conversation_id=plan.get("conversation_id", ""),
-                plan_id=plan.get("plan_id", ""),
-                summary=plan.get("summary", ""),
-                status=plan.get("status", "PLANNED"),
-                steps=steps)))
-
     # ---- 接收路由 ----
 
     def on(self, kind: str, handler: MessageHandler) -> None:

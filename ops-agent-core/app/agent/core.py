@@ -16,7 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.errors import NodeCancelledError
 
 from app.agent.context import TaskContext
-from app.agent.graph import build_graph, run_graph
+from app.agent.graph import build_graph, run_graph, _maybe_register_tracker
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
 from app.transport import agent_pb2
@@ -105,9 +105,9 @@ def _parse_plan(content: str) -> Optional[dict]:
 
 
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
-    """user prompt：按任务特征给出专门指引（proto 无 task_type，按 suggestion_id/query 判断）。"""
-    if d.suggestion_id > 0:
-        # 已审批的写操作任务：直接调对应写工具，grantKey 已就位（admin 端 aspect 校验）
+    """user prompt：按任务特征给出专门指引（chat 任务按 suggestion_id/query 判断）。"""
+    if d.suggestion_id:
+        # 已审批的写操作任务：直接调对应写工具，grantKey 已随 TaskDispatch 下发
         return (
             "（已审批的写操作——请执行）",
             (d.query or "") + "\n请按 query 描述执行该写操作，完成后回报结果。",
@@ -162,8 +162,14 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
                       target_type=d.target_type, target_id=d.target_id,
-                      conversation_id=d.conversation_id, suggestion_id=d.suggestion_id)
+                      conversation_id=d.conversation_id,
+                      suggestion_id=d.suggestion_id, grant_key=d.grant_key)
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
+
+    # v3：execute 任务（已审批写操作）直调写工具，不过决策图
+    if d.task_type == "execute":
+        await handle_execute(client, registry, llm, http, ctx, d, store, tracker)
+        return
 
     hint, user_prompt = _build_prompt(d)
     messages: list = [
@@ -172,13 +178,11 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
         HumanMessage(content=user_prompt),
     ]
 
-    # v3：task 行由 worker 直写（execute 轮 task_type=execute，对话轮=chat）
+    # v3：task 行由 worker 直写（对话轮=chat）
     if store is not None and store.enabled:
-        task_type = "execute" if d.suggestion_id > 0 else "chat"
         try:
-            await store.insert_task(
-                d.task_id, task_type, d.conversation_id, query=d.query or "",
-                suggestion_id=str(d.suggestion_id) if d.suggestion_id > 0 else "")
+            await store.insert_task(d.task_id, "chat", d.conversation_id,
+                                    query=d.query or "")
         except Exception as e:  # noqa: BLE001 - 落库失败不阻塞任务
             log.warning("task insert failed: %s", e)
 
@@ -260,6 +264,85 @@ async def _persist_outputs(store: Any, ctx: TaskContext,
             await store.insert_suggestion(s)
         except Exception as e:  # noqa: BLE001
             log.warning("suggestion persist failed: %s", e)
+
+
+EXECUTE_SUMMARY_SYSTEM = (
+    "# 角色\n"
+    "你是 ops-agent 平台的智能运维助手。你刚刚执行了一个**已获人工审批**的写操作，"
+    "下面附上该操作的**原始执行结果**（工具返回 JSON）。\n"
+    "\n"
+    "# 输出要求\n"
+    "1. 明确操作是否成功（成功 / 失败 / 已提交进行中）；\n"
+    "2. 给出关键信息（如创建对象的 ID、当前状态、耗时等）；\n"
+    "3. 如需后续处理（异步轮询、重试、下一步建议），一并说明。\n"
+    "4. 必须严格基于原始结果，禁止编造；用中文；Markdown 简洁呈现。"
+)
+
+
+async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
+                         http: AdminHttpClient, ctx: TaskContext,
+                         d: agent_pb2.TaskDispatch, store: Any,
+                         tracker: Any = None) -> None:
+    """v3：execute 任务——直调写工具（不过决策图）→ 原始结果回喂 LLM 总结 → 回写 suggestion。
+
+    原始结果经 tool_call/tool_result 事件展示（前端时间线），LLM 总结作为结论落对话。
+    异步写操作（training_create/serving_deploy）成功后注册 Monitor 轮询，由 tracker 推进 Plan。
+    """
+    tool = registry.get(d.action_type)
+    if tool is None:
+        log.warning("execute unknown action tool: %s", d.action_type)
+        conclusion = f"unknown action tool: {d.action_type}"
+        if store is not None and store.enabled:
+            await store.finish_task(ctx.task_id, "FAILED", conclusion)
+        await client.send_result(ctx.task_id, ok=False, conclusion=conclusion, error=conclusion)
+        return
+
+    params: dict = {}
+    if d.params:
+        try:
+            params = json.loads(d.params) if isinstance(d.params, str) else dict(d.params)
+        except (json.JSONDecodeError, TypeError):
+            log.warning("execute params invalid, ignored: %s", str(d.params)[:100])
+
+    await client.send_event(ctx.task_id, "tool_call",
+                            json.dumps({"name": tool.name, "args": params}, ensure_ascii=False))
+    result = await http.call(tool, params, ctx)
+    body = result.get("body") if isinstance(result, dict) else result
+    summary = str(body)[:500] if body is not None else ""
+    await client.send_event(ctx.task_id, "tool_result",
+                            json.dumps({"name": tool.name, "summary": summary}, ensure_ascii=False))
+    ok = isinstance(result, dict) and result.get("status") in (200, 201, 202)
+
+    # 异步写操作成功后注册对象状态轮询（训练/部署完成后推进 Plan）
+    await _maybe_register_tracker(tracker, store, ctx, tool, result)
+
+    # 原始结果回喂 LLM 生成执行总结（失败则结构化兜底）
+    conclusion = ""
+    try:
+        resp = await llm.ainvoke([
+            SystemMessage(content=EXECUTE_SUMMARY_SYSTEM),
+            HumanMessage(content=json.dumps(result, ensure_ascii=False)),
+        ])
+        conclusion = str(getattr(resp, "content", "")).strip()
+    except Exception as e:  # noqa: BLE001 - LLM 总结失败不阻塞任务
+        log.warning("execute summary llm failed: %s", e)
+    if not conclusion:
+        conclusion = ("执行成功" if ok else "执行失败") + (f"：{summary}" if summary else "")
+
+    # 回写 suggestion（条件：APPROVED/EXECUTING → EXECUTED/FAILED）
+    if store is not None and store.enabled and ctx.suggestion_id:
+        try:
+            await store.update_suggestion_result(ctx.suggestion_id,
+                                                 "EXECUTED" if ok else "FAILED", conclusion)
+        except Exception as e:  # noqa: BLE001
+            log.warning("suggestion result update failed: %s", e)
+    if store is not None and store.enabled:
+        try:
+            await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion)
+        except Exception as e:  # noqa: BLE001
+            log.warning("execute task finish failed: %s", e)
+    await client.send_result(ctx.task_id, ok=ok, conclusion=conclusion)
+    log.info("execute done: %s ok=%s", ctx.task_id[:8], ok)
 
 
 def _extract_conclusion(messages: list) -> str:
