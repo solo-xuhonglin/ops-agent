@@ -87,7 +87,8 @@
               <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
             </div>
             <div v-else-if="s.status === 'EXECUTED' && s.result"
-                 class="history-item__body text-caption text-success history-item__clamp-3" :title="s.result">{{ s.result }}</div>
+                 class="history-item__body text-caption text-success history-item__clamp-3 suggestion-result"
+                 :title="s.result" v-html="renderMarkdown(s.result)" />
           </div>
           <div v-if="!store.suggestions.length" class="empty-hint">
             <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
@@ -159,7 +160,9 @@
                       <v-btn size="small" color="primary" @click="approve(s)">确认执行</v-btn>
                       <v-btn size="small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
                     </div>
-                    <div v-else-if="s.status === 'EXECUTED' && s.result" class="text-caption text-success mt-1">{{ s.result }}</div>
+                    <div v-else-if="s.status === 'EXECUTED' && s.result"
+                         class="text-caption text-success mt-1 suggestion-result"
+                         v-html="renderMarkdown(s.result)" />
                     <v-chip v-else-if="s.status !== 'PENDING'" size="x-small" :color="sugColor(s.status)" class="mt-1">
                       {{ sugText(s.status) }}
                     </v-chip>

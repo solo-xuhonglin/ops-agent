@@ -251,3 +251,44 @@ h1, h2, h3, h4, h5, h6, p {
   color: rgb(var(--v-theme-primary));
   text-decoration: underline;
 }
+
+/* 处置建议执行结果：紧凑 markdown，限制高度，避免 raw markdown 撑大列表 */
+.suggestion-result {
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 4.6em;
+  overflow: hidden;
+  color: inherit;
+}
+.suggestion-result > *:first-child { margin-top: 0; }
+.suggestion-result > *:last-child { margin-bottom: 0; }
+.suggestion-result h1,
+.suggestion-result h2,
+.suggestion-result h3,
+.suggestion-result h4 {
+  font-size: 13px;
+  margin: 4px 0 2px;
+}
+.suggestion-result p,
+.suggestion-result ul,
+.suggestion-result ol,
+.suggestion-result blockquote,
+.suggestion-result pre,
+.suggestion-result table {
+  margin: 3px 0;
+}
+.suggestion-result pre {
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.suggestion-result pre code {
+  font-size: 11px;
+}
+.suggestion-result code {
+  font-size: 0.85em;
+}
+.suggestion-result ul,
+.suggestion-result ol {
+  padding-left: 16px;
+}
