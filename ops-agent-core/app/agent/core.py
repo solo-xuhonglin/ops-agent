@@ -150,7 +150,13 @@ def _build_history(d: "agent_pb2.TaskDispatch") -> list:
 
 
 def _extract_reasoning(messages: list) -> str:
-    """取最后一条 assistant 消息的聚合推理链全文（graph agent_node 挂到 additional_kwargs）。"""
+    """取最后一条 assistant 消息的推理链（落库兜底单行）。
+
+    graph agent_node 已在每轮 AIMessage.additional_kwargs['reasoning_content'] 挂入该轮
+    完整推理。多轮推理已由 admin 在 SSE 流期间按 LLM 轮次实时落库为独立的 ASSISTANT
+    消息行（与 TOOL_CALL 行交错），刷新/重进后时间顺序与运行中完全一致；此处仅作为
+    无流内落库路径（如无 worker 的失败兜底）的兜底单行推理。
+    """
     for m in reversed(messages):
         if getattr(m, "type", "") == "ai":
             kw = getattr(m, "additional_kwargs", None) or {}

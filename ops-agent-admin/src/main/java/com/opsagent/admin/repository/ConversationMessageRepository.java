@@ -19,6 +19,9 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     /** 该轮内部任务对应的 assistant 消息（落库定位；理论上每轮一条） */
     Optional<ConversationMessage> findFirstByTaskId(String taskId);
 
+    /** 流内 assistant 轮次行的 upsert 锚点（按 messageId 定位唯一行） */
+    Optional<ConversationMessage> findFirstByMessageId(String messageId);
+
     void deleteByConversationId(String conversationId);
 
     /**

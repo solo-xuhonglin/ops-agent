@@ -80,10 +80,12 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
             }
 
     /** 事件只转发 SSE；plan_update 额外落一条 assistant 消息（对话通信）。
-     *  tool_call/tool_result 同步落消息库（kind=TOOL_CALL/TOOL_RESULT），刷新/重连后历史可见。 */
+     *  thinking/delta 按 LLM 轮次流内落库为独立的 ASSISTANT 消息行（与 TOOL_CALL 行交错，
+     *  刷新/重连后时间顺序与运行中一致）；tool_call/tool_result 同步落消息库。 */
     private void handleEvent(TaskEvent event) {
         touch();
         String type = event.getEventType();
+        String taskId = event.getTaskId();
         if ("plan_update".equals(type)) {
             forwardStreamEvent(event);
             handlePlanUpdate(event.getContent());
@@ -91,12 +93,26 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
         }
         if ("plan_advance".equals(type)) {
             // worker 推进轮发起（task_id=plan_advance:{planId}）：绑定会话，后续事件/结果走现有通道
-            handlePlanAdvance(event.getTaskId(), event.getContent());
+            handlePlanAdvance(taskId, event.getContent());
+            return;
+        }
+        if ("thinking".equals(type) || "delta".equals(type)) {
+            forwardStreamEvent(event);
+            conversationService.appendAssistantChunk(taskId,
+                    "thinking".equals(type) ? "reasoning" : "content", event.getContent());
             return;
         }
         if ("tool_call".equals(type) || "tool_result".equals(type)) {
             forwardStreamEvent(event);
+            if ("tool_call".equals(type)) {
+                conversationService.flushAssistantRoundOnToolCall(taskId);
+            }
             persistToolMessage(type, event);
+            return;
+        }
+        if ("error".equals(type)) {
+            forwardStreamEvent(event);
+            conversationService.finalizeAssistantOnError(taskId);
             return;
         }
         forwardStreamEvent(event);

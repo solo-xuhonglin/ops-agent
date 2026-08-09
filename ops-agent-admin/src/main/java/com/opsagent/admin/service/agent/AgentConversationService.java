@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Agent 多轮会话：conversation + message 持久化、历史组装、消息发起（内部 task 派发）、SSE 收口。
@@ -46,6 +47,20 @@ public class AgentConversationService {
     private final AgentTaskService taskService;
     private final ConversationStreamManager streamManager;
     private final ObjectMapper objectMapper;
+
+    // ===== 多轮 assistant 流内落库（与前端 openStream rotateTurn 对齐）=====
+    // 每个 task 维护"当前轮次行"的内存累积；tool_call 事件触发当前轮落库（早于工具行，
+    // 保证时间线顺序），下一轮 thinking/delta 新建行。流内只落库已完成轮（tool_call 时）
+    // 与最后一轮（done 时），落库次数 = 轮次数（少、性能好），重进顺序与运行中一致。
+    private final ConcurrentHashMap<String, AssistantRound> assistantRounds = new ConcurrentHashMap<>();
+
+    /** 单轮 assistant 消息的内存累积（按 messageId upsert 落库） */
+    private static final class AssistantRound {
+        final String messageId = UUID.randomUUID().toString();
+        final StringBuilder reasoning = new StringBuilder();
+        final StringBuilder content = new StringBuilder();
+        boolean hasData = false;
+    }
 
     // ==================== conversation CRUD ====================
 
@@ -152,6 +167,29 @@ public class AgentConversationService {
             streamManager.unbindTask(taskId);
             return;
         }
+        AssistantRound round = assistantRounds.get(taskId);
+        if (round != null) {
+            // 多轮流内已落库：最后一轮用 conclusion 兜底 content，置终态，清理内存状态
+            if (conclusion != null && !conclusion.isBlank()) {
+                round.content.setLength(0);
+                round.content.append(conclusion);
+                round.hasData = true;
+            }
+            persistAssistantRound(conversationId, taskId, round, ok ? STATUS_COMPLETED : STATUS_FAILED);
+            assistantRounds.remove(taskId);
+            Map<String, Object> done = new LinkedHashMap<>();
+            done.put("messageId", round.messageId);
+            done.put("status", ok ? STATUS_COMPLETED : STATUS_FAILED);
+            done.put("content", round.content.toString());
+            done.put("reasoning", round.reasoning.toString());
+            done.put("taskId", taskId);
+            streamManager.push(conversationId, "done", done);
+            streamManager.unbindTask(taskId);
+            log.info("conversation assistant rounds finalized: conversation={}, task={}, ok={}",
+                    conversationId, taskId, ok);
+            return;
+        }
+        // 兼容：无流内事件（无 worker / 任务失败路径）→ 单条 assistant 消息（原有逻辑）
         ConversationMessage msg = messageRepository.findFirstByTaskId(taskId).orElse(new ConversationMessage());
         boolean isNew = msg.getId() == null;
         if (isNew) {
@@ -180,6 +218,67 @@ public class AgentConversationService {
         streamManager.unbindTask(taskId);
         log.info("conversation assistant message saved: conversation={}, task={}, ok={}",
                 conversationId, taskId, ok);
+    }
+
+    /**
+     * thinking/delta 增量：落到当前 assistant 轮次行；无当前轮则新建。
+     * content 为 worker 直发的纯文本 delta（非 JSON）。chunkType: "reasoning" | "content"。
+     */
+    public void appendAssistantChunk(String taskId, String chunkType, String content) {
+        if (taskId == null || taskId.isBlank() || content == null || content.isEmpty()) return;
+        String cid = streamManager.conversationOf(taskId);
+        if (cid == null || cid.isBlank()) return;
+        AssistantRound round = assistantRounds.get(taskId);
+        if (round == null) {
+            round = new AssistantRound();
+            assistantRounds.put(taskId, round);
+        }
+        if ("reasoning".equals(chunkType)) round.reasoning.append(content);
+        else round.content.append(content);
+        if (content.trim().length() > 0) round.hasData = true;
+    }
+
+    /** tool_call 事件：当前轮推理已完整，落库为 completed（早于工具行，保证时间线顺序）。 */
+    public void flushAssistantRoundOnToolCall(String taskId) {
+        if (taskId == null || taskId.isBlank()) return;
+        String cid = streamManager.conversationOf(taskId);
+        AssistantRound round = assistantRounds.get(taskId);
+        if (round != null && round.hasData && cid != null && !cid.isBlank()) {
+            persistAssistantRound(cid, taskId, round, STATUS_COMPLETED);
+        }
+        assistantRounds.remove(taskId);
+    }
+
+    /** 任务中断（error/超时）：把内存中最后一轮 flush 为 failed，避免丢失已产生的推理上下文。 */
+    public void finalizeAssistantOnError(String taskId) {
+        if (taskId == null || taskId.isBlank()) return;
+        String cid = streamManager.conversationOf(taskId);
+        AssistantRound round = assistantRounds.remove(taskId);
+        if (round != null && round.hasData && cid != null && !cid.isBlank()) {
+            persistAssistantRound(cid, taskId, round, STATUS_FAILED);
+        }
+    }
+
+    /** 落/更新一行 assistant 消息（按 messageId upsert）。 */
+    private void persistAssistantRound(String cid, String taskId, AssistantRound round, String status) {
+        try {
+            ConversationMessage msg = messageRepository.findFirstByMessageId(round.messageId)
+                    .orElseGet(() -> {
+                        ConversationMessage m = new ConversationMessage();
+                        m.setMessageId(round.messageId);
+                        m.setConversationId(cid);
+                        m.setKind(ConversationMessage.KIND_ASSISTANT);
+                        m.setRole(ROLE_ASSISTANT);
+                        return m;
+                    });
+            msg.setTaskId(taskId);
+            msg.setContent(round.content.toString());
+            msg.setReasoning(round.reasoning.toString());
+            msg.setStatus(status);
+            messageRepository.save(msg);
+        } catch (Exception e) {
+            log.warn("persist assistant round failed (ignored): task={}, err={}", taskId, e.getMessage());
+        }
     }
 
     // ==================== helpers ====================

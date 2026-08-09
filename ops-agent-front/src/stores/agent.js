@@ -625,13 +625,25 @@ export const useAgentStore = defineStore('agent', {
             clearInterval(this._execFlushTimer)
             clearInterval(elapsedTimer)
             this.executeController = null
-            if (started) {
-              if (activeRef.reasoning || activeRef.content) activeRef.status = 'completed'
+            const isError = event === 'error'
+            if (started || data?.content) {
+              // 有流式文本 或 服务端 done 携带最终结论：写入 activeRef 并收尾
+              if (data?.content) activeRef.content = data.content
+              if (data?.reasoning) activeRef.reasoning = data.reasoning
+              if (activeRef.reasoning || activeRef.content) {
+                activeRef.status = isError ? 'failed' : 'completed'
+              }
             } else {
-              // 整个 execute 没产生任何文本（仅工具调用）：移除占位行，避免残留"正在执行"提示
-              this.messages = this.messages.filter((m) => m !== placeholder)
+              // 整个 execute 没产生任何文本（仅工具调用）：把占位行改成服务端的最终结论，
+              // 而不是直接删除——否则执行成功后用户看不到任何收尾消息。
+              const fallback = isError ? (data?.message || '执行失败') : (data?.content || '执行完成')
+              placeholder.content = fallback
+              placeholder.status = isError ? 'failed' : 'completed'
+              if (data?.reasoning) placeholder.reasoning = data.reasoning
             }
-            // 同步建议审批终态（EXECUTED/FAILED）+ plan 进度；落库推理已在 finishAssistant 写入
+            // 同步服务端落库消息（工具结果/审批终态/最终结论），避免前端占位与服务端不一致
+            this.refreshMessages(conversationId)
+            // 同步建议审批终态（EXECUTED/FAILED）+ plan 进度
             this.fetchSuggestions()
             this.fetchPlans(conversationId)
             this.fetchConversations()

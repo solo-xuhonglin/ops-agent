@@ -158,8 +158,9 @@
             </div>
           </div>
 
-          <!-- 时间线：按消息 kind 路由渲染（USER / ASSISTANT / TOOL_CALL / APPROVAL）-->
-          <div v-for="m in store.messages" :key="m.messageId || m._localId" class="msg-row"
+          <!-- 时间线：按消息 kind 路由渲染（USER / ASSISTANT / TOOL_CALL / APPROVAL）。
+               PENDING 审批建议被抽到下方固定区，避免后续消息把它顶上去。 -->
+          <div v-for="m in timelineMessages" :key="m.messageId || m._localId" class="msg-row"
                :class="kindClass(m)">
             <!-- USER：右对齐气泡 -->
             <div v-if="kindOf(m) === 'USER'" class="msg-bubble msg-bubble--user">
@@ -298,6 +299,51 @@
           </div>
         </div>
 
+        <!-- 待审批建议固定区：PENDING 建议始终吸附在输入框上方，不被新消息顶上去 -->
+        <div v-if="pendingApprovalMessages.length" class="pending-approvals pa-4 pt-2">
+          <div class="pending-approvals__head text-body-small font-weight-medium mb-2">
+            <v-icon size="14" color="warning" class="mr-1">mdi-clock-alert-outline</v-icon>
+            待确认操作
+          </div>
+          <div v-for="m in pendingApprovalMessages" :key="m.messageId || m._localId"
+               class="msg-row msg-row--approval">
+            <div class="msg-card msg-card--approval" :class="approvalClass(m)">
+              <div class="msg-card__head">
+                <v-icon size="16" :color="priorityColor(approvalPayload(m).priority)" class="mr-1">
+                  {{ actionIcon(approvalPayload(m).actionType) }}
+                </v-icon>
+                <span class="font-weight-bold">{{ actionText(approvalPayload(m).actionType) || '建议操作' }}</span>
+                <v-chip :color="approvalColor(m)" size="x-small" class="ml-2" variant="tonal">
+                  {{ approvalText(m) }}
+                </v-chip>
+                <v-spacer />
+                <span class="msg-meta">{{ approvalTargetText(approvalPayload(m)) }}</span>
+              </div>
+              <div v-if="approvalPayload(m).reason" class="msg-approval__reason">
+                {{ approvalPayload(m).reason }}
+              </div>
+              <div v-if="approvalPayload(m).retryOf" class="msg-approval__retry">
+                <v-icon size="13" class="mr-1">mdi-restart</v-icon>重试：原建议 {{ approvalPayload(m).retryOf }}
+              </div>
+              <div v-if="approvalParams(m).length" class="msg-approval__params-wrap">
+                <div class="msg-meta msg-approval__params-toggle" @click="m._paramsOpen = !m._paramsOpen">
+                  {{ m._paramsOpen ? '收起参数' : '查看参数（' + approvalParams(m).length + '）' }}
+                </div>
+                <div v-if="m._paramsOpen" class="suggestion-params">
+                  <div v-for="(p, i) in approvalParams(m)" :key="i" class="d-flex align-start">
+                    <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
+                    <span class="text-body-small param-val">{{ p.v }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="approvalPending(m) && canWrite" class="msg-approval__actions">
+                <v-btn size="small" color="primary" @click="approve(approvalPayload(m).suggestionId)">确认执行</v-btn>
+                <v-btn size="small" variant="text" class="ml-2" @click="reject(approvalPayload(m).suggestionId)">忽略</v-btn>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 底部输入框：流式中禁用并显示停止 -->
         <div class="pa-3">
           <div class="d-flex align-center mb-1 px-1">
@@ -359,6 +405,14 @@ const viewTitle = computed(() => {
   if (store.activeView === 'suggestions') return '处置建议'
   return store.currentConversation?.title || 'Agent 助手'
 })
+
+// ===== 待审批建议固定在聊天区底部：PENDING 状态从时间线中抽出，避免被后续消息顶上去 =====
+const pendingApprovalMessages = computed(() =>
+  store.messages.filter((m) => kindOf(m) === 'APPROVAL' && approvalPending(m))
+)
+const timelineMessages = computed(() =>
+  store.messages.filter((m) => !(kindOf(m) === 'APPROVAL' && approvalPending(m)))
+)
 
 // ===== plan 卡片：plan.steps 骨架 + suggestions 审批状态合并 =====
 const planSteps = computed(() => {
@@ -1117,5 +1171,14 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
 }
 .plan-step__text {
   font-weight: 500;
+}
+
+/* ---- 待审批建议固定区（吸附在输入框上方） ---- */
+.pending-approvals {
+  border-top: 1px dashed color-mix(in srgb, rgb(var(--v-theme-warning)) 40%, transparent);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 4%, transparent);
+}
+.pending-approvals__head {
+  color: rgb(var(--v-theme-warning));
 }
 </style>
