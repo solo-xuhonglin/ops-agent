@@ -48,8 +48,10 @@ async def amain() -> None:
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
-    # v3：agent 自治写库（直连 PostgreSQL，DDL 归 admin JPA；DATABASE_URL 未配则禁用持久化）
-    db = Database(cfg.database_url, cfg.db_pool_min, cfg.db_pool_max)
+    # v3：agent 自治写库（直连 PostgreSQL，DDL 归 admin JPA；PG 变量未配则禁用持久化）
+    db = Database(cfg.database_url, cfg.db_pool_min, cfg.db_pool_max,
+                  host=cfg.pg_host, port=cfg.pg_port, user=cfg.pg_user,
+                  password=cfg.pg_password, database=cfg.pg_database)
     await db.start()
     store = TaskStore(db, cfg.worker_id)
 

@@ -19,7 +19,13 @@ class Config:
     llm_timeout_s: float = 60.0
     max_tool_rounds: int = 10
     # agent 自治写库：直连 PostgreSQL（asyncpg），DDL 归 admin JPA
+    # 优先用独立 PG* 变量（避免密码特殊字符进 DSN URL 解析出错）；否则用 DATABASE_URL
     database_url: str = ""
+    pg_host: str = ""
+    pg_port: int = 5432
+    pg_user: str = ""
+    pg_password: str = ""
+    pg_database: str = ""
     db_pool_min: int = 1
     db_pool_max: int = 5
 
@@ -37,6 +43,11 @@ class Config:
             llm_timeout_s=float(os.getenv("DEEPSEEK_TIMEOUT_S", "60")),
             max_tool_rounds=int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "10")),
             database_url=os.getenv("DATABASE_URL", ""),
+            pg_host=os.getenv("PGHOST", ""),
+            pg_port=int(os.getenv("PGPORT", "5432")),
+            pg_user=os.getenv("PGUSER", ""),
+            pg_password=os.getenv("PGPASSWORD", ""),
+            pg_database=os.getenv("PGDATABASE", ""),
             db_pool_min=int(os.getenv("DB_POOL_MIN", "1")),
             db_pool_max=int(os.getenv("DB_POOL_MAX", "5")),
         )

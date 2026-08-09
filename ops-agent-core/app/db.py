@@ -12,21 +12,40 @@ log = logging.getLogger("db")
 
 
 class Database:
-    """asyncpg 连接池封装：execute/fetch/fetchrow 三个帮助方法。"""
+    """asyncpg 连接池封装：execute/fetch/fetchrow 三个帮助方法。
 
-    def __init__(self, url: str, min_size: int = 1, max_size: int = 5) -> None:
+    连接参数优先用独立 PG*（host/port/user/password/database，避免密码特殊字符进 DSN URL
+    解析出错）；未提供时回退 DATABASE_URL。
+    """
+
+    def __init__(self, url: str = "", min_size: int = 1, max_size: int = 5,
+                 host: str = "", port: int = 5432, user: str = "",
+                 password: str = "", database: str = "") -> None:
         self.url = url
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
+        self.database = database
         self.min_size = min_size
         self.max_size = max_size
         self._pool: Optional[asyncpg.Pool] = None
 
     @property
     def enabled(self) -> bool:
-        return bool(self.url) and self._pool is not None
+        return self._pool is not None
 
     async def start(self) -> None:
+        if self.host:
+            self._pool = await asyncpg.create_pool(
+                host=self.host, port=self.port, user=self.user,
+                password=self.password, database=self.database,
+                min_size=self.min_size, max_size=self.max_size)
+            log.info("database pool started: %s/%s@%s:%s", self.database, self.user,
+                     self.host, self.port)
+            return
         if not self.url:
-            log.warning("DATABASE_URL not set; agent-side persistence disabled")
+            log.warning("no PG config (PGHOST/DATABASE_URL); agent-side persistence disabled")
             return
         self._pool = await asyncpg.create_pool(
             self.url, min_size=self.min_size, max_size=self.max_size)
