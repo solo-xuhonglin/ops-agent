@@ -283,6 +283,21 @@ def build_openai_tools(registry: ToolRegistry) -> list[dict]:
     return tools
 
 
+# approve_<写工具> 的审批上下文键（不进业务 params，单独落建议行）
+_APPROVE_CONTEXT_KEYS = {"plan_id", "step_no", "retry_of"}
+
+
+def _collect_business_params(args: dict) -> dict:
+    """approve_* 场景：写工具业务参数在 args 顶层（如 {"datasetId": 3}），
+    不在 params 键里 —— 收集除审批上下文键外的顶层键作为 params。
+    兼容旧式 suggest_action 显式传 params 键的情况。"""
+    explicit = args.get("params")
+    if isinstance(explicit, dict) and explicit:
+        return explicit
+    return {k: v for k, v in args.items()
+            if k not in _APPROVE_CONTEXT_KEYS and v is not None}
+
+
 async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
                                 action_type: str = "") -> dict:
     """落一条 PENDING 写操作建议（系统参数注入）。
@@ -308,7 +323,7 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
             "action_type": action,
             "target_type": str(args.get("target_type", "")),
             "target_id": int(args.get("target_id", 0) or 0),
-            "params": args.get("params") or {},
+            "params": _collect_business_params(args),
             "reason": str(args.get("reason", "")),
             "priority": str(args.get("priority", "NORMAL")),
         })
