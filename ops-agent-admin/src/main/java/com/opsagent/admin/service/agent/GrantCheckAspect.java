@@ -57,7 +57,8 @@ public class GrantCheckAspect {
     }
 
     /** 按 targetParam（逻辑字段名）从方法实参提取 targetId：
-     *  ① 参数名 == targetParam 的 Number/String 参数；② DTO 的 get{TargetParam}()；③ Map 的 key。 */
+     *  ① 参数名 == targetParam 的 Number/String 参数；② DTO 的 get{TargetParam}()（bean）/ {targetParam}()（record）；
+     *  ③ Map 的 key。 */
     private Long resolveTargetId(ProceedingJoinPoint pjp, String targetParam) {
         Object[] args = pjp.getArgs();
         String[] names = ((MethodSignature) pjp.getSignature()).getParameterNames();
@@ -75,8 +76,7 @@ public class GrantCheckAspect {
             }
             if (arg != null && !(arg instanceof CharSequence) && !(arg instanceof Number)) {
                 try {
-                    String getter = "get" + Character.toUpperCase(targetParam.charAt(0)) + targetParam.substring(1);
-                    Object value = arg.getClass().getMethod(getter).invoke(arg);
+                    Object value = invokeAccessor(arg, targetParam);
                     return value instanceof Number n ? n.longValue() : parseLong(String.valueOf(value));
                 } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
                     // 该参数无此字段，继续
@@ -84,6 +84,16 @@ public class GrantCheckAspect {
             }
         }
         return null;
+    }
+
+    /** record 用 {field}() 访问器、JavaBean 用 get{Field}()；两种都兼容。 */
+    private Object invokeAccessor(Object target, String field) throws Exception {
+        try {
+            return target.getClass().getMethod(field).invoke(target); // record: datasetId()
+        } catch (NoSuchMethodException e) {
+            String getter = "get" + Character.toUpperCase(field.charAt(0)) + field.substring(1);
+            return target.getClass().getMethod(getter).invoke(target); // bean: getDatasetId()
+        }
     }
 
     private Long parseLong(String s) {
