@@ -18,7 +18,13 @@ from langgraph.errors import NodeCancelledError
 
 from app.agent.context import TaskContext
 from app.agent.decision import run_decision_round
-from app.agent.graph import build_graph, run_graph, _maybe_register_tracker
+from app.agent.graph import (
+    build_graph,
+    run_graph,
+    _extract_conclusion,
+    _format_plan_summary,
+    _maybe_register_tracker,
+)
 from app.agent.tracker import Monitor
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -230,20 +236,6 @@ EXECUTE_LOOP_SYSTEM = (
 )
 
 
-def _format_plan_summary(plan: Optional[dict]) -> str:
-    """plan dict → 决策上下文文本（execute 内闭环 / 推进轮复用）。"""
-    if not plan:
-        return ""
-    steps = plan.get("steps") or []
-    step_lines = "\n".join(
-        f"  step{s.get('step_no')}: {s.get('action_type')} (target={s.get('target_type')}/"
-        f"{s.get('target_id')}) status={s.get('status', 'pending')}"
-        + (f" note={s.get('note')}" if s.get("note") else "")
-        for s in steps)
-    return (f"plan_id={plan.get('plan_id')}\nsummary={plan.get('summary')}\n"
-            f"status={plan.get('status')}\nsteps:\n{step_lines or '  （空）'}")
-
-
 async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                          http: AdminHttpClient, ctx: TaskContext,
                          d: agent_pb2.TaskDispatch, store: Any,
@@ -408,11 +400,4 @@ async def handle_continue(client: GrpcClient, registry: ToolRegistry, llm: Any,
         await client.send_result(ctx.task_id, ok=False, conclusion=f"continue failed: {e}")
 
 
-def _extract_conclusion(messages: list) -> str:
-    """取最后一条 assistant 消息（有内容且非工具调用轮才用），否则提示未收敛。"""
-    for m in reversed(messages):
-        if getattr(m, "type", "") == "ai" and getattr(m, "content", None):
-            if getattr(m, "tool_calls", None):
-                continue  # 工具调用轮（原生 tool_calls），内容非结论
-            return m.content
-    return "no conclusion produced (max tool rounds reached)"
+
