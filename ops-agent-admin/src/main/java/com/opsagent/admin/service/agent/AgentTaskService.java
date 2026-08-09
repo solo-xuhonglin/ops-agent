@@ -62,6 +62,7 @@ public class AgentTaskService {
     private final WorkerRegistry workerRegistry;
     private final UserRepository userRepository;
     private final JwtUtil jwtUtil;
+    private final ConversationStreamManager streamManager;
 
     /** 从 userId 解析完整权限列表（roles → permissions → 去重 code），用于签发 scoped token。 */
     private List<String> resolveFullPermissions(Long userId) {
@@ -159,6 +160,12 @@ public class AgentTaskService {
                 .setGrantKey(grantKey == null ? "" : grantKey);
         if (conversationId != null && !conversationId.isBlank()) {
             b.setConversationId(conversationId);
+        }
+        // 绑定 task→conversation：worker 的 TaskResult/事件回来时能定位会话
+        // （chat 任务由 AgentConversationService.send 绑定；execute 必须在此绑定，
+        //   否则 conversationOf(taskId)=null → 结果消息不落库 → 前端 approve 后无任何返回）
+        if (conversationId != null && !conversationId.isBlank()) {
+            streamManager.bindTask(taskId, conversationId);
         }
         pushAfterCommit(worker, taskId, ServerMessage.newBuilder().setTaskDispatch(b).build());
         return task;

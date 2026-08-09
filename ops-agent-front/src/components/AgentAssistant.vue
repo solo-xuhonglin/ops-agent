@@ -444,14 +444,15 @@ async function reject(s) {
 }
 
 // approve 后：execute 是异步任务，延迟轮询拉取结果消息（建议状态 + 执行消息 + plan 进度）
+// execute 通常秒级返回，但 worker 忙/写操作慢时可能更久，轮询覆盖到 15s+25s
 function notifyExecuting() {
   const cid = store.currentConversation?.conversationId
   if (!cid) return
-  ;[1200, 3500, 7000].forEach((ms, i) => {
+  ;[1200, 3500, 7000, 15000, 25000].forEach((ms, i) => {
     setTimeout(() => {
       store.refreshMessages(cid)
       // 最后一轮再拉一次建议，确保卡片状态收尾
-      if (i === 2) store.fetchSuggestions()
+      if (i === 4) store.fetchSuggestions()
     }, ms)
   })
 }
