@@ -297,6 +297,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
     # 决策图内闭环：写工具结果注入 → agent 自主推进（wait_until/plan_update/approve_*）
     # → 非工具调用收敛。失败同样在图内（agent 看失败原因决定重试/放弃）。
     conclusion = ""
+    reasoning_text = ""
     try:
         plan_text = ""
         if store is not None and store.enabled and ctx.suggestion_id:
@@ -316,6 +317,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                             tracker=tracker, store=store)
         final_messages, hit_limit = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
         conclusion = _extract_conclusion(final_messages).strip()
+        reasoning_text = _extract_reasoning(final_messages)
         if hit_limit:
             conclusion = (f"⚠️ 任务因工具调用轮次达到上限（{max_rounds} 轮）而自动停止。"
                           f"\n\n{conclusion}\n\n"
@@ -334,11 +336,16 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
             log.warning("suggestion result update failed: %s", e)
     if store is not None and store.enabled:
         try:
-            await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion)
+            await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion,
+                                    reasoning_text)
         except Exception as e:  # noqa: BLE001
             log.warning("execute task finish failed: %s", e)
-    await client.send_result(ctx.task_id, ok=ok, conclusion=conclusion)
-    log.info("execute done: %s ok=%s", ctx.task_id[:8], ok)
+    # 审批后续推理必须回传 reasoning，否则 finishAssistant 落库的 assistant 消息
+    # reasoning 为空，会话恢复/前端刷新时该轮推理记录缺失（chat 任务已回传，execute 漏传）。
+    await client.send_result(ctx.task_id, ok=ok, conclusion=conclusion,
+                             reasoning=reasoning_text)
+    log.info("execute done: %s ok=%s reasoning_len=%d",
+             ctx.task_id[:8], ok, len(reasoning_text))
 
 
 

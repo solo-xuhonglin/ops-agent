@@ -497,9 +497,9 @@ export const useAgentStore = defineStore('agent', {
 
     /**
      * approve 后监听 execute 任务的实时事件（会话级流，不绑 taskId）：
+     * - thinking/delta → 同 openStream，按 LLM 轮次拆 ASSISTANT 行（首个文本把占位行转为流式行）
      * - tool_call/tool_result → upsertToolCallRow（同一行累计）
-     * - 占位消息每秒刷新已等待秒数（_elapsed），done/error 前一直可见
-     * - done/error → 清计时 + 占位标记 completed/failed（refreshMessages 不再保留）→ 刷新（落库结果替代占位）
+     * - done/error → 收尾 + 同步建议/plan（落库结果已在 finishAssistant 写入，恢复会话时可见）
      * execute 通常秒级返回，流会很快收到 done 自动关闭；重复 approve 时旧的监听让位。
      */
     listenExecute(conversationId, label = '正在执行已审批的写操作…') {
@@ -508,7 +508,7 @@ export const useAgentStore = defineStore('agent', {
         this.executeController.abort()
         this.executeController = null
       }
-      // 本地占位：execute 结果消息落库前先展示执行状态（落库后 refreshMessages 会替换掉）
+      // 本地占位：execute 结果消息落库前先展示执行状态（首个推理文本到达后转为流式行）
       this.messages.push({
         messageId: `exec-${Date.now()}`,
         kind: 'ASSISTANT',
@@ -518,14 +518,76 @@ export const useAgentStore = defineStore('agent', {
         _thinkingOpen: true,
         createdAt: new Date().toISOString()
       })
-      const proxy = this.messages[this.messages.length - 1]
+      const placeholder = this.messages[this.messages.length - 1]
       const startTs = Date.now()
-      const timer = setInterval(() => {
-        proxy._elapsed = Math.round((Date.now() - startTs) / 1000)
+      const elapsedTimer = setInterval(() => {
+        placeholder._elapsed = Math.round((Date.now() - startTs) / 1000)
       }, 1000)
+
+      // 流式渲染复用 openStream 的轮次拆分逻辑
+      let activeRef = placeholder
+      let pending = { thinking: '', delta: '' }
+      let lastEventWasToolResult = false
+      let started = false
+
+      const flush = () => {
+        if (pending.thinking) {
+          if (!started) {
+            activeRef.content = ''
+            activeRef.reasoning = ''
+            activeRef.status = 'streaming'
+            started = true
+          }
+          activeRef.reasoning += pending.thinking
+          pending.thinking = ''
+        }
+        if (pending.delta) {
+          if (!started) {
+            activeRef.content = ''
+            activeRef.reasoning = ''
+            activeRef.status = 'streaming'
+            started = true
+          }
+          activeRef.content += pending.delta
+          pending.delta = ''
+        }
+      }
+      /** 切到新的 ASSISTANT 消息行；占位行尚未写过文本时保留，等下一轮首个文本再转换。 */
+      const rotateTurn = () => {
+        flush()
+        if (activeRef === placeholder) {
+          lastEventWasToolResult = false
+          return
+        }
+        if (activeRef.reasoning || activeRef.content) activeRef.status = 'completed'
+        const newMsg = {
+          messageId: `stream-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          kind: 'ASSISTANT',
+          content: '',
+          reasoning: '',
+          status: 'streaming',
+          _thinkingOpen: true,
+          createdAt: new Date().toISOString()
+        }
+        this.messages.push(newMsg)
+        activeRef = this.messages[this.messages.length - 1]
+        lastEventWasToolResult = false
+      }
+
+      this._execFlushTimer = setInterval(flush, STREAM_FLUSH_MS)
+
       this.executeController = agentApi.streamConversation(conversationId, null, (event, data) => {
         switch (event) {
+          case 'thinking':
+            if (lastEventWasToolResult && activeRef !== placeholder) rotateTurn()
+            pending.thinking += data?.delta || ''
+            break
+          case 'delta':
+            if (lastEventWasToolResult && activeRef !== placeholder) rotateTurn()
+            pending.delta += data?.delta || ''
+            break
           case 'tool_call':
+            flush()
             this.upsertToolCallRow({
               taskId: data?.taskId || null,
               callId: data?.id || data?.callId || null,
@@ -533,8 +595,10 @@ export const useAgentStore = defineStore('agent', {
               args: data?.args,
               isResult: false
             })
+            lastEventWasToolResult = false
             break
           case 'tool_result':
+            flush()
             this.upsertToolCallRow({
               taskId: data?.taskId || null,
               callId: data?.id || data?.callId || null,
@@ -542,14 +606,25 @@ export const useAgentStore = defineStore('agent', {
               summary: data?.summary || '',
               isResult: true
             })
+            // 标记轮次边界：下一次 thinking/delta 触发 rotateTurn
+            lastEventWasToolResult = true
             break
           case 'done':
           case 'error': {
-            clearInterval(timer)
+            flush()
+            clearInterval(this._execFlushTimer)
+            clearInterval(elapsedTimer)
             this.executeController = null
-            proxy.status = event === 'done' ? 'completed' : 'failed'
-            if (event === 'done' && data?.content) proxy.content = data.content
-            this.refreshMessages(conversationId)
+            if (started) {
+              if (activeRef.reasoning || activeRef.content) activeRef.status = 'completed'
+            } else {
+              // 整个 execute 没产生任何文本（仅工具调用）：移除占位行，避免残留"正在执行"提示
+              this.messages = this.messages.filter((m) => m !== placeholder)
+            }
+            // 同步建议审批终态（EXECUTED/FAILED）+ plan 进度；落库推理已在 finishAssistant 写入
+            this.fetchSuggestions()
+            this.fetchPlans(conversationId)
+            this.fetchConversations()
             break
           }
         }
