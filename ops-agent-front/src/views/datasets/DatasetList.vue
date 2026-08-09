@@ -2,6 +2,7 @@
   <div>
     <div class="page-toolbar">
       <v-spacer />
+      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
       <v-select
         v-model="filterStatus"
         :items="statusOptions"
@@ -12,7 +13,6 @@
         style="max-width: 160px"
         @update:model-value="load"
       />
-      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 

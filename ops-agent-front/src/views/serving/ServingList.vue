@@ -5,6 +5,7 @@
         <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
       </v-chip>
       <v-spacer />
+      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-rocket-launch" @click="openDeploy">部署模型</v-btn>
       <v-select
         v-model="filterStatus"
         :items="statusOptions"
@@ -15,7 +16,6 @@
         style="max-width: 160px"
         @update:model-value="load"
       />
-      <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-rocket-launch" @click="openDeploy">部署模型</v-btn>
       <v-btn variant="text" prepend-icon="mdi-refresh" @click="load">刷新</v-btn>
     </div>
 
