@@ -73,6 +73,26 @@ def _looks_like_json(text: str) -> bool:
     return t.startswith(("{", "[", "```"))
 
 
+def _strip_reasoning(messages: list[Any]) -> list[Any]:
+    """剥离 assistant 消息的 additional_kwargs 再传给 LLM。
+
+    DeepSeek reasoner 约定：messages 里带 reasoning_content 会直接 400（禁止把上一轮的
+    推理链回传）；我们的聚合推理链挂在 additional_kwargs["reasoning_content"]，必须移除。
+    深拷贝避免污染 checkpoint 中的消息（最终结论仍可从 additional_kwargs 提取）。
+    """
+    out: list[Any] = []
+    for m in messages:
+        kw = getattr(m, "additional_kwargs", None)
+        if kw and (kw.get("reasoning_content") or kw.get("_is_tool_round")):
+            m2 = m.model_copy(deep=True)
+            m2.additional_kwargs.pop("reasoning_content", None)
+            m2.additional_kwargs.pop("_is_tool_round", None)
+            out.append(m2)
+        else:
+            out.append(m)
+    return out
+
+
 def _parse_tool_calls(content: str) -> list[dict]:
     """从模型输出解析工具调用：单工具 {"tool":..,"args":..} 或并行 {"tools":[...]}。
 
@@ -153,7 +173,8 @@ def build_graph(llm: ChatOpenAI, http: AdminHttpClient,
         把缓存正文作为 delta 补发（避免用户看到裸 JSON）。
         """
         ctx: TaskContext = state["ctx"]
-        messages = [SystemMessage(content=build_tool_prompt(registry)), *state["messages"]]
+        # 关键：剥离上一轮挂的推理链（reasoner 禁止回传 reasoning_content，否则 400）
+        messages = [SystemMessage(content=build_tool_prompt(registry)), *_strip_reasoning(state["messages"])]
         chunks: list[Any] = []
         reasoning_parts: list[str] = []
         pending = ""
