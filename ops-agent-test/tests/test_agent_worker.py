@@ -52,16 +52,16 @@ def _find_suggestion(client: OpsAgentClient, task_id: str) -> dict:
     raise AssertionError(f"no suggestion found for task {task_id} in {page['content']}")
 
 
-def _poll_suggestion_status(client: OpsAgentClient, sug_id: int, statuses: set[str], timeout: float = 30.0) -> dict:
+def _poll_suggestion_status(client: OpsAgentClient, suggestion_id: str, statuses: set[str], timeout: float = 30.0) -> dict:
     deadline = time.time() + timeout
     last = None
     while time.time() < deadline:
         page = client.list_agent_suggestions(page=0, size=50)
-        last = next((s for s in page["content"] if s["id"] == sug_id), None)
+        last = next((s for s in page["content"] if s["suggestionId"] == suggestion_id), None)
         if last and last["status"] in statuses:
             return last
         time.sleep(1)
-    raise AssertionError(f"suggestion {sug_id} did not reach {statuses}; last={last}")
+    raise AssertionError(f"suggestion {suggestion_id} did not reach {statuses}; last={last}")
 
 
 def test_agent_dispatch_full_cycle(client: OpsAgentClient):
@@ -103,7 +103,7 @@ def test_agent_suggestion_approve_and_execute_flow(client: OpsAgentClient):
     _poll_task(client, task_id)
 
     sug = _find_suggestion(client, task_id)
-    sug_id = sug["id"]
+    sug_id = sug["suggestionId"]  # approve/reject 端点的路径参数是 suggestionId（UUID）
     assert sug["status"] == "PENDING", f"new suggestion should be PENDING, got {sug['status']}"
     assert sug["actionType"] == "serving_undeploy", sug
     assert sug["targetType"] == "serving_endpoint", sug
@@ -112,7 +112,7 @@ def test_agent_suggestion_approve_and_execute_flow(client: OpsAgentClient):
 
     # approve -> grantKey issued (worker is online, so no AGENT_OFFLINE path)
     approved = client.approve_agent_suggestion(sug_id)
-    assert approved["id"] == sug_id
+    assert approved["suggestionId"] == sug_id
     assert approved["status"] == "APPROVED", approved
     assert approved["grantKey"], "approve must return a grantKey"
 
@@ -143,11 +143,11 @@ def test_agent_suggestion_reject_flow(client: OpsAgentClient):
     _poll_task(client, task_id)
 
     sug = _find_suggestion(client, task_id)
-    sug_id = sug["id"]
+    sug_id = sug["suggestionId"]
     assert sug["status"] == "PENDING", sug
 
     rejected = client.reject_agent_suggestion(sug_id)
-    assert rejected["id"] == sug_id
+    assert rejected["suggestionId"] == sug_id
     assert rejected["status"] == "REJECTED", rejected
 
     # double-reject -> business error envelope (HTTP 200, body code 400)

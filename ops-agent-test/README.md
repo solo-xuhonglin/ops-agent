@@ -93,6 +93,17 @@ pytest -m negative     # 鉴权/异常
   （复用 `ops-agent-core:latest` 镜像与 gRPC stub，连 docker 网络内 `admin:9090`）
   → 等注册完成 → 本地跑 `AGENT_E2E=1` 的 agent 测试 → **自动恢复真实 agent**并清理
   fake worker，最后打印 worker 收到的 grant/任务日志作为证据。
+- **真实场景**（`test_agent_scenarios.py`）：直接打**在线 worker + 真实 LLM**，
+  覆盖两个端到端场景——简单用例（单轮对话收敛到非空回复）与复杂用例（多步计划：
+  approve 第一步 → execute 成功 → **auto-continue 自动提出下一步建议**，验证完整
+  审批闭环）。需要在线 worker，显式开启：
+
+  ```bash
+  cd ops-agent-test
+  REAL_AGENT=1 pytest tests/test_agent_scenarios.py -v
+  ```
+
+  LLM 行为非确定，用例采用防御性轮询与尽力断言（无 plan_id 时仅验证 approve→execute）。
 - **权限说明**：种子用户 `user/user123` 是 OPERATOR（业务读写，代码设计如此），
   不能用于 403 测试；`conftest.py` 的 `reader_client` 会用 admin 动态创建一个
   READONLY 角色用户（只有 `*:read`），测完即删。
