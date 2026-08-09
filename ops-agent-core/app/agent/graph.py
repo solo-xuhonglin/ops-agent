@@ -108,6 +108,7 @@ class AgentState(TypedDict):
     messages: Annotated[list[Any], add_messages]
     ctx: TaskContext
     pending_tools: Optional[list[dict]]  # 本轮的待执行工具调用（原生 tool_calls: [{id,name,args}]）
+    pending_approval: bool  # 本轮已成功提交审批建议（PENDING 建议落库）→ 触发循环收口，模型只补一句摘要
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -704,7 +705,11 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
         事件经 EventBatcher 聚合（40 字符 flush）降低帧数。
         """
         ctx: TaskContext = state["ctx"]
-        llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools(build_openai_tools(registry))
+        if state.get("pending_approval"):
+            # 已提交审批建议：进入收口轮——不挂任何工具，模型只输出一段中文摘要，禁止再循环
+            llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools([])
+        else:
+            llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools(build_openai_tools(registry))
         messages = list(state["messages"])
         chunks: list[Any] = []
         reasoning_parts: list[str] = []
@@ -750,6 +755,7 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
         """
         ctx: TaskContext = state["ctx"]
         tool_msgs: list[Any] = []
+        submitted_approval = False  # 本轮是否有 approve_* 成功落库 PENDING 建议（触发循环收口）
         for tc in (state.get("pending_tools") or []):
             name = tc["name"]
             args = tc.get("args") or {}
@@ -784,6 +790,10 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                                                         action_type=action, client=client) \
                         if store is not None else {"status": 500,
                                                    "body": f"{name} unavailable (agent DB disabled)"}
+                    # 成功落库（新建 200 或命中去重 200，均表示界面已有开放建议）→ 标记已提交审批，
+                    # 触发循环收口：下一轮 agent 不挂工具，只补一句摘要后 END（杜绝提交后空转烧轮次）。
+                    if isinstance(result, dict) and result.get("status") == 200:
+                        submitted_approval = True
             else:
                 tool = registry.get(name)
                 if tool is None:
@@ -810,7 +820,11 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                                                ensure_ascii=False))
             tool_msgs.append(ToolMessage(
                 content=json.dumps(result, ensure_ascii=False), tool_call_id=call_id))
-        return {"messages": tool_msgs, "pending_tools": []}
+        update = {"messages": tool_msgs, "pending_tools": []}
+        if submitted_approval:
+            # 已提交审批建议：标记收口，下一轮 agent 仅出摘要后 END（human-in-the-loop 中断）
+            update["pending_approval"] = True
+        return update
 
     def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
         if state.get("pending_tools"):
@@ -839,7 +853,9 @@ async def run_graph(graph: Any, ctx: TaskContext,
         "recursion_limit": max_rounds * 4 + 16,
     }
     try:
-        result = await graph.ainvoke({"messages": messages, "ctx": ctx, "pending_tools": []}, config=config)
+        result = await graph.ainvoke(
+            {"messages": messages, "ctx": ctx, "pending_tools": [], "pending_approval": False},
+            config=config)
         return result["messages"], False
     except GraphRecursionError:
         log.warning("graph recursion limit reached: task=%s", ctx.task_id)
