@@ -231,7 +231,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         if t.parameters:
             lines.append(f"  参数(JSON Schema): {t.parameters}")
         if t.is_write:
-            lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action / plan_create 审批后由系统执行")
+            lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action 审批后由系统执行")
     lines += [
         "",
         "- plan_create: 记录多步骤任务的执行计划（步骤清单与顺序，供后续按序处理）",
