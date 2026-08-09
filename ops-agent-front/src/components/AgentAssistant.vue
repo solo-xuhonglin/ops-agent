@@ -195,6 +195,15 @@
               </div>
               <div v-else-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
 
+              <!-- 轮次耗尽警示：任务因工具调用轮次达到上限自动停止（说明为什么停了 + 后续怎么办） -->
+              <div v-if="stoppedByLimit(m)" class="msg-stop-banner">
+                <v-icon size="15" class="mr-1">mdi-alert-decagram-outline</v-icon>
+                <span>
+                  任务因工具调用轮次达到上限而<strong>自动停止</strong>——
+                  可通过继续对话（描述剩余目标）或拆分为多步计划（plan_create）推进，系统会从中断处接续。
+                </span>
+              </div>
+
               <!-- 失败/错误 -->
               <div v-if="m.status === 'failed'" class="text-body-small text-error mt-1">
                 <v-icon size="14" class="mr-1">mdi-alert-circle</v-icon>{{ m.error || '生成失败' }}
@@ -591,6 +600,11 @@ function kindClass(m) {
   if (k === 'TOOL_CALL') return 'msg-row--tool'
   if (k === 'APPROVAL') return 'msg-row--approval'
   return 'msg-row--assistant'
+}
+
+// 轮次耗尽判定：后端在轮次耗尽时给结论加前缀「任务因工具调用轮次达到上限」
+function stoppedByLimit(m) {
+  return m && m.status === 'completed' && /任务因工具调用轮次达到上限/.test(m.content || '')
 }
 
 // ===== 工具行 / 审批行 helpers =====
@@ -1025,6 +1039,19 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
 }
 .msg-card--approval-failed {
   border-left-color: rgb(var(--v-theme-error));
+}
+.msg-stop-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 10%, transparent);
+  border: 0.5px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 40%, transparent);
+  color: rgb(var(--v-theme-warning));
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 .msg-approval__reason {
   margin-top: 6px;

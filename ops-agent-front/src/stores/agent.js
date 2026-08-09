@@ -435,6 +435,9 @@ export const useAgentStore = defineStore('agent', {
             this.streaming = false
             this.streamController = null
             this._streamStartedAt = 0
+            // 流结束后立即从服务端拉取最终消息（落库的工具行/审批卡/结论），避免
+            // 占位行与落库行不一致、审批卡不及时显示（需刷新才看到）
+            this.refreshMessages(conversationId)
             // 拉取该轮建议（授权卡）+ 任务最终态 + plan 进度
             this.attachSuggestions(taskId)
             this.fetchPlans(conversationId)
