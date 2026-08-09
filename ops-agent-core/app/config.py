@@ -18,6 +18,10 @@ class Config:
     deepseek_model: str = "deepseek-reasoner"
     llm_timeout_s: float = 60.0
     max_tool_rounds: int = 10
+    # agent 自治写库：直连 PostgreSQL（asyncpg），DDL 归 admin JPA
+    database_url: str = ""
+    db_pool_min: int = 1
+    db_pool_max: int = 5
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -32,6 +36,9 @@ class Config:
             deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner"),
             llm_timeout_s=float(os.getenv("DEEPSEEK_TIMEOUT_S", "60")),
             max_tool_rounds=int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "10")),
+            database_url=os.getenv("DATABASE_URL", ""),
+            db_pool_min=int(os.getenv("DB_POOL_MIN", "1")),
+            db_pool_max=int(os.getenv("DB_POOL_MAX", "5")),
         )
 
 

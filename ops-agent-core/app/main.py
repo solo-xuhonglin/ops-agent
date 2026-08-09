@@ -7,8 +7,10 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.errors import NodeCancelledError
 
 from app.agent import core
+from app.agent.task_store import TaskStore
 from app.agent.tracker import TaskTracker
 from app.config import Config
+from app.db import Database
 from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -48,18 +50,25 @@ async def amain() -> None:
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
-    # 任务跟踪器：Plan 持久化 + 异步轮询 + 自主推进（流程控制在 agent 侧）
-    tracker = TaskTracker(http, client, registry)
+    # v3：agent 自治写库（直连 PostgreSQL，DDL 归 admin JPA；DATABASE_URL 未配则禁用持久化）
+    db = Database(cfg.database_url, cfg.db_pool_min, cfg.db_pool_max)
+    await db.start()
+    store = TaskStore(db, cfg.worker_id)
+
+    # 任务跟踪器：Plan 直写库 + 异步轮询 + 自主推进（流程控制在 agent 侧）
+    tracker = TaskTracker(store, http, client, registry)
     await tracker.start()
 
     client.on("register_ack", lambda m: _load_tools(registry, m))
     client.on("authorization_grant", lambda m: _on_grant(grants, m))
     client.on("task_dispatch",
-              lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds, tracker))
+              lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds,
+                                  tracker, store))
     client.on("cancel_task", lambda m: _on_cancel(m))
 
-    log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s",
-             cfg.worker_id, cfg.admin_grpc_addr, cfg.deepseek_base_url, cfg.deepseek_model)
+    log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s db=%s",
+             cfg.worker_id, cfg.admin_grpc_addr, cfg.deepseek_base_url, cfg.deepseek_model,
+             "on" if db.enabled else "off")
     try:
         await client.run()
     finally:
@@ -69,6 +78,7 @@ async def amain() -> None:
         if close is not None:
             await close()
         await http.close()
+        await db.stop()
 
 
 async def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> None:
@@ -81,11 +91,12 @@ async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
 
 async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: Any,
                     http: AdminHttpClient, msg: agent_pb2.ServerMessage,
-                    max_rounds: int, tracker: TaskTracker) -> None:
+                    max_rounds: int, tracker: TaskTracker, store: TaskStore) -> None:
     task_id = msg.task_dispatch.task_id
     active_tasks[task_id] = asyncio.current_task()  # 记录以便 CancelTask 精确取消
     try:
-        await core.handle_dispatch(client, registry, llm, http, msg, max_rounds, tracker)
+        await core.handle_dispatch(client, registry, llm, http, msg, max_rounds,
+                                   tracker, store)
     except NodeCancelledError:
         # admin 取消：core 已打日志，吞掉避免 asyncio "Task exception was never retrieved" 告警
         pass

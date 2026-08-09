@@ -54,10 +54,10 @@ def _extract_object_id(body: Any) -> Optional[int]:
     return None
 
 
-def _maybe_register_tracker(tracker: Any, ctx: TaskContext,
-                            tool: Optional[agent_pb2.ToolSchema],
-                            result: dict) -> None:
-    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步（async_suggestion）。
+async def _maybe_register_tracker(tracker: Any, store: Any, ctx: TaskContext,
+                                  tool: Optional[agent_pb2.ToolSchema],
+                                  result: dict) -> None:
+    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步。
     tracker 走闭包注入（不进 checkpoint state，避免 msgpack 序列化不可序列化对象）。"""
     if tool is None or not (tool.is_write and tracker and ctx.conversation_id):
         return
@@ -70,13 +70,26 @@ def _maybe_register_tracker(tracker: Any, ctx: TaskContext,
     if not mapping:
         return
     query_tool, object_type, id_param = mapping
-    next_step = tracker.next_step_for(ctx.conversation_id, tool.name)
+    # 定位所属 plan（execute 轮优先按 suggestion 反查；兜底取会话活跃 plan）
+    plan_id = ""
+    suggestion_id = str(ctx.suggestion_id) if ctx.suggestion_id else ""
+    if store is not None and store.enabled:
+        try:
+            if suggestion_id:
+                sug = await store.get_suggestion(suggestion_id)
+                plan_id = (sug or {}).get("plan_id") or ""
+            if not plan_id:
+                plan = await store.get_active_plan(ctx.conversation_id)
+                plan_id = (plan or {}).get("plan_id") or ""
+        except Exception as e:  # noqa: BLE001
+            log.warning("plan lookup for monitor failed: %s", e)
     tracker.register(
         object_type=object_type, object_id=object_id,
         conversation_id=ctx.conversation_id, task_id=ctx.task_id,
         task_token=ctx.task_token, query_tool=query_tool,
-        query_args={id_param: object_id}, step_action=tool.name,
-        target_status="SUCCEEDED", next_step=next_step)
+        query_args={id_param: object_id},
+        plan_id=plan_id, suggestion_id=suggestion_id,
+        action_type=tool.name, target_status="SUCCEEDED")
 
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
@@ -139,6 +152,37 @@ def _strip_reasoning(messages: list[Any]) -> list[Any]:
         else:
             out.append(m)
     return out
+
+
+class EventBatcher:
+    """thinking/delta 增量聚合：累计到阈值再发，降低 gRPC/SSE 帧数（流式优化 v3）。
+
+    现状每 token 一次 send_event → admin 每事件一次转发/落库；聚合后帧数降一个数量级，
+    前端观感仍"接近实时"（40 字符内即时可见，长段不超过一个推理片段）。
+    """
+
+    FLUSH_CHARS = 40
+
+    def __init__(self, client: GrpcClient, task_id: str) -> None:
+        self.client = client
+        self.task_id = task_id
+        self._buf: dict[str, list[str]] = {"thinking": [], "delta": []}
+
+    async def add(self, kind: str, text: str) -> None:
+        buf = self._buf[kind]
+        buf.append(text)
+        if sum(len(x) for x in buf) >= self.FLUSH_CHARS:
+            await self.flush(kind)
+
+    async def flush(self, kind: Optional[str] = None) -> None:
+        kinds = ["thinking", "delta"] if kind is None else [kind]
+        for k in kinds:
+            buf = self._buf[k]
+            if not buf:
+                continue
+            text = "".join(buf)
+            buf.clear()
+            await self.client.send_event(self.task_id, k, text)
 
 
 def _parse_tool_calls(content: str) -> list[dict]:
@@ -211,9 +255,9 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
 
 def build_graph(llm: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient,
-                tracker: Any = None) -> Any:
-    """构建并编译决策图。llm/http/registry/client/tracker 为进程级共享实例（闭包），ctx 走 state。
-    tracker 不进 state（msgpack 不可序列化），写工具成功回调用它注册异步跟踪。"""
+                tracker: Any = None, store: Any = None) -> Any:
+    """构建并编译决策图。llm/http/registry/client/tracker/store 为进程级共享实例（闭包），ctx 走 state。
+    tracker/store 不进 state（msgpack 不可序列化），写工具成功回调用 tracker 注册异步跟踪。"""
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
         """决策节点：工具清单注入 prompt 后流式调用 LLM。
@@ -221,6 +265,7 @@ def build_graph(llm: Any, http: AdminHttpClient,
         流式策略：推理链增量实时发 thinking；正文增量先缓存，按前缀判断是否工具 JSON ——
         JSON（工具调用轮）不展示给用户，最终解析出工具调用则走 tools；否则是最终回答，
         把缓存正文作为 delta 补发（避免用户看到裸 JSON）。
+        事件经 EventBatcher 聚合（40 字符 flush）降低帧数。
         """
         ctx: TaskContext = state["ctx"]
         # 关键：剥离上一轮挂的推理链（reasoner 禁止回传 reasoning_content，否则 400）
@@ -229,12 +274,13 @@ def build_graph(llm: Any, http: AdminHttpClient,
         reasoning_parts: list[str] = []
         pending = ""
         json_mode: Optional[bool] = None  # None=未判定 / True=工具JSON / False=正文
+        batcher = EventBatcher(client, ctx.task_id)
         async for chunk in llm.astream(messages):
             chunks.append(chunk)
             rc = _chunk_reasoning(chunk)
             if rc:
                 reasoning_parts.append(rc)
-                await client.send_event(ctx.task_id, "thinking", rc)
+                await batcher.add("thinking", rc)
             text = _chunk_text(chunk)
             if not text:
                 continue
@@ -244,12 +290,13 @@ def build_graph(llm: Any, http: AdminHttpClient,
                     json_mode = True
                 elif len(pending) > 8:
                     json_mode = False
-                    await client.send_event(ctx.task_id, "delta", pending)
+                    await batcher.add("delta", pending)
                     pending = ""
             elif json_mode:
                 pending += text
             else:
-                await client.send_event(ctx.task_id, "delta", text)
+                await batcher.add("delta", text)
+        await batcher.flush()  # 收尾：把残余增量发完
         if not chunks:
             return {"messages": [AIMessage(content="")], "pending_tools": []}
         merged = chunks[0]
@@ -286,7 +333,7 @@ def build_graph(llm: Any, http: AdminHttpClient,
             else:
                 result = await http.call(tool, args, ctx)
             # 异步写操作成功后注册跟踪（训练/部署完成后按 Plan 推进下一步）
-            _maybe_register_tracker(tracker, ctx, tool, result)
+            await _maybe_register_tracker(tracker, store, ctx, tool, result)
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",
