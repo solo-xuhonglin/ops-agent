@@ -231,7 +231,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         if t.parameters:
             lines.append(f"  参数(JSON Schema): {t.parameters}")
         if t.is_write:
-            lines.append("  ⚠ 写工具：仅当任务携带 suggestion_id（已审批）时才可调用；常规任务严禁调用，必须通过 suggestions 走审批闭环")
+            lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action / plan_create 审批后由系统执行")
     lines += [
         "",
         "- plan_create: 为复杂多步任务建立执行计划（系统按 steps 生成待审批建议；上一步完成（含异步训练/部署完成）后下一步自动出现在审批列表）",
