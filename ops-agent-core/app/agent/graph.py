@@ -378,6 +378,10 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     落库成功后立即推 `suggestion_created` SSE 事件，让前端用真实 suggestionId
     渲染 APPROVAL 时间线行——避免前端必须等 fetchSuggestions 才能看到卡
     （修复"授权卡要重新进入会话才出现"的体验断裂）。
+
+    去重：insert_suggestion 幂等（自然键命中开放态同款则复用，见 TaskStore.find_open_duplicate）。
+    命中时不推 suggestion_created（卡已存在），并在 tool 返回体里用自然语言提示模型收敛，
+    避免它继续刷同一条申请。approve_* 只经本函数落库，所以这一处兼顾"硬兜底"与"教模型"。
     """
     if store is None or not store.enabled:
         log.warning("suggest_action unavailable: agent DB disabled")
@@ -386,7 +390,7 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     if not action:
         return {"status": 400, "body": "action_type is required"}
     try:
-        sid = await store.insert_suggestion({
+        sid, created = await store.insert_suggestion({
             "source_task_id": ctx.task_id,
             "conversation_id": ctx.conversation_id,
             "plan_id": str(args.get("plan_id", "")),
@@ -402,6 +406,17 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     except Exception as e:  # noqa: BLE001
         log.warning("suggest_action persist failed: %s", e)
         return {"status": 500, "body": f"suggestion create failed: {e}"}
+    if not created:
+        # 去重命中：同款申请仍在等待审批/执行，卡已经在界面上——不重复推事件、不重复落库，
+        # 只把"别再提"讲清楚，让模型转去等待或推进下一步。
+        log.info("suggestion duplicate suppressed: %s action=%s", sid[:8], action)
+        return {"status": 200, "body": json.dumps({
+            "suggestion_id": sid,
+            "duplicate": True,
+            "note": (f"该 {action} 申请已存在（suggestion_id={sid}），"
+                     "正在等待审批或执行中，请勿重复提交。"
+                     "请等待审批结果。"),
+        }, ensure_ascii=False)}
     # 推 suggestion_created：前端收到后立即 upsert APPROVAL 行（独立事件，不在 tool_result 兜底）
     if client is not None:
         try:

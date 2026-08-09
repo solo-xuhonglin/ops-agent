@@ -124,8 +124,53 @@ class TaskStore:
 
     # ==================== agent_suggestions ====================
 
-    async def insert_suggestion(self, s: dict) -> str:
-        """写一条 PENDING 建议；返回 suggestion_id。支持 plan_id/step_no/retry_of 关联。"""
+    async def find_open_duplicate(self, s: dict) -> Optional[str]:
+        """按自然键查"还活着"的同款建议，命中返回其 suggestion_id。
+
+        自然键 = (conversation_id, action_type, target_type, target_id, params, retry_of)。
+        - params 存 TEXT，转 ::jsonb 后比较：PG 的 jsonb 已规范化（key 有序、空白无关），
+          等价于 canonical json，模型换参数顺序也逃不掉。CTE 加 MATERIALIZED 先物化候选行，
+          保证 cast 只作用于同会话同动作的少量行（历史脏数据不会炸整条查询）。
+        - retry_of 用 IS NOT DISTINCT FROM 让 NULL 参与比较：显式重试与普通建议互不合并，
+          但两次相同的重试仍会合并。
+        - plan_id/step_no 刻意不入键：模型重复提交时最容易漂移的就是它自己填的 step_no，
+          纳入反而让重复逃逸；而"同目标同参数的活跃申请只该有一条"与挂在哪个 step 无关。
+        - 只看开放状态；已关闭（EXECUTED/REJECTED/FAILED/EXPIRED/CANCELLED）表示上一轮已结束，
+          重新提出同款 = 全新请求（典型的"上次失败换参重试"），允许新建。
+        """
+        conversation_id = str(s.get("conversation_id", ""))
+        action_type = str(s.get("action_type", ""))
+        if not conversation_id or not action_type:
+            return None
+        row = await self.db.fetchrow(
+            "WITH open_rows AS MATERIALIZED ("
+            "  SELECT suggestion_id, params, created_at FROM agent_suggestions "
+            "  WHERE conversation_id=$1 AND action_type=$2 "
+            "    AND target_type IS NOT DISTINCT FROM NULLIF($3,'') "
+            "    AND target_id IS NOT DISTINCT FROM $4 "
+            "    AND retry_of IS NOT DISTINCT FROM NULLIF($5,'') "
+            "    AND status IN ('PENDING','APPROVED','EXECUTING')"
+            ") "
+            "SELECT suggestion_id FROM open_rows "
+            "WHERE NULLIF(params,'')::jsonb IS NOT DISTINCT FROM $6::jsonb "
+            "ORDER BY created_at DESC LIMIT 1",
+            conversation_id, action_type, str(s.get("target_type", "")),
+            int(s.get("target_id", 0) or 0), str(s.get("retry_of", "")),
+            json.dumps(s.get("params", {}), ensure_ascii=False))
+        return row.get("suggestion_id") if row else None
+
+    async def insert_suggestion(self, s: dict) -> tuple[str, bool]:
+        """写一条 PENDING 建议；返回 (suggestion_id, created)。
+
+        幂等：先按自然键查开放态的同款建议，命中则复用其 id 且不写库（created=False）。
+        这是"一次提问刷出多张审批卡"的硬兜底——即便模型无视提示连发多条相同 approve_*，
+        库里也只有一行、界面上也只有一张卡。
+        """
+        existing = await self.find_open_duplicate(s)
+        if existing:
+            log.info("suggestion deduped: reuse %s action=%s",
+                     existing[:8], s.get("action_type", ""))
+            return existing, False
         sid = s.get("suggestion_id") or _uid("sug")
         await self.db.execute(
             "INSERT INTO agent_suggestions "
@@ -138,7 +183,7 @@ class TaskStore:
             s.get("conversation_id", ""), s.get("action_type", ""), s.get("target_type", ""),
             int(s.get("target_id", 0)), json.dumps(s.get("params", {}), ensure_ascii=False),
             s.get("reason", ""), s.get("priority", "NORMAL"), s.get("retry_of", ""))
-        return sid
+        return sid, True
 
     async def mark_suggestion_executing(self, suggestion_id: str) -> None:
         """approve 后任务下发：PENDING/APPROVED → EXECUTING（条件更新防竞争）。"""

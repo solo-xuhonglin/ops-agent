@@ -50,6 +50,10 @@ CREATE TABLE agent_suggestions (
 CREATE INDEX idx_agent_sug_conversation ON agent_suggestions(conversation_id);
 CREATE INDEX idx_agent_sug_plan         ON agent_suggestions(plan_id);
 CREATE INDEX idx_agent_sug_status       ON agent_suggestions(status);
+-- 建议去重（worker 幂等插入）：把候选行收敛到"同会话 + 同动作 + 同目标 + 开放态"的个位数量级，
+-- 再在候选行上做 params::jsonb 比对。见 TaskStore.find_open_duplicate。
+CREATE INDEX idx_agent_sug_dedup ON agent_suggestions(conversation_id, action_type,
+                                                     target_id, status);
 
 -- ===== 执行记录（chat 轮 / execute 轮）：worker 写 =====
 CREATE TABLE agent_tasks (

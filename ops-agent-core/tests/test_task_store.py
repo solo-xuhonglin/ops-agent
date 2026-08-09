@@ -98,12 +98,12 @@ async def test_upsert_plan_insert_and_conflict_update():
 async def test_insert_suggestion_pending():
     db = FakeDb()
     store = make_store(db)
-    sid = await store.insert_suggestion({
+    sid, created = await store.insert_suggestion({
         "suggestion_id": "sug1", "plan_id": "plan1", "step_no": 1,
         "source_task_id": "t1", "conversation_id": "c1",
         "action_type": "training_create", "target_type": "dataset", "target_id": 96,
         "params": {"name": "x"}, "reason": "r", "priority": "HIGH"})
-    assert sid == "sug1"
+    assert sid == "sug1" and created is True
     sql, args = db.executed[-1]
     assert "INSERT INTO agent_suggestions" in sql
     assert args[5] == "training_create" and args[7] == 96
@@ -113,9 +113,45 @@ async def test_insert_suggestion_pending():
 async def test_insert_suggestion_auto_id():
     db = FakeDb()
     store = make_store(db)
-    sid = await store.insert_suggestion({"conversation_id": "c1",
-                                         "action_type": "training_delete", "target_id": 5})
-    assert sid.startswith("sug_")
+    sid, created = await store.insert_suggestion({"conversation_id": "c1",
+                                                  "action_type": "training_delete",
+                                                  "target_id": 5})
+    assert sid.startswith("sug_") and created is True
+
+
+async def test_insert_suggestion_dedup_reuses_open_row():
+    """自然键命中开放态同款 → 复用已有 id，不再 INSERT。"""
+    db = FakeDb()
+    db.row = {"suggestion_id": "sug_existing"}
+    store = make_store(db)
+    sid, created = await store.insert_suggestion({
+        "conversation_id": "c1", "action_type": "training_create",
+        "target_type": "dataset", "target_id": 96, "params": {"name": "x"}})
+    assert sid == "sug_existing" and created is False
+    assert db.executed == []  # 去重命中不写库
+
+
+async def test_find_open_duplicate_natural_key():
+    """去重查询：只看开放状态，params 走 jsonb 比较，retry_of 用 IS NOT DISTINCT FROM。"""
+    db = FakeDb()
+    store = make_store(db)
+    await store.find_open_duplicate({
+        "conversation_id": "c1", "action_type": "training_create",
+        "target_type": "dataset", "target_id": 96,
+        "params": {"b": 2, "a": 1}, "retry_of": ""})
+    sql, args = db.fetched[-1]
+    assert "status IN ('PENDING','APPROVED','EXECUTING')" in sql
+    assert "::jsonb" in sql and "retry_of IS NOT DISTINCT FROM" in sql
+    assert "plan_id" not in sql and "step_no" not in sql  # 刻意不入自然键
+    assert args[0] == "c1" and args[1] == "training_create" and args[3] == 96
+
+
+async def test_find_open_duplicate_requires_keys():
+    db = FakeDb()
+    store = make_store(db)
+    assert await store.find_open_duplicate({"action_type": "a"}) is None
+    assert await store.find_open_duplicate({"conversation_id": "c"}) is None
+    assert db.fetched == []
 
 
 async def test_update_suggestion_result_conditional():
