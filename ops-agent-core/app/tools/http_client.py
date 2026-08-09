@@ -4,24 +4,15 @@
 全部由本层代码注入，LLM 只能填业务参数 —— prompt injection 碰不到鉴权链路。
 """
 import logging
-from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
 
+from app.agent.context import TaskContext
 from app.transport import agent_pb2
 from app.tools.grants import GrantStore
 
 log = logging.getLogger("tools.http_client")
-
-
-@dataclass
-class TaskContext:
-    """任务上下文（系统注入，非 LLM 可控）：随 TaskDispatch 传入，任务结束即弃。"""
-    task_id: str
-    task_token: str
-    target_type: str = ""
-    target_id: int = 0
 
 
 class AdminHttpClient:

@@ -41,7 +41,7 @@ def test_route_dispatches_to_registered_handler(monkeypatch):
     async def gather():
         client.on("task_dispatch", handler)
         client._route(agent_pb2.ServerMessage(
-            task_dispatch=agent_pb2.TaskDispatch(task_id="t1", task_type="question")))
+            task_dispatch=agent_pb2.TaskDispatch(task_id="t1", query="q")))
         await asyncio.sleep(0.05)
 
     asyncio.run(gather())

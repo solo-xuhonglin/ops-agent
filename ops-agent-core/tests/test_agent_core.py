@@ -49,9 +49,10 @@ class FakeLlm:
         yield resp
 
 
-def make_dispatch(task_type="question", query="how are you", task_id="t-1", token="tok"):
+def make_dispatch(query="how are you", task_id="t-1", token="tok", suggestion_id=0, conversation_id=""):
     return agent_pb2.ServerMessage(task_dispatch=agent_pb2.TaskDispatch(
-        task_id=task_id, task_type=task_type, query=query, task_token=token))
+        task_id=task_id, query=query, task_token=token,
+        suggestion_id=suggestion_id, conversation_id=conversation_id))
 
 
 def json_tool_msg(name, args=None):

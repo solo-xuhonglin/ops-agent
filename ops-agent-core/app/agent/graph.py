@@ -24,11 +24,58 @@ from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from app.tools.http_client import AdminHttpClient, TaskContext
+from app.agent.context import TaskContext
+from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
+from app.transport import agent_pb2
 from app.transport.grpc_client import GrpcClient
 
 log = logging.getLogger("agent.graph")
+
+# 写工具 → (查询工具, 结果对象类型, 结果对象 ID 参数名)：训练/部署是异步接口，agent 据此轮询状态
+WRITE_TRACK_MAP: dict[str, tuple[str, str, str]] = {
+    "training_create": ("training_get", "training_job", "jobId"),
+    "serving_deploy": ("serving_get", "serving_endpoint", "endpointId"),
+}
+
+
+def _extract_object_id(body: Any) -> Optional[int]:
+    """从写接口响应 body 提取创建对象的 id（ApiResponse.data.id）。"""
+    if not isinstance(body, str):
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    node = data.get("data") if isinstance(data, dict) else None
+    if isinstance(node, dict):
+        vid = node.get("id")
+        return int(vid) if isinstance(vid, (int, float)) or str(vid).isdigit() else None
+    return None
+
+
+def _maybe_register_tracker(ctx: TaskContext, tool: Optional[agent_pb2.ToolSchema],
+                            result: dict) -> None:
+    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步（async_suggestion）。"""
+    if tool is None or not (tool.is_write and ctx.tracker and ctx.conversation_id):
+        return
+    if not result or result.get("status") not in (200, 201, 202):
+        return
+    object_id = _extract_object_id(result.get("body"))
+    if not object_id:
+        return
+    mapping = WRITE_TRACK_MAP.get(tool.name)
+    if not mapping:
+        return
+    query_tool, object_type, id_param = mapping
+    next_step = ctx.tracker.next_step_for(ctx.conversation_id, tool.name)
+    ctx.tracker.register(
+        object_type=object_type, object_id=object_id,
+        conversation_id=ctx.conversation_id, task_id=ctx.task_id,
+        task_token=ctx.task_token, query_tool=query_tool,
+        query_args={id_param: object_id}, step_action=tool.name,
+        target_status="SUCCEEDED", next_step=next_step)
+
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
@@ -236,6 +283,8 @@ def build_graph(llm: Any, http: AdminHttpClient,
                 result = {"status": 0, "body": f"unknown tool: {name}"}
             else:
                 result = await http.call(tool, args, ctx)
+            # 异步写操作成功后注册跟踪（训练/部署完成后按 Plan 推进下一步）
+            _maybe_register_tracker(ctx, tool, result)
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",

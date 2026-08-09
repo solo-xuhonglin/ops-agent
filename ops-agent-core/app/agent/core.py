@@ -10,7 +10,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.errors import NodeCancelledError
@@ -55,9 +55,15 @@ SYSTEM_PROMPT = (
     "\"priority\":\"HIGH|NORMAL|LOW\"}]} ``` 代码块。\n"
     "  **该代码块必须出现在最终回答 content（用户可见）**，不能只出现在 reasoning——reasoning 不入库、"
     "用户看不到，无法触发审批。任务结束后用户在前端看到审批卡，审批通过后系统会派发新任务"
-    "（taskType=execute_suggestion，任务描述含 suggestionId）给你执行。\n"
-    "- **唯一例外**：当前任务的 taskType=execute_suggestion 且任务描述含 suggestionId，"
-    "说明该写操作已获人工审批，此时才可调用对应的写工具执行。\n"
+    "（该任务 suggestion_id>0，说明写操作已获审批）给你执行。\n"
+    "- **多步计划（重要）**：如果用户请求需要**多个写操作步骤**（例如\"训练并部署\"），在最终回答末尾输出完整计划"
+    "（steps[0] 即为第一条待审批建议，后续步骤会在上一步完成后自动推进）：\n"
+    "  ```json {\"plan\":{\"summary\":\"训练并部署\",\"steps\":["
+    "{\"action_type\":\"training_create\",\"target_type\":\"dataset\",\"target_id\":96,"
+    "\"params\":{},\"reason\":\"...\",\"priority\":\"HIGH\"},"
+    "{\"action_type\":\"serving_deploy\",\"target_type\":\"model_version\",\"target_id\":0,"
+    "\"params\":{},\"reason\":\"部署训练产出模型\",\"priority\":\"HIGH\"}]}} ```\n"
+    "- **唯一例外**：当前任务的 suggestion_id>0（已审批的写操作），此时才可调用对应的写工具执行。\n"
     "- **禁止重复调用**：禁止在没有新信息的情况下，为同一请求重复调用同一个工具。\n"
     "- 若用户未提供工具所需的必要参数（如数据集 ID、目标 ID），主动、一次性地询问所有缺失信息。\n"
     "\n"
@@ -77,29 +83,42 @@ SYSTEM_PROMPT = (
 _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
+def _parse_plan(content: str) -> Optional[dict]:
+    """解析最终回答中的完整计划块（多步写操作，如训练→部署）：
+    ```json {"plan":{"summary":"...","steps":[{"action_type":...,...}, ...]}} ```
+    返回 plan dict；无 plan 块返回 None。steps[0] 作为第一条待审批建议。
+    """
+    m = _JSON_BLOCK_RE.search(content or "")
+    if not m:
+        return None
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError:
+        return None
+    plan = data.get("plan")
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list):
+        return None
+    steps = [s for s in plan["steps"] if isinstance(s, dict) and s.get("action_type")]
+    if not steps:
+        return None
+    plan["steps"] = steps
+    plan.setdefault("summary", "")
+    return plan
+
+
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
-    """user prompt：按任务类型给出专门指引。"""
-    if d.task_type == "execute_suggestion":
-        # 已审批任务：直接调对应写工具，grantKey 已就位（admin 端 aspect 校验）。
+    """user prompt：按任务特征给出专门指引（proto 无 task_type，按 suggestion_id/query 判断）。"""
+    if d.suggestion_id > 0:
+        # 已审批的写操作任务：直接调对应写工具，grantKey 已就位（admin 端 aspect 校验）
         return (
-            "（任务类型：execute_suggestion——已审批的写操作，请执行）",
+            "（已审批的写操作——请执行）",
             (d.query or "") + "\n请按 query 描述执行该写操作，完成后回报结果。",
         )
-    if d.task_type == "training_completed_followup":
-        # 训练完成自动触发的部署评估：query 已包含 modelVersionId/metrics。
-        return (
-            "（任务类型：training_completed_followup——训练已完成，自动评估是否部署）",
-            (d.query or "") + "\n如需部署，推送 action_type=serving_deploy、target_type=model_version、"
-            "target_id 为 modelVersionId 的 suggestions JSON 块。",
-        )
-    hint = ""
-    if d.task_type and d.task_type != "question":
-        hint = f"（任务类型：{d.task_type}）"
     if d.query:
-        return hint, d.query
+        return "", d.query
     if d.target_id:
-        return hint, f"请诊断目标状态：{d.target_type}={d.target_id}"
-    return hint, "请汇总当前系统状态"
+        return "", f"请诊断目标状态：{d.target_type}={d.target_id}"
+    return "", "请汇总当前系统状态"
 
 
 def _build_history(d: "agent_pb2.TaskDispatch") -> list:
@@ -140,11 +159,14 @@ def _extract_reasoning(messages: list) -> str:
 
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                           llm: Any, http: AdminHttpClient,
-                          msg: agent_pb2.ServerMessage, max_rounds: int = 10) -> None:
+                          msg: agent_pb2.ServerMessage, max_rounds: int = 10,
+                          tracker: Any = None) -> None:
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
-                      target_type=d.target_type, target_id=d.target_id)
-    await client.send_event(ctx.task_id, "progress", f"received task [{d.task_type}]")
+                      target_type=d.target_type, target_id=d.target_id,
+                      conversation_id=d.conversation_id, suggestion_id=d.suggestion_id,
+                      tracker=tracker)
+    await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
     hint, user_prompt = _build_prompt(d)
     messages: list = [
@@ -163,6 +185,14 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
             # 兜底：deepseek-reasoner 常把 suggestions JSON 放进 reasoning 而不放 content（用户看不到）。
             # 从聚合推理链里再提取一次，保证审批卡能生成。
             suggestions = _parse_suggestions(_extract_reasoning(final_messages))
+        # 多步计划：解析 plan（steps[0] 作第一条待审批建议），持久化到 tracker
+        plan = _parse_plan(content) or _parse_plan(_extract_reasoning(final_messages))
+        if plan and tracker and ctx.conversation_id:
+            plan["conversation_id"] = ctx.conversation_id
+            plan["status"] = "RUNNING"
+            tracker.upsert_plan(plan)
+            if not suggestions and plan.get("steps"):
+                suggestions = [plan["steps"][0]]
         conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  suggestions=_to_proto_suggestions(suggestions),

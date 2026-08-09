@@ -1,4 +1,4 @@
-"""ops-agent-core 入口：装配 LLM/工具层后启动 gRPC 重连主循环（长驻进程）。"""
+"""ops-agent-core 入口：装配 LLM/工具层/任务跟踪器后启动 gRPC 重连主循环（长驻进程）。"""
 import asyncio
 import logging
 from typing import Any
@@ -7,6 +7,7 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.errors import NodeCancelledError
 
 from app.agent import core
+from app.agent.tracker import TaskTracker
 from app.config import Config
 from app.tools.grants import GrantStore
 from app.tools.http_client import AdminHttpClient
@@ -19,7 +20,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
 
-# 本 worker 承载的逻辑 agent（本期单个：覆盖全部任务类型）
+# 本 worker 承载的逻辑 agent（本期单个：能力面与业务诊断/问询/审批执行/Plan 推进）
 AGENTS = [
     ("ops-core", ["diagnose_training", "diagnose_serving",
                   "diagnose_dataset", "model_review", "question"]),
@@ -47,9 +48,14 @@ async def amain() -> None:
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")
 
+    # 任务跟踪器：Plan 持久化 + 异步轮询 + 自主推进（流程控制在 agent 侧）
+    tracker = TaskTracker(http, client, registry)
+    await tracker.start()
+
     client.on("register_ack", lambda m: _load_tools(registry, m))
     client.on("authorization_grant", lambda m: _on_grant(grants, m))
-    client.on("task_dispatch", lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds))
+    client.on("task_dispatch",
+              lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds, tracker))
     client.on("cancel_task", lambda m: _on_cancel(m))
 
     log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s",
@@ -57,6 +63,7 @@ async def amain() -> None:
     try:
         await client.run()
     finally:
+        await tracker.stop()
         # 不同 langchain 模型的关闭接口不一致（ChatDeepSeek 无 aclose），防御处理
         close = getattr(llm, "aclose", None)
         if close is not None:
@@ -73,11 +80,12 @@ async def _on_grant(grants: GrantStore, msg: agent_pb2.ServerMessage) -> None:
 
 
 async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: Any,
-                    http: AdminHttpClient, msg: agent_pb2.ServerMessage, max_rounds: int) -> None:
+                    http: AdminHttpClient, msg: agent_pb2.ServerMessage,
+                    max_rounds: int, tracker: TaskTracker) -> None:
     task_id = msg.task_dispatch.task_id
     active_tasks[task_id] = asyncio.current_task()  # 记录以便 CancelTask 精确取消
     try:
-        await core.handle_dispatch(client, registry, llm, http, msg, max_rounds)
+        await core.handle_dispatch(client, registry, llm, http, msg, max_rounds, tracker)
     except NodeCancelledError:
         # admin 取消：core 已打日志，吞掉避免 asyncio "Task exception was never retrieved" 告警
         pass
