@@ -1,6 +1,7 @@
 package com.opsagent.admin.service.agent;
 
 import com.opsagent.admin.agent.proto.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.grpc.stub.StreamObserver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -8,13 +9,15 @@ import net.devh.boot.grpc.server.service.GrpcService;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
- * agent 双向流入口：admin 为 gRPC server（内网），agent 出站拨号后在本流上完成
- * 注册 / 事件回推 / 结果返回 / 心跳响应。
- * 约定：连接建立后首条消息必须是 Register，否则忽略后续消息。
+ * agent 双向流入口（v3 瘦身：admin 只做通信透传，不落业务库）。
+ * - 事件：仅转发 SSE（thinking/delta/tool_call/tool_result/error/plan_update），不落 agent_events
+ * - 结果：仅落对话消息 + SSE done（对话通信）；任务行/建议状态由 worker 直写库
+ * - plan_update：解析 content → 落一条 assistant 消息 + SSE 通知前端刷新 plan 卡片
  */
 @GrpcService
 @RequiredArgsConstructor
@@ -22,13 +25,10 @@ import java.util.stream.Collectors;
 public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
 
     private final WorkerRegistry registry;
-    private final AgentTaskService taskService;
     private final ToolSchemaService toolSchemaService;
     private final ConversationStreamManager streamManager;
     private final AgentConversationService conversationService;
-    private final AgentSuggestionService suggestionService;
-    private final TaskPlanService taskPlanService;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
 
     @Override
     public StreamObserver<ClientMessage> connect(StreamObserver<ServerMessage> responseObserver) {
@@ -43,8 +43,6 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                         case TASK_EVENT -> handleEvent(message.getTaskEvent());
                         case TASK_RESULT -> handleResult(message.getTaskResult());
                         case AGENT_UPDATE -> handleAgentUpdate(message.getAgentUpdate());
-                        case ASYNC_SUGGESTION -> handleAsyncSuggestion(message.getAsyncSuggestion());
-                        case TASK_PLAN -> handleTaskPlan(message.getTaskPlan());
                         case PONG -> touch();
                         default -> log.warn("unexpected client message: {}", message.getMsgCase());
                     }
@@ -80,17 +78,18 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 log.info("register ack sent to {}: {} read tools", register.getWorkerId(), tools.size());
             }
 
+            /** 事件只转发 SSE；plan_update 额外落一条 assistant 消息（对话通信）。 */
             private void handleEvent(TaskEvent event) {
                 touch();
-                taskService.recordEvent(event.getTaskId(), event.getSeq(), event.getEventType(), event.getContent());
                 forwardStreamEvent(event);
+                if ("plan_update".equals(event.getEventType())) {
+                    handlePlanUpdate(event.getContent());
+                }
             }
 
+            /** 结果只落对话消息（task/suggestion 状态由 worker 直写库）。 */
             private void handleResult(TaskResult result) {
                 touch();
-                taskService.complete(result.getTaskId(), result.getOk(), result.getConclusion(),
-                        result.getSuggestionsList(), result.getError());
-                // 会话消息收口：落 assistant 消息 + SSE done 事件（非会话任务无绑定则跳过）
                 String conversationId = streamManager.conversationOf(result.getTaskId());
                 if (conversationId != null) {
                     conversationService.finishAssistant(conversationId, result.getTaskId(),
@@ -104,16 +103,46 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 registry.get(workerId).ifPresent(entry -> entry.setAgents(update.getAgentsList()));
             }
 
-            /** agent 侧 Plan 推进时异步上报的写操作建议 → 落 agent_suggestions(PENDING)，用户审批后走 execute_suggestion。 */
-            private void handleAsyncSuggestion(AsyncSuggestion suggestion) {
-                touch();
-                suggestionService.persistAsync(suggestion);
+            /** plan_update：content JSON {planId,status,summary,message} → 落 assistant 消息 + SSE。 */
+            private void handlePlanUpdate(String content) {
+                try {
+                    Map<?, ?> data = objectMapper.readValue(content, Map.class);
+                    String planId = String.valueOf(data.getOrDefault("planId", ""));
+                    String status = String.valueOf(data.getOrDefault("status", ""));
+                    String summary = String.valueOf(data.getOrDefault("summary", ""));
+                    String message = String.valueOf(data.getOrDefault("message", ""));
+                    String conversationId = String.valueOf(data.getOrDefault("conversationId", ""));
+                    if (conversationId.isBlank() || "null".equals(conversationId)) {
+                        log.warn("plan_update without conversationId, ignored: plan={}", planId);
+                        return;
+                    }
+                    String text = buildPlanMessage(status, summary, message);
+                    conversationService.savePlanUpdateMessage(conversationId, text, planId);
+                    streamManager.push(conversationId, "plan_update",
+                            Map.of("planId", planId, "status", status, "message", text));
+                    log.info("plan_update handled: plan={} status={} conversation={}",
+                            planId, status, conversationId);
+                } catch (Exception e) {
+                    log.warn("plan_update parse failed: {}", e.getMessage());
+                }
             }
 
-            /** agent 上报的任务计划（Plan）建/更新 → 持久化（admin 仅落库，不做流程）。 */
-            private void handleTaskPlan(com.opsagent.admin.agent.proto.TaskPlan plan) {
-                touch();
-                taskPlanService.upsert(plan);
+            private String buildPlanMessage(String status, String summary, String message) {
+                String head = switch (status) {
+                    case "DONE" -> "计划已完成";
+                    case "FAILED" -> "计划已失败";
+                    case "CANCELLED" -> "计划已废弃";
+                    case "RUNNING" -> "计划推进中";
+                    default -> "计划更新";
+                };
+                StringBuilder sb = new StringBuilder("**").append(head).append("**");
+                if (summary != null && !summary.isBlank() && !"null".equals(summary)) {
+                    sb.append("：").append(summary);
+                }
+                if (message != null && !message.isBlank() && !"null".equals(message)) {
+                    sb.append("\n\n").append(message);
+                }
+                return sb.toString();
             }
 
             private void touch() {
@@ -154,12 +183,12 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
         String taskId = event.getTaskId();
         switch (type) {
             case "thinking", "delta" -> streamManager.pushByTask(taskId, type,
-                    java.util.Map.of("delta", event.getContent()));
+                    Map.of("delta", event.getContent()));
             case "tool_call", "tool_result" -> streamManager.pushByTask(taskId, type,
                     parseJsonOrRaw(event.getContent()));
             case "error" -> streamManager.pushByTask(taskId, "error",
-                    java.util.Map.of("message", event.getContent()));
-            default -> { /* progress 等非回显事件不转发 */ }
+                    Map.of("message", event.getContent()));
+            default -> { /* progress / plan_update 等不走此分支 */ }
         }
     }
 

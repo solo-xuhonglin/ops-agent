@@ -12,8 +12,14 @@ public interface AgentSuggestionRepository extends JpaRepository<AgentSuggestion
 
     Page<AgentSuggestion> findAllByOrderByIdDesc(Pageable pageable);
 
-    Optional<AgentSuggestion> findByGrantKey(String grantKey);
+    Optional<AgentSuggestion> findBySuggestionId(String suggestionId);
+
+    /** 审批动作：建议仍处于 PENDING 才可 approve/reject（条件更新防并发） */
+    Optional<AgentSuggestion> findBySuggestionIdAndStatus(String suggestionId, String status);
 
     /** 过期扫描：按状态取建议 */
     List<AgentSuggestion> findByStatus(String status);
+
+    /** plan 的步骤（按 step_no 升序） */
+    List<AgentSuggestion> findByPlanIdOrderByStepNoAsc(String planId);
 }

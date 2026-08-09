@@ -9,11 +9,11 @@ import java.time.OffsetDateTime;
 
 /**
  * AI Agent 会话消息（多轮对话的持久化消息流）。
- * role: user / assistant / system；status: streaming / completed / failed。
+ * role: user / assistant / system；status: completed / failed。
  * task_id 关联该轮内部任务（AgentTask），reasoning 单独存推理链全文。
  */
 @Entity
-@Table(name = "conversation_messages")
+@Table(name = "agent_conversation_messages")
 @Getter
 @Setter
 @NoArgsConstructor

@@ -8,7 +8,9 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 
 /**
- * AI Agent 任务记录（TaskDispatch 历史与状态）。
+ * AI Agent 执行记录（v3 重构）：chat 对话轮 / execute 执行轮。
+ * 业务行由 worker 直写（asyncpg）；admin 只读查询 + 供审批动作（approve 生成 execute 任务）与取消。
+ * 关联：plan_id → agent_plans；suggestion_id → agent_suggestions。
  */
 @Entity
 @Table(name = "agent_tasks")
@@ -24,14 +26,20 @@ public class AgentTask {
     @Column(name = "task_id", length = 64, nullable = false, unique = true)
     private String taskId;
 
-    @Column(name = "task_type", length = 32, nullable = false)
+    /** chat（对话轮）| execute（执行已审批建议） */
+    @Column(name = "task_type", length = 24, nullable = false)
     private String taskType;
 
-    @Column(name = "target_type", length = 32)
-    private String targetType;
+    /** 所属 plan（execute 有；chat 可为空） */
+    @Column(name = "plan_id", length = 64)
+    private String planId;
 
-    @Column(name = "target_id")
-    private Long targetId;
+    /** execute 对应建议（v3 为 UUID 字符串） */
+    @Column(name = "suggestion_id", length = 64)
+    private String suggestionId;
+
+    @Column(name = "conversation_id", length = 64)
+    private String conversationId;
 
     @Column(columnDefinition = "TEXT")
     private String query;
@@ -40,22 +48,15 @@ public class AgentTask {
     @Column(length = 16, nullable = false)
     private String status;
 
-    @Column(name = "dispatched_by")
-    private Long dispatchedBy;
-
     @Column(name = "worker_id", length = 64)
     private String workerId;
 
-    /** 所属会话 ID（仅多轮对话/系统派发的任务有；admin 直接派的任务为 null） */
-    @Column(name = "conversation_id", length = 64)
-    private String conversationId;
-
-    /** 执行已审批写操作的建议 ID（>0：本任务带 grantKey 调写工具；普通任务为 0） */
-    @Column(name = "suggestion_id")
-    private Long suggestionId = 0L;
-
     @Column(columnDefinition = "TEXT")
     private String conclusion;
+
+    /** LLM 推理链全文（chat 轮） */
+    @Column(columnDefinition = "TEXT")
+    private String reasoning;
 
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
@@ -66,8 +67,20 @@ public class AgentTask {
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
+
     @PrePersist
     void onCreate() {
         createdAt = OffsetDateTime.now();
+        updatedAt = createdAt;
+        if (status == null) {
+            status = "DISPATCHED";
+        }
+    }
+
+    @PreUpdate
+    void onUpdate() {
+        updatedAt = OffsetDateTime.now();
     }
 }

@@ -30,8 +30,8 @@ public class GrantService {
         this.keyPrefix = keyPrefix;
     }
 
-    /** 签发 grantKey（完整 key 含前缀，agent 原样回传）。 */
-    public String issue(String actionType, String targetType, Long targetId, Long suggestionId) {
+    /** 签发 grantKey（完整 key 含前缀，agent 原样回传）。suggestionId 为 v3 UUID 业务标识。 */
+    public String issue(String actionType, String targetType, Long targetId, String suggestionId) {
         String grantKey = keyPrefix + UUID.randomUUID();
         GrantMeta meta = new GrantMeta(actionType, targetType, targetId, suggestionId);
         redis.opsForValue().set(grantKey, meta.encode(), Duration.ofSeconds(ttlSeconds));
@@ -52,9 +52,9 @@ public class GrantService {
 
     /**
      * 原子消费并校验（action + targetId 匹配，targetType 由 action 隐含不作硬比对）。
-     * 返回匹配的 suggestionId；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。
+     * 返回匹配的 suggestionId（UUID）；key 不存在（超时/已消费）或 action/targetId 不匹配返回空。
      */
-    public Optional<Long> consumeAndMatch(String grantKey, String actionType, Long targetId) {
+    public Optional<String> consumeAndMatch(String grantKey, String actionType, Long targetId) {
         if (grantKey == null || grantKey.isBlank()) {
             return Optional.empty();
         }
@@ -74,7 +74,7 @@ public class GrantService {
     }
 
     /** value 编码：suggestionId|actionType|targetType|targetId */
-    private record GrantMeta(String actionType, String targetType, Long targetId, Long suggestionId) {
+    private record GrantMeta(String actionType, String targetType, Long targetId, String suggestionId) {
         String encode() {
             return suggestionId + "|" + actionType + "|" + targetType + "|" + targetId;
         }
@@ -83,8 +83,16 @@ public class GrantService {
             String[] parts = raw.split("\\|", -1);
             return new GrantMeta(parts.length > 1 ? parts[1] : "",
                     parts.length > 2 ? parts[2] : "",
-                    parts.length > 3 ? Long.parseLong(parts[3]) : 0L,
-                    parts.length > 0 ? Long.parseLong(parts[0]) : 0L);
+                    parts.length > 3 ? parseLong(parts[3]) : 0L,
+                    parts.length > 0 ? parts[0] : "");
+        }
+
+        private static Long parseLong(String s) {
+            try {
+                return Long.parseLong(s);
+            } catch (NumberFormatException e) {
+                return 0L;
+            }
         }
     }
 }

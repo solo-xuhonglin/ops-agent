@@ -8,27 +8,33 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 
 /**
- * AI Agent 会话（多轮对话载体）：归属用户，跨轮次聚合消息与任务。
+ * AI Agent 规划（v3 重构）：一次规划 = 一行（意图），关联 N 条 agent_suggestions（步骤）与
+ * N 条 agent_tasks（执行）。业务行由 worker 直写（asyncpg），admin 只读查询。
+ * 状态：PLANNED → RUNNING → DONE / FAILED / CANCELLED。
  */
 @Entity
-@Table(name = "agent_conversations")
+@Table(name = "agent_plans")
 @Getter
 @Setter
 @NoArgsConstructor
-public class Conversation {
+public class AgentPlan {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(length = 64, nullable = false, unique = true)
+    @Column(name = "plan_id", length = 64, nullable = false, unique = true)
+    private String planId;
+
+    @Column(name = "conversation_id", length = 64, nullable = false)
     private String conversationId;
 
-    @Column(length = 200)
-    private String title;
+    @Column(length = 255)
+    private String summary;
 
-    @Column(name = "user_id")
-    private Long userId;
+    /** PLANNED / RUNNING / DONE / FAILED / CANCELLED */
+    @Column(length = 16, nullable = false)
+    private String status = "PLANNED";
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;

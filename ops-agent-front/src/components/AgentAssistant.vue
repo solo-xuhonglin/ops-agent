@@ -100,6 +100,33 @@
       <!-- ============ 聊天视图 ============ -->
       <div v-else class="d-flex flex-column fill-height">
         <div class="flex-grow-1 overflow-y-auto pa-4" ref="scrollEl">
+          <!-- plan 卡片：当前规划 + 步骤进度（v3） -->
+          <div v-if="store.activePlan" class="plan-card mb-3 pa-3">
+            <div class="d-flex align-center mb-1">
+              <v-icon size="16" class="mr-1" color="primary">mdi-format-list-checks</v-icon>
+              <span class="text-body-small font-weight-bold">
+                {{ store.activePlan.plan.summary || '执行计划' }}
+              </span>
+              <v-chip size="x-small" class="ml-2" :color="planStatusColor(store.activePlan.plan.status)">
+                {{ planStatusText(store.activePlan.plan.status) }}
+              </v-chip>
+              <v-spacer />
+              <v-btn size="x-small" variant="text" icon="mdi-refresh" density="compact"
+                     @click="store.fetchPlans(store.currentConversation?.conversationId)" />
+            </div>
+            <div v-for="(st, i) in store.activePlan.steps" :key="st.id" class="plan-step d-flex align-center">
+              <v-icon size="13" class="mr-1" :color="stepStatusColor(st.status)">
+                {{ stepStatusIcon(st.status) }}
+              </v-icon>
+              <span class="text-caption plan-step__text">{{ i + 1 }}. {{ actionText(st.actionType) }}</span>
+              <span class="text-caption text-medium-emphasis ml-1">{{ targetText(st) }}</span>
+              <v-spacer />
+              <v-chip size="x-small" density="compact" :color="stepStatusColor(st.status)">
+                {{ stepStatusText(st.status) }}
+              </v-chip>
+            </div>
+          </div>
+
           <div v-if="!store.messages.length && !store.streaming" class="empty-hint">
             <v-icon icon="mdi-robot-outline" size="48" class="mb-2" />
             <div class="text-body-medium text-medium-emphasis">
@@ -142,8 +169,9 @@
                 <span class="streaming-dots"><span>●</span><span>●</span><span>●</span></span>
               </div>
 
-              <!-- 答复（markdown） -->
-              <div v-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
+              <!-- 答复：流式中纯文本（pre-wrap，零 markdown 重渲染开销），完成后一次 markdown 渲染 -->
+              <div v-if="m.content && m.status === 'streaming'" class="msg-text">{{ m.content }}</div>
+              <div v-else-if="m.content" class="markdown-body" v-html="renderMarkdown(m.content)" />
 
               <!-- 授权卡：该轮建议（approve/reject 闭环） -->
               <div v-if="m.suggestions?.length" class="mt-2">
@@ -288,10 +316,15 @@ function startResize(e) {
   window.addEventListener('pointercancel', onUp)
 }
 
-// ===== 自动滚动到底部：新消息/流式增量时跟随 =====
-watch(() => store.messages.map((m) => m.content + (m.reasoning || '')).join('|'), async () => {
-  await nextTick()
-  if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+// ===== 自动滚动到底部：节流（200ms 内最多一次），避免流式高频触发 =====
+let scrollTimer = null
+watch(() => store.messages.map((m) => m.content + (m.reasoning || '')).join('|'), () => {
+  if (scrollTimer) return
+  scrollTimer = setTimeout(async () => {
+    scrollTimer = null
+    await nextTick()
+    if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+  }, 200)
 })
 
 // 抽屉打开：刷新会话列表与建议；关闭时停流
@@ -343,7 +376,7 @@ async function approve(s) {
   })
   if (!ok) return
   try {
-    await store.approve(s.id)
+    await store.approve(s.suggestionId)
   } catch (e) {
     notifyError(errMsg(e, '确认失败'))
   }
@@ -358,7 +391,7 @@ async function reject(s) {
   })
   if (!ok) return
   try {
-    await store.reject(s.id)
+    await store.reject(s.suggestionId)
   } catch (e) {
     notifyError(errMsg(e, '操作失败'))
   }
@@ -408,6 +441,30 @@ function sugColor(s) { return SUG_STATUS[s]?.color || 'grey' }
 function priorityText(p) { return PRIORITIES[p]?.text || p }
 function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
 function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
+
+// ===== plan 卡片状态映射（v3） =====
+const PLAN_STATUS = {
+  PLANNED: { text: '规划中', color: 'info' },
+  RUNNING: { text: '执行中', color: 'primary' },
+  DONE: { text: '已完成', color: 'success' },
+  FAILED: { text: '已失败', color: 'error' },
+  CANCELLED: { text: '已废弃', color: 'grey' }
+}
+const STEP_STATUS = {
+  PENDING: { text: '待审批', color: 'warning', icon: 'mdi-clock-outline' },
+  APPROVED: { text: '已授权', color: 'info', icon: 'mdi-key-outline' },
+  EXECUTING: { text: '执行中', color: 'primary', icon: 'mdi-progress-clock' },
+  EXECUTED: { text: '已执行', color: 'success', icon: 'mdi-check-circle-outline' },
+  FAILED: { text: '失败', color: 'error', icon: 'mdi-close-circle-outline' },
+  REJECTED: { text: '已忽略', color: 'grey', icon: 'mdi-cancel' },
+  EXPIRED: { text: '已过期', color: 'grey', icon: 'mdi-clock-alert-outline' },
+  CANCELLED: { text: '已取消', color: 'grey', icon: 'mdi-cancel' }
+}
+function planStatusText(s) { return PLAN_STATUS[s]?.text || s }
+function planStatusColor(s) { return PLAN_STATUS[s]?.color || 'grey' }
+function stepStatusText(s) { return STEP_STATUS[s]?.text || s }
+function stepStatusColor(s) { return STEP_STATUS[s]?.color || 'grey' }
+function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline' }
 </script>
 
 <style scoped>
@@ -540,5 +597,19 @@ function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.ta
 
 .suggestion-card {
   border-left: 3px solid rgb(var(--v-theme-warning));
+}
+
+/* ---- plan 卡片（v3） ---- */
+.plan-card {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.02);
+}
+.plan-step {
+  min-height: 24px;
+  margin-top: 2px;
+}
+.plan-step__text {
+  font-weight: 500;
 }
 </style>

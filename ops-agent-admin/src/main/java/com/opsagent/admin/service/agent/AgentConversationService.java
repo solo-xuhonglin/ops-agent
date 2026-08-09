@@ -117,9 +117,8 @@ public class AgentConversationService {
             conversationRepository.save(conv);
         }
 
-        AgentTask task = taskService.dispatch(
-                taskType == null || taskType.isBlank() ? "question" : taskType,
-                targetType, targetId, text, userId, history, conv.getConversationId());
+        AgentTask task = taskService.dispatchChat(
+                conv.getConversationId(), text, history, targetType, targetId, userId);
         streamManager.bindTask(task.getTaskId(), conv.getConversationId());
 
         if (AgentTaskService.STATUS_FAILED.equals(task.getStatus())) {
@@ -180,6 +179,26 @@ public class AgentConversationService {
     }
 
     // ==================== helpers ====================
+
+    /**
+     * plan_update 事件落一条 assistant 消息（agent 直写库后经 gRPC 上报，用户可见 plan 进度变更）。
+     * 非对话通信收口（不回 done 事件，仅落库 + 前端自行刷新 plan 卡片）。
+     */
+    @Transactional
+    public void savePlanUpdateMessage(String conversationId, String message, String planId) {
+        if (conversationId == null || conversationId.isBlank()) {
+            return;
+        }
+        ConversationMessage msg = new ConversationMessage();
+        msg.setMessageId(UUID.randomUUID().toString());
+        msg.setConversationId(conversationId);
+        msg.setRole(ROLE_ASSISTANT);
+        msg.setContent(message == null || message.isBlank() ? "（计划状态更新）" : message);
+        msg.setStatus(STATUS_COMPLETED);
+        msg.setTaskId(planId == null || planId.isBlank() ? null : planId);
+        messageRepository.save(msg);
+        log.info("plan update message saved: conversation={}, plan={}", conversationId, planId);
+    }
 
     /** 组装多轮历史：最近 HISTORY_LIMIT 条已完成 user/assistant 消息，JSON 数组（新→旧取前 N 再反转）。 */
     private String buildHistory(String conversationId) {

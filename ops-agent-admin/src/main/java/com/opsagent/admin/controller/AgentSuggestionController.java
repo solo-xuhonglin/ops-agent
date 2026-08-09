@@ -13,7 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 
 /**
- * AI Agent 处置建议管理面 API（人用）：列表 / 确认（签发 grantKey 推 agent）/ 忽略。
+ * AI Agent 处置建议管理面 API（人用）：列表 / 确认（签发 grantKey 并派发 execute 任务）/ 忽略。
+ * suggestion 业务行由 worker 直写；admin 只做审批动作。
  */
 @RestController
 @RequestMapping("/api/agent/suggestions")
@@ -32,24 +33,25 @@ public class AgentSuggestionController {
         return ApiResponse.ok(result);
     }
 
-    @PostMapping("/{id}/approve")
+    @PostMapping("/{suggestionId}/approve")
     @PreAuthorize("hasAuthority('agent:write')")
-    public ApiResponse<?> approve(@PathVariable Long id) {
+    public ApiResponse<?> approve(@PathVariable String suggestionId) {
         try {
-            AgentSuggestion suggestion = suggestionService.approve(id, resolveUserId());
-            return ApiResponse.ok(Map.of("id", suggestion.getId(), "status", suggestion.getStatus(),
-                    "grantKey", suggestion.getGrantKey()));
+            AgentSuggestion suggestion = suggestionService.approve(suggestionId, resolveUserId());
+            return ApiResponse.ok(Map.of("suggestionId", suggestion.getSuggestionId(),
+                    "status", suggestion.getStatus(), "grantKey", suggestion.getGrantKey()));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error("AGENT_OFFLINE_OR_STATE", e.getMessage());
         }
     }
 
-    @PostMapping("/{id}/reject")
+    @PostMapping("/{suggestionId}/reject")
     @PreAuthorize("hasAuthority('agent:write')")
-    public ApiResponse<?> reject(@PathVariable Long id) {
+    public ApiResponse<?> reject(@PathVariable String suggestionId) {
         try {
-            AgentSuggestion suggestion = suggestionService.reject(id, resolveUserId());
-            return ApiResponse.ok(Map.of("id", suggestion.getId(), "status", suggestion.getStatus()));
+            AgentSuggestion suggestion = suggestionService.reject(suggestionId, resolveUserId());
+            return ApiResponse.ok(Map.of("suggestionId", suggestion.getSuggestionId(),
+                    "status", suggestion.getStatus()));
         } catch (IllegalArgumentException e) {
             return ApiResponse.error("SUGGESTION_STATE", e.getMessage());
         }

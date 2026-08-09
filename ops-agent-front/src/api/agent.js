@@ -101,9 +101,14 @@ export function streamConversation(conversationId, taskId, onEvent) {
 
 // ==================== 任务（内部载体，授权闭环查看） ====================
 
-// 任务详情（含事件流）
+// 任务详情
 export function getTask(taskId) {
   return api.get(`/agent/tasks/${taskId}`)
+}
+
+// 取消任务（前端「停止」）：worker 自治置 CANCELLED
+export function cancelTask(taskId) {
+  return api.post(`/agent/tasks/${taskId}/cancel`)
 }
 
 // 处置建议列表（分页）
@@ -111,14 +116,26 @@ export function listSuggestions(params = {}) {
   return api.get('/agent/suggestions', { params: { page: 0, size: 50, ...params } })
 }
 
-// 确认建议：签发 grantKey 推 agent 并派发执行任务
-export function approveSuggestion(id) {
-  return api.post(`/agent/suggestions/${id}/approve`)
+// 确认建议：签发 grantKey 并派发 execute 任务（按 suggestionId，v3 UUID）
+export function approveSuggestion(suggestionId) {
+  return api.post(`/agent/suggestions/${suggestionId}/approve`)
 }
 
 // 忽略建议
-export function rejectSuggestion(id) {
-  return api.post(`/agent/suggestions/${id}/reject`)
+export function rejectSuggestion(suggestionId) {
+  return api.post(`/agent/suggestions/${suggestionId}/reject`)
+}
+
+// ==================== 规划（plan 卡片，v3） ====================
+
+// 会话的规划列表（新→旧）
+export function listPlans(conversationId) {
+  return api.get('/agent/plans', { params: { conversationId } })
+}
+
+// 单个 plan + 步骤（suggestions 按 step_no 升序）
+export function getPlan(planId) {
+  return api.get(`/agent/plans/${planId}`)
 }
 
 // 工具注册表（人用）：列表 + 启停（能力=数据，改库即生效，下次注册下发）

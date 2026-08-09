@@ -72,6 +72,15 @@ CREATE INDEX idx_agent_tasks_status        ON agent_tasks(status);
 CREATE INDEX idx_agent_tasks_plan          ON agent_tasks(plan_id);
 CREATE INDEX idx_agent_tasks_suggestion    ON agent_tasks(suggestion_id);
 
--- conversations / conversation_messages 前缀迁移（旧名 → agent_ 前缀）：
--- ALTER TABLE conversations RENAME TO agent_conversations;
--- ALTER TABLE conversation_messages RENAME TO agent_conversation_messages;
+-- conversations / conversation_messages 前缀迁移（旧名 → agent_ 前缀，容错：存在才改）
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='conversations')
+     AND NOT EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='agent_conversations') THEN
+    ALTER TABLE conversations RENAME TO agent_conversations;
+  END IF;
+  IF EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='conversation_messages')
+     AND NOT EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='agent_conversation_messages') THEN
+    ALTER TABLE conversation_messages RENAME TO agent_conversation_messages;
+  END IF;
+END $$;
