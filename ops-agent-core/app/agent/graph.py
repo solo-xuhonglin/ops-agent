@@ -223,7 +223,7 @@ def _parse_tool_calls(content: str) -> list[dict]:
 def build_tool_prompt(registry: ToolRegistry) -> str:
     """把注册表工具清单 + 内置工具 + 输出契约注入 system prompt（每轮重建，注册表更新即生效）。"""
     lines = [
-        "你可以调用以下工具查询系统真实状态或执行已授权操作：",
+        "你可以调用以下工具查询系统真实状态：",
         "",
     ]
     for t in registry.all():  # ToolSchema proto 对象：name/description/parameters/is_write
@@ -234,7 +234,7 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
             lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action / plan_create 审批后由系统执行")
     lines += [
         "",
-        "- plan_create: 为复杂多步任务建立执行计划（系统按 steps 生成待审批建议；上一步完成（含异步训练/部署完成）后下一步自动出现在审批列表）",
+        "- plan_create: 记录多步骤任务的执行计划（步骤清单与顺序，供后续按序处理）",
         '  参数(JSON Schema): {"type":"object","properties":{"summary":{"type":"string",'
         '"description":"计划摘要，如 训练并部署 LSTM 模型"},"steps":{"type":"array","items":{"type":"object",'
         '"properties":{"action_type":{"type":"string","description":"写工具名，如 training_create/serving_deploy"},'
