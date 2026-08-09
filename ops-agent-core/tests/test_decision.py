@@ -269,7 +269,7 @@ async def test_failure_decision_retry_suggestion():
     llm = FakeLlm([
         {"name": "approve_training_create",
          "args": {"datasetId": 5, "name": "lstm_v2", "target_type": "dataset",
-                  "target_id": 5, "retry_of": "sug_orig"}},
+                  "target_id": 5}},  # 模型未填 retry_of → 系统自动关联 ctx.suggestion_id
     ], final_text="已提出修正建议（数据集改为 5），请再次确认")
 
     text = await run_failure_decision(llm, FakeHttp(), FakeRegistry(), FakeClient(),

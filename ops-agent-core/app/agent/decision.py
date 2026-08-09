@@ -173,6 +173,11 @@ async def _execute_decision_tool(name: str, args: dict, store: Any,
         return await handle_plan_update(store, ctx, args, notify=notify) if store is not None else {
             "status": 500, "body": "plan_update unavailable"}
     if name.startswith("approve_"):
+        args = dict(args)
+        # 失败决策场景（ctx 带原 suggestion_id）：模型未显式填 retry_of 则自动关联原建议
+        # （retry_of 是系统关联字段，与 conversation_id 同级由本层注入）
+        if ctx.suggestion_id and not args.get("retry_of"):
+            args["retry_of"] = ctx.suggestion_id
         return await handle_suggest_action(store, ctx, args,
                                            action_type=action_type_from_approve(name)) \
             if store is not None else {"status": 500, "body": f"{name} unavailable"}
