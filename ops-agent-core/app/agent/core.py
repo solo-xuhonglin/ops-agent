@@ -1,15 +1,15 @@
-"""Agent 决策入口（M3.5+，核心为 LangGraph + 标准 LangChain 生态）。
+"""Agent 决策入口（核心为 LangGraph + 标准 LangChain 生态）。
 
 收到 TaskDispatch → 组装初始消息（SystemMessage + 可选多轮 history + HumanMessage）→
 交给 graph.run_graph 执行决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用
 哪些工具；agent 节点流式产出，增量以 thinking/delta/tool_call/tool_result 事件实时回传）→
-收敛后解析结论 + suggestions(JSON 代码块) → TaskResult（含聚合推理链全文）。
-对外契约（TaskEvent → TaskResult）不变；写操作经"建议→人工确认→grantKey→execute 任务"闭环。
+收敛后解析结论 → TaskResult（含聚合推理链全文）。
+对外契约（TaskEvent → TaskResult）不变；写操作经"工具建议（suggest_action/plan_create）→
+人工确认 → grantKey → execute 任务"闭环；execute 任务直调写工具并回喂 LLM 总结。
 """
 import asyncio
 import json
 import logging
-import re
 from typing import Any, Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -51,12 +51,9 @@ SYSTEM_PROMPT = (
     "信息齐备后直接输出最终回答（Markdown），不要在最终回答里再输出工具调用 JSON。\n"
     "- **复杂任务先规划**：如果用户请求需要**多个写操作步骤**（例如\"训练并部署\"），"
     "先调用 `plan_create` 工具建立计划（系统按 steps 生成待审批建议；上一步执行完成（含异步训练/部署完成）后，"
-    "下一步自动出现在审批列表），**不要再额外输出 suggestions**。\n"
-    "- **写操作审批**：需要单条写操作时，在最终回答 content 末尾追加 "
-    "```json {\"suggestions\":[{\"action_type\":\"...\",\"target_type\":\"...\",\"target_id\":N,"
-    "\"params\":{...},\"reason\":\"...\",\"priority\":\"HIGH|NORMAL|LOW\"}]} ``` 代码块；"
-    "该代码块必须出现在用户可见的 content（reasoning 不入库、不触发审批）。"
-    "**普通查询/纯回答不需要任何建议块**。\n"
+    "下一步自动出现在审批列表），**不要再额外调用 suggest_action**。\n"
+    "- **写操作审批**：需要写操作时，调用 `suggest_action` 工具提出处置建议（系统生成待审批建议，"
+    "审批通过后自动执行）。**普通查询/纯回答不需要调用**。\n"
     "- **严禁直接调用任何写工具（is_write=true，契约中标注 ⚠ 写工具）**：写操作必须经人工审批；"
     "仅当当前任务携带 suggestion_id（已审批）时才可调用对应写工具执行。\n"
     "- **plan 自主权**：执行或轮询过程中若发现条件变化、步骤失败或需求不成立，系统会自动更新/废弃 plan 并向用户说明。\n"
@@ -72,11 +69,9 @@ SYSTEM_PROMPT = (
     "# 输出格式与风格\n"
     "- **语气**：专业、客观、简洁，使用中文。\n"
     "- **格式**：状态查询结果使用 Markdown 表格呈现；诊断结论使用清晰的标题分段；"
-    "需要处置时附带 suggestions JSON 代码块。\n"
+    "需要处置时调用 suggest_action / plan_create 工具产出审批建议。\n"
     "- **必要字段**：报告操作结果时，必须包含「操作目标」「操作结果」「后续建议」。"
 )
-
-_JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _build_prompt(d: "agent_pb2.TaskDispatch") -> tuple[str, str]:
@@ -167,17 +162,9 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
         final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
         content = _extract_conclusion(final_messages)
-        suggestions = _parse_suggestions(content)
-        if not suggestions:
-            # 兜底：deepseek-reasoner 常把 suggestions JSON 放进 reasoning 而不放 content（用户看不到）。
-            # 从聚合推理链里再提取一次，保证审批卡能生成。
-            suggestions = _parse_suggestions(_extract_reasoning(final_messages))
-        # 单条写操作建议由 worker 直写库（多步计划由 plan_create 工具创建，不在此处理）
-        if store is not None and store.enabled and ctx.conversation_id:
-            await _persist_outputs(store, ctx, suggestions)
-        conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
+        # 写操作建议由 suggest_action / plan_create 工具落库，收敛后不再解析 JSON 建议块
+        conclusion = content.strip()
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
-                                 suggestions=_to_proto_suggestions(suggestions),
                                  reasoning=_extract_reasoning(final_messages))
         if store is not None and store.enabled:
             try:
@@ -185,8 +172,8 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                                         _extract_reasoning(final_messages))
             except Exception as e:  # noqa: BLE001
                 log.warning("task finish persist failed: %s", e)
-        log.info("task done: %s suggestions=%s reasoning_len=%d", ctx.task_id,
-                 len(suggestions), len(_extract_reasoning(final_messages)))
+        log.info("task done: %s reasoning_len=%d", ctx.task_id,
+                 len(_extract_reasoning(final_messages)))
     except (asyncio.CancelledError, NodeCancelledError):
         # admin 超时/手动取消：不回发 result（admin 已置 CANCELLED，避免覆盖状态）
         log.info("task cancelled by admin: %s", ctx.task_id)
@@ -205,18 +192,6 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                 pass
         await client.send_result(ctx.task_id, ok=False,
                                  conclusion=f"task failed: {e}", error=str(e))
-
-
-async def _persist_outputs(store: Any, ctx: TaskContext, suggestions: list[dict]) -> None:
-    """单条写操作建议直写库（PENDING）。多步计划由 plan_create 工具创建，不在此处理。"""
-    for s in suggestions:
-        s.setdefault("suggestion_id", "")
-        s["source_task_id"] = ctx.task_id
-        s["conversation_id"] = ctx.conversation_id
-        try:
-            await store.insert_suggestion(s)
-        except Exception as e:  # noqa: BLE001
-            log.warning("suggestion persist failed: %s", e)
 
 
 EXECUTE_SUMMARY_SYSTEM = (
@@ -307,31 +282,3 @@ def _extract_conclusion(messages: list) -> str:
                 continue  # 工具调用轮的内容是 JSON，不是结论
             return m.content
     return "no conclusion produced (max tool rounds reached)"
-
-
-def _parse_suggestions(content: str) -> list[dict]:
-    """从 LLM 回答的 ```json 代码块解析 suggestions 列表（缺 action_type/target_id 的丢弃）。"""
-    m = _JSON_BLOCK_RE.search(content or "")
-    if not m:
-        return []
-    try:
-        data = json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return []
-    raw = data.get("suggestions") or []
-    return [s for s in raw
-            if isinstance(s, dict) and s.get("action_type") and s.get("target_id")]
-
-
-def _to_proto_suggestions(items: list[dict]) -> list[agent_pb2.Suggestion]:
-    out = []
-    for s in items:
-        out.append(agent_pb2.Suggestion(
-            action_type=str(s.get("action_type", "")),
-            target_type=str(s.get("target_type", "")),
-            target_id=int(s.get("target_id", 0)),
-            params=json.dumps(s.get("params", {}), ensure_ascii=False),
-            reason=str(s.get("reason", "")),
-            priority=str(s.get("priority", "NORMAL")),
-        ))
-    return out

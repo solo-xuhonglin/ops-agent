@@ -250,6 +250,14 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
         '"required":["action_type"]}}},"required":["summary","steps"]}',
         "",
+        "- suggest_action: 提出一条写操作处置建议（系统生成待审批建议，审批通过后自动执行）。仅当需要写操作时调用",
+        '  参数(JSON Schema): {"type":"object","properties":{"action_type":{"type":"string",'
+        '"description":"写工具名，如 training_create/serving_deploy/training_delete/serving_undeploy/dataset_collect"},'
+        '"target_type":{"type":"string"},"target_id":{"type":"integer"},'
+        '"params":{"type":"object","description":"业务参数（可选）"},"reason":{"type":"string"},'
+        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
+        '"required":["action_type"]}',
+        "",
         "【输出契约】",
         "1. 需要查询/执行时，只输出一个 JSON 代码块（不要包含其他内容）：",
         '   ```json {"tool": "<工具名>", "args": {...}} ```',
@@ -260,6 +268,37 @@ def build_tool_prompt(registry: ToolRegistry) -> str:
         "4. 回答中的数据必须来自工具返回结果，严禁编造。",
     ]
     return "\n".join(lines)
+
+
+async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dict:
+    """suggest_action 内置工具：落一条 PENDING 写操作建议（系统参数注入）。
+
+    LLM 只填业务参数（action_type/target/params/reason/priority）；
+    conversation_id/source_task_id 由本层注入。
+    """
+    if store is None or not store.enabled:
+        log.warning("suggest_action unavailable: agent DB disabled")
+        return {"status": 500, "body": "suggest_action unavailable (agent DB disabled)"}
+    action = str(args.get("action_type", ""))
+    if not action:
+        return {"status": 400, "body": "action_type is required"}
+    try:
+        sid = await store.insert_suggestion({
+            "source_task_id": ctx.task_id,
+            "conversation_id": ctx.conversation_id,
+            "action_type": action,
+            "target_type": str(args.get("target_type", "")),
+            "target_id": int(args.get("target_id", 0) or 0),
+            "params": args.get("params") or {},
+            "reason": str(args.get("reason", "")),
+            "priority": str(args.get("priority", "NORMAL")),
+        })
+    except Exception as e:  # noqa: BLE001
+        log.warning("suggest_action persist failed: %s", e)
+        return {"status": 500, "body": f"suggestion create failed: {e}"}
+    body = json.dumps({"suggestion_id": sid}, ensure_ascii=False)
+    log.info("suggestion suggested: %s action=%s", sid[:8], action)
+    return {"status": 200, "body": body}
 
 
 async def handle_plan_create(store: Any, ctx: TaskContext, args: dict) -> dict:
@@ -382,12 +421,13 @@ def build_graph(llm: Any, http: AdminHttpClient,
             await client.send_event(ctx.task_id, "tool_call",
                                     json.dumps({"name": name, "args": args}, ensure_ascii=False))
             tool = registry.get(name)
-            if name == "plan_create":
-                # 内置工具：worker 本地执行（建 plan + 落 PENDING suggestions）
+            if name in ("plan_create", "suggest_action"):
+                # 内置工具：worker 本地执行（建 plan / 落 PENDING 建议）
                 if store is not None and store.enabled:
-                    result = await handle_plan_create(store, ctx, args)
+                    result = (await handle_plan_create(store, ctx, args)) if name == "plan_create" \
+                        else (await handle_suggest_action(store, ctx, args))
                 else:
-                    result = {"status": 500, "body": "plan_create unavailable (agent DB disabled)"}
+                    result = {"status": 500, "body": f"{name} unavailable (agent DB disabled)"}
             elif tool is None:
                 result = {"status": 0, "body": f"unknown tool: {name}"}
             else:

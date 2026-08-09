@@ -80,3 +80,49 @@ async def test_plan_create_store_disabled_returns_error():
     ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1")
     result = await handle_plan_create(store, ctx, {"summary": "s", "steps": []})
     assert result["status"] == 500
+
+
+async def test_suggest_action_creates_pending_suggestion():
+    from app.agent.graph import handle_suggest_action
+
+    db = FakeDb()
+    store = make_store(db)
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1")
+    result = await handle_suggest_action(store, ctx, {
+        "action_type": "serving_undeploy", "target_type": "serving_endpoint",
+        "target_id": 3, "params": {}, "reason": "不健康", "priority": "HIGH",
+    })
+    assert result["status"] == 200
+    body = json.loads(result["body"])
+    assert body["suggestion_id"].startswith("sug_")
+
+    sug_sql = [args for sql, args in db.executed if "INSERT INTO agent_suggestions" in sql]
+    assert len(sug_sql) == 1
+    args = sug_sql[0]
+    assert args[3] == "t1"        # source_task_id 注入
+    assert args[4] == "conv1"     # conversation_id 注入
+    assert args[5] == "serving_undeploy"
+    assert args[7] == 3
+    assert args[9] == "不健康"
+    assert args[10] == "HIGH"
+
+
+async def test_suggest_action_requires_action_type():
+    from app.agent.graph import handle_suggest_action
+
+    db = FakeDb()
+    store = make_store(db)
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1")
+    result = await handle_suggest_action(store, ctx, {"target_id": 3})
+    assert result["status"] == 400
+    assert db.executed == []  # 未落库
+
+
+async def test_suggest_action_store_disabled_returns_error():
+    from app.agent.graph import handle_suggest_action
+
+    db = FakeDb(enabled=False)
+    store = make_store(db)
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="conv1")
+    result = await handle_suggest_action(store, ctx, {"action_type": "training_delete"})
+    assert result["status"] == 500

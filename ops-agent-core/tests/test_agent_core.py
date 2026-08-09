@@ -161,36 +161,23 @@ async def test_handle_dispatch_llm_error_marks_failed():
     assert "llm down" in error
 
 
-def test_parse_suggestions_extracts_json_block():
-    content = ("发现 serving 异常。```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
-               "\"target_type\":\"serving_endpoint\",\"target_id\":3,\"reason\":\"不健康\","
-               "\"priority\":\"HIGH\"}]} ```")
-    items = core._parse_suggestions(content)
-    assert len(items) == 1
-    assert items[0]["action_type"] == "serving_undeploy"
-    assert items[0]["target_id"] == 3
-
-
-def test_parse_suggestions_empty_without_block():
-    assert core._parse_suggestions("一切正常，无需处置。") == []
-    assert core._parse_suggestions(None) == []
-    assert core._parse_suggestions("```json {bad json} ```") == []
+def test_parse_suggestions_removed():
+    """写操作建议已工具化（suggest_action/plan_create），core 不再解析 JSON 建议块。"""
+    assert not hasattr(core, "_parse_suggestions")
+    assert not hasattr(core, "_persist_outputs")
 
 
 @pytest.mark.asyncio
-async def test_handle_dispatch_sends_suggestions():
+async def test_handle_dispatch_conclusion_preserved():
+    """收敛后结论原样保留；建议不再经 TaskResult 回传（由 suggest_action 工具落库）。"""
     client = FakeClient()
     registry = ToolRegistry()
     http = FakeHttp()
-    content = ("建议下线。```json {\"suggestions\":[{\"action_type\":\"serving_undeploy\","
-               "\"target_type\":\"serving_endpoint\",\"target_id\":3}]} ```")
-    llm = FakeLlm([AIMessage(content=content)])
+    llm = FakeLlm([AIMessage(content="一切正常，无需处置。")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
     task_id, ok, conclusion, error = client.results[0]
     assert ok is True
-    assert "```json" not in conclusion  # 建议块已剥离
-    assert client.suggestion_bodies and len(client.suggestion_bodies) == 1
-    assert client.suggestion_bodies[0].action_type == "serving_undeploy"
-    assert client.suggestion_bodies[0].target_id == 3
+    assert conclusion == "一切正常，无需处置。"
+    assert client.suggestion_bodies == []
