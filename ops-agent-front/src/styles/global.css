@@ -252,14 +252,6 @@ h1, h2, h3, h4, h5, h6, p {
   text-decoration: underline;
 }
 
-/* 处置建议执行结果：紧凑 markdown，限制高度，避免 raw markdown 撑大列表 */
-.suggestion-result {
-  font-size: 12px;
-  line-height: 1.5;
-  max-height: 4.6em;
-  overflow: hidden;
-  color: inherit;
-}
 .suggestion-result > *:first-child { margin-top: 0; }
 .suggestion-result > *:last-child { margin-bottom: 0; }
 .suggestion-result h1,
@@ -291,4 +283,23 @@ h1, h2, h3, h4, h5, h6, p {
 .suggestion-result ul,
 .suggestion-result ol {
   padding-left: 16px;
+}
+
+/* 处置建议结果区默认折叠 5 行，点「展开」后可查看完整内容 */
+.suggestion-result--collapsed {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.suggestion-result__toggle {
+  font-size: 12px;
+  color: rgb(var(--v-theme-primary));
+  cursor: pointer;
+  user-select: none;
+  margin-top: 2px;
+  padding: 2px 0;
+}
+.suggestion-result__toggle:hover {
+  text-decoration: underline;
 }

@@ -86,9 +86,13 @@
               <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
               <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
             </div>
-            <div v-else-if="s.status === 'EXECUTED' && s.result"
-                 class="history-item__body text-caption text-success history-item__clamp-3 suggestion-result"
-                 :title="s.result" v-html="renderMarkdown(s.result)" />
+            <div v-else-if="s.status === 'EXECUTED' && s.result" class="history-item__body text-caption text-success">
+              <div :class="['suggestion-result', { 'suggestion-result--collapsed': !resultExpanded[s.id] }]"
+                   :title="s.result" v-html="renderMarkdown(s.result)" />
+              <div class="suggestion-result__toggle" @click="toggleResult(s.id)">
+                {{ resultExpanded[s.id] ? '收起' : '展开' }}
+              </div>
+            </div>
           </div>
           <div v-if="!store.suggestions.length" class="empty-hint">
             <v-icon icon="mdi-inbox-outline" size="40" class="mb-2" />
@@ -474,11 +478,17 @@ function prettyArgs(args) {
 }
 
 // ===== 文案映射 =====
+// 与 agent 工具注册表（approve_<write_tool>）一致；任何新增写工具都需在此登记
+// actionType 名称，否则 fallback 到原字符串显示。
 const ACTIONS = {
   training_create: { text: '创建训练', icon: 'mdi-rocket-launch' },
   training_delete: { text: '中止训练', icon: 'mdi-stop-circle' },
   serving_deploy: { text: '部署服务', icon: 'mdi-server-plus' },
-  serving_undeploy: { text: '下线服务', icon: 'mdi-server-remove' }
+  serving_undeploy: { text: '下线服务', icon: 'mdi-server-remove' },
+  dataset_create: { text: '创建数据集', icon: 'mdi-database-plus' },
+  dataset_collect: { text: '采集数据', icon: 'mdi-cloud-download' },
+  dataset_update: { text: '更新数据集', icon: 'mdi-database-edit' },
+  dataset_delete: { text: '删除数据集', icon: 'mdi-database-remove' }
 }
 const SUG_STATUS = {
   PENDING: { text: '待确认', color: 'warning' },
