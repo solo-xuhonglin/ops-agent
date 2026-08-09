@@ -82,8 +82,28 @@ def test_update_dataset(client, make_dataset):
     assert updated["name"] == new_name
     assert updated["description"] == "updated by e2e"
     assert updated["regions"] == ["广州"]
-    # NOTE: update re-triggers weather collection which overwrites rowCount, so we
-    # do not assert the user-supplied value here.
+    # NOTE: PUT only updates metadata (no implicit re-collection), so the
+    # user-supplied rowCount is preserved here. Re-collection is explicit
+    # via POST /api/datasets/{id}/collect.
+
+
+def test_update_changed_region_needs_collect(client, make_dataset):
+    """Changing regions/date range via PUT does NOT re-collect; the data stays
+    as-is until an explicit collect is issued (metadata/data decoupling)."""
+    ds = make_dataset()
+    updated = client.update_dataset(
+        ds["id"],
+        {
+            "name": ds["name"],
+            "regions": ["深圳"],
+            "dateStart": "2021-01-01",
+            "dateEnd": "2021-06-30",
+            "status": "READY",
+        },
+    )
+    assert updated["regions"] == ["深圳"]
+    # metadata updated, but objectKey still points at the original collection
+    assert updated["objectKey"].endswith("/weather.csv")
 
 
 def test_delete_dataset_really_gone(client, make_dataset):

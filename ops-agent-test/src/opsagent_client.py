@@ -3,10 +3,10 @@
 Wraps the real endpoints (verified against DatasetController / DatasetService):
   GET    /api/datasets              list (paginated, id desc)
   GET    /api/datasets/{id}         detail
-  POST   /api/datasets              create (JSON)
-  PUT    /api/datasets/{id}         update (JSON)
+  POST   /api/datasets              create (JSON, auto-triggers weather collection)
+  PUT    /api/datasets/{id}         update metadata ONLY (no re-collection)
+  POST   /api/datasets/{id}/collect explicit weather re-collection
   DELETE /api/datasets/{id}         delete
-  POST   /api/datasets/{id}/file    upload file -> MinIO (multipart)
   GET    /api/datasets/{id}/file/url  presigned URL
 
 Backend envelope: { code, message, data, timestamp }  (null fields omitted).
@@ -108,16 +108,16 @@ class OpsAgentClient:
         return self.get("/api/datasets", params={"page": page, "size": size})["data"]
 
     def update_dataset(self, ds_id: int, payload: dict) -> dict:
+        """PUT /api/datasets/{id} — metadata only, does NOT re-collect weather."""
         return self.put(f"/api/datasets/{ds_id}", json=payload)["data"]
+
+    def collect_dataset(self, ds_id: int) -> dict:
+        """POST /api/datasets/{id}/collect — explicit weather re-collection
+        (overwrites weather.csv by current regions/date range, returns updated dataset)."""
+        return self.post(f"/api/datasets/{ds_id}/collect")["data"]
 
     def delete_dataset(self, ds_id: int) -> dict:
         return self.delete(f"/api/datasets/{ds_id}")
-
-    def upload_file(self, ds_id: int, file_path: str, filename: str | None = None) -> dict:
-        fname = filename or os.path.basename(file_path)
-        with open(file_path, "rb") as f:
-            files = {"file": (fname, f, "application/octet-stream")}
-            return self.post(f"/api/datasets/{ds_id}/file", files=files)["data"]
 
     def file_url(self, ds_id: int, expiry_minutes: int = 30) -> dict:
         return self.get(

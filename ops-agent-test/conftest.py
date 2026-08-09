@@ -116,41 +116,26 @@ def reader_client(client: OpsAgentClient) -> OpsAgentClient:
         pass  # already gone or transient error -> ignore in teardown
 
 
-def _make_training_csv(path: str, n_per_region: int = 30) -> None:
-    """Write a CSV in the schema train.py expects:
-    region,time,temperature,precipitation — with enough rows per region
-    (need > seq_len windows)."""
-    import csv
-
-    regions = ["北京", "上海"]
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(["region", "time", "temperature", "precipitation"])
-        for region in regions:
-            for i in range(n_per_region):
-                temp = 20.0 + (i % 15)
-                precip = float(i % 5)
-                w.writerow([region, f"2020-01-{i + 1:02d}T00:00:00", temp, precip])
-
-
 @pytest.fixture
-def training_csv(tmp_path) -> str:
-    """A real weather CSV (region/time/temperature/precipitation) usable as a
-    training dataset file. Lives in a temp dir, auto-cleaned by pytest."""
-    p = tmp_path / "weather_train.csv"
-    _make_training_csv(str(p), n_per_region=30)
-    return str(p)
-
-
-@pytest.fixture
-def ready_model(client: OpsAgentClient, make_dataset, training_csv):
+def ready_model(client: OpsAgentClient, make_dataset):
     """Train a real model to READY on the remote backend (tiny hyperparams) and
     guarantee teardown cleanup of the training job + model. The dataset is cleaned
-    by `make_dataset` teardown. Returns:
+    by `make_dataset` teardown. The dataset gets its data from weather collection
+    (explicit POST /collect since the file-upload endpoint was removed).
+
+    Returns:
         {dataset_id, job_id, model_version_id, model}
     """
-    ds = make_dataset()
-    client.upload_file(ds["id"], training_csv)
+    # small date window => fast collection (7 days x 24h per region)
+    ds = make_dataset(
+        regions=["北京"],
+        dateStart="2026-08-01",
+        dateEnd="2026-08-07",
+    )
+    # create() runs weather collection synchronously; require real data
+    if ds.get("status") != "READY" or not ds.get("rowCount"):
+        pytest.skip(f"weather collection unavailable (status={ds.get('status')}); "
+                    f"training tests need real data rows")
 
     req = {
         "datasetId": ds["id"],

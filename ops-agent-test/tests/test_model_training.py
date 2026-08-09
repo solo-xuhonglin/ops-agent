@@ -50,7 +50,7 @@ def test_model_version_crud(client):
 
 # ===================== Real training run =====================
 def test_trigger_training_real_run(client, ready_model):
-    # `ready_model` already did: dataset + real CSV upload -> trigger (tiny
+    # `ready_model` already did: dataset (weather-collected) -> trigger (tiny
     # hyperparams) -> poll until SUCCEEDED -> model READY. Assert the finalized
     # model + log access, then let the fixture teardown purge job/model.
     mv = ready_model["model"]

@@ -4,8 +4,9 @@
 验证 `ops-agent-admin` 后端 `/api/datasets` 数据集全生命周期。
 
 > 文档（设计稿）与真实实现不一致：真实接口为两步式
-> `POST /api/datasets`（建记录）→ `POST /api/datasets/{id}/file`（传文件到 MinIO），
-> 而非文档里的 `POST /api/datasets/upload`。本套件已按**真实实现**编写。
+> `POST /api/datasets`（建记录，自动触发天气采集）→ `POST /api/datasets/{id}/collect`
+> （显式重新采集到 MinIO `weather.csv`），文件上传接口（`/file`）已移除。
+> 本套件已按**真实实现**编写。
 
 ## 1. 目录结构
 
@@ -18,7 +19,7 @@ ops-agent-test/
   src/opsagent_client.py      # 后端 HTTP 客户端封装
   tests/
     test_dataset_lifecycle.py # Tier1 元数据 CRUD
-    test_dataset_file.py      # Tier2 MinIO 文件上传真实验证
+    test_dataset_file.py      # Tier2 天气采集 + MinIO 落盘真实验证
     test_dataset_negative.py  # 鉴权/异常用例
     test_model_training.py    # 模型版本 + 训练任务（含真实跑一轮）
     test_model_training_negative.py
@@ -53,17 +54,18 @@ pytest -v
 
 ```bash
 pytest -m tier1        # 元数据 CRUD
-pytest -m tier2        # MinIO 上传链路
+pytest -m tier2        # 天气采集/落盘链路
 pytest -m negative     # 鉴权/异常
 ```
 
-## 4. "真上传 / 真删除" 验证说明
+## 4. "真采集 / 真删除" 验证说明
 
-- **上传真成功**：上传返回 200 + `objectKey == datasets/{id}/{filename}`；
-  预签名 URL 成功签发（证明后端↔MinIO 通路正常，文件确实落到 MinIO 路径）。
+- **采集真成功**：`POST /api/datasets/{id}/collect` 返回 200 + 数据集状态 `READY`、
+  `rowCount > 0`、`objectKey == {id}/weather.csv`；预签名 URL 成功签发（证明后端↔MinIO
+  通路正常，天气数据确实落到 MinIO 路径）。
   - 不下载/字节比对：后端用 `MINIO_ENDPOINT=http://minio:9000`（docker 内部地址）签发
     URL，测试机直接下载常因 DNS 不通而失败；`objectKey` 正确 + 签名成功已足够证明
-    上传链路端到端跑通。
+    采集链路端到端跑通。
 - **删除真成功**：`DatasetService.delete` **已修复**——删除数据库记录的同时会清理
   关联的 MinIO 对象（best-effort，异常仅告警不阻断）。测试验证：DELETE 后
   `GET /api/datasets/{id}` 返回 404、列表不再包含该 id、文件关联 `GET .../file/url` 也 404。
