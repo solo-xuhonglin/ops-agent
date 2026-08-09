@@ -13,7 +13,9 @@ class Config:
     ping_interval_s: float = 30.0
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    # 固定 deepseek-reasoner：输出含推理链(reasoning_content)，且不支持 tools/temperature 参数
+    # （工具走 prompt 注入 + JSON 契约，见 graph.py）；如需更换模型改此环境变量即可
+    deepseek_model: str = "deepseek-reasoner"
     llm_timeout_s: float = 60.0
     max_tool_rounds: int = 10
 
@@ -27,7 +29,7 @@ class Config:
             reconnect_max_s=float(os.getenv("AGENT_RECONNECT_MAX_S", "30.0")),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner"),
             llm_timeout_s=float(os.getenv("DEEPSEEK_TIMEOUT_S", "60")),
             max_tool_rounds=int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "10")),
         )

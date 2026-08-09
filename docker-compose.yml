@@ -152,10 +152,10 @@ services:
     environment:
       WORKER_ID: ops-agent-core-1
       ADMIN_GRPC_ADDR: admin:9090
-      # LLM 接入（M2 起使用）
+      # LLM 接入（固定 deepseek-reasoner：输出推理链，工具走 prompt 注入，见 ops-agent-core）
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
-      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-reasoner}
     networks:
       - opsnet
 

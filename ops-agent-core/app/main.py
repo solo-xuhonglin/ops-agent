@@ -39,7 +39,7 @@ async def amain() -> None:
         api_key=cfg.deepseek_api_key,
         model=cfg.deepseek_model,
         timeout=cfg.llm_timeout_s,
-        temperature=0.3,
+        # 注意：deepseek-reasoner 固定采样，不传 temperature/top_p（传了也无效）
     )
     http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id, grants)
     if not cfg.deepseek_api_key:

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -17,7 +18,7 @@ class FakeClient:
     async def send_event(self, task_id, event_type, content):
         self.events.append((task_id, event_type, content))
 
-    async def send_result(self, task_id, ok, conclusion, error="", suggestions=None):
+    async def send_result(self, task_id, ok, conclusion, error="", suggestions=None, reasoning=""):
         self.results.append((task_id, ok, conclusion, error))
         if suggestions:
             self.suggestion_bodies.extend(suggestions)
@@ -34,19 +35,18 @@ class FakeHttp:
 
 
 class FakeLlm:
-    """按序列返回预设 AIMessage：assistant(tool_call) → assistant(conclusion)。"""
+    """按序列返回预设 AIMessage；工具轮为 JSON 文本（契约解析），结论轮为普通文本。"""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
 
-    def bind_tools(self, tools):
-        self.last_tools = tools
-        return self
-
-    async def ainvoke(self, messages):
-        self.calls.append({"messages": list(messages), "tools": getattr(self, "last_tools", None)})
-        return self.responses.pop(0)
+    async def astream(self, messages):
+        self.calls.append({"messages": list(messages)})
+        resp = self.responses.pop(0)
+        if isinstance(resp, BaseException):
+            raise resp
+        yield resp
 
 
 def make_dispatch(task_type="question", query="how are you", task_id="t-1", token="tok"):
@@ -54,17 +54,9 @@ def make_dispatch(task_type="question", query="how are you", task_id="t-1", toke
         task_id=task_id, task_type=task_type, query=query, task_token=token))
 
 
-def tool_call_msg(name, call_id="c1", args="{}"):
-    return AIMessage(content="", tool_calls=[
-        {"name": name, "args": _parse_args(args), "id": call_id, "type": "tool_call"}])
-
-
-def _parse_args(args: str) -> dict:
-    import json
-    try:
-        return json.loads(args or "{}")
-    except json.JSONDecodeError:
-        return {}
+def json_tool_msg(name, args=None):
+    """工具调用轮：AIMessage 输出 JSON 契约文本（由 _parse_tool_calls 解析）。"""
+    return AIMessage(content=json.dumps({"tool": name, "args": args or {}}, ensure_ascii=False))
 
 
 def make_tool(name="training_list", method="GET", path="/api/training/jobs",
@@ -76,8 +68,9 @@ def make_tool(name="training_list", method="GET", path="/api/training/jobs",
 class CancelLlm(FakeLlm):
     """LLM 调用点抛 CancelledError（模拟 admin CancelTask → task.cancel()）。"""
 
-    async def ainvoke(self, messages):
+    async def astream(self, messages):
         raise asyncio.CancelledError
+        yield  # pragma: no cover - 使 astream 成为 async generator
 
 
 @pytest.mark.asyncio
@@ -100,7 +93,7 @@ async def test_handle_dispatch_loops_until_converged():
     registry = ToolRegistry()
     registry.load([make_tool()])
     http = FakeHttp()
-    llm = FakeLlm([tool_call_msg("training_list", args='{"page":0}'),
+    llm = FakeLlm([json_tool_msg("training_list", {"page": 0}),
                    AIMessage(content="系统状态正常")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
@@ -113,10 +106,11 @@ async def test_handle_dispatch_loops_until_converged():
     task_id, ok, conclusion, _ = client.results[0]
     assert ok is True
     assert conclusion == "系统状态正常"
-    # LLM 被调 2 次，且第二次带上了 tool 回填
+    # LLM 被调 2 次，且第二次带上了工具结果回填（普通 system 消息，非 tool 角色）
     assert len(llm.calls) == 2
     types = [m.type for m in llm.calls[1]["messages"]]
-    assert "tool" in types
+    assert "system" in types
+    assert "tool" not in types  # 不使用 tool 角色消息（reasoner 兼容）
 
 
 @pytest.mark.asyncio
@@ -139,7 +133,7 @@ async def test_handle_dispatch_unknown_tool_not_crashed():
     client = FakeClient()
     registry = ToolRegistry()  # 空注册表
     http = FakeHttp()
-    llm = FakeLlm([tool_call_msg("training_get"), AIMessage(content="done")])
+    llm = FakeLlm([json_tool_msg("training_get"), AIMessage(content="done")])
 
     await core.handle_dispatch(client, registry, llm, http, make_dispatch())
 
@@ -153,11 +147,9 @@ async def test_handle_dispatch_llm_error_marks_failed():
     client = FakeClient()
 
     class BoomLlm:
-        def bind_tools(self, tools):
-            return self
-
-        async def ainvoke(self, messages):
+        async def astream(self, messages):
             raise RuntimeError("llm down")
+            yield  # pragma: no cover - 使 astream 成为 async generator
 
     registry = ToolRegistry()
     await core.handle_dispatch(client, registry, BoomLlm(), FakeHttp(), make_dispatch())
