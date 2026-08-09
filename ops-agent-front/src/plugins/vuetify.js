@@ -65,7 +65,8 @@ export default createVuetify({
     },
     VSelect: {
       variant: 'outlined',
-      density: 'comfortable'
+      density: 'comfortable',
+      rounded: 'lg'
     },
     VTextarea: {
       variant: 'outlined',
