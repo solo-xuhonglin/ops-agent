@@ -23,7 +23,8 @@ export function deleteConversation(conversationId) {
   return api.delete(`/agent/conversations/${conversationId}`)
 }
 
-// 发消息：{ query?, taskType?, targetType?, targetId? } → { messageId, taskId, status }
+// 发消息：{ query?, taskType?, targetType?, targetId?, reasoning? } → { messageId, taskId, status }
+// reasoning=true 走思考模式（默认）；false 走 fast 非思考模式
 export function sendMessage(conversationId, payload) {
   return api.post(`/agent/conversations/${conversationId}/messages`, payload)
 }

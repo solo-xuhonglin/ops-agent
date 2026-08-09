@@ -4,7 +4,7 @@
 交给 graph.run_graph 执行决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调用
 哪些工具；agent 节点流式产出，增量以 thinking/delta/tool_call/tool_result 事件实时回传）→
 收敛后解析结论 → TaskResult（含聚合推理链全文）。
-对外契约（TaskEvent → TaskResult）不变；写操作经"工具建议（suggest_action/plan_create）→
+对外契约（TaskEvent → TaskResult）不变；写操作经"审批工具（approve_<写操作名>/plan_create）→
 人工确认 → grantKey → execute 任务"闭环；execute 任务直调写工具并回喂 LLM 总结。
 """
 import asyncio
@@ -37,24 +37,21 @@ SYSTEM_PROMPT = (
     "收到任务后遵循以下步骤：\n"
     "1. **理解需求**：分析用户请求，明确其最终目的（查询？诊断？处置？）。\n"
     "2. **信息收集**：如有必要，调用只读工具查询真实状态（数据集/模型/训练/serving），"
-    "信息不足时可多次调用不同工具。\n"
+    "信息不足时可多次调用不同工具（支持并行调用独立工具）。\n"
     "3. **制定计划**：基于真实数据判断是否需要处置（发起训练、部署、下线异常 serving、中止卡住的训练等）。\n"
-    "4. **处置确认（关键）**：需要写操作时调用 `suggest_action` 提出审批建议，"
-    "严禁直接执行写操作；审批通过后系统会派发新任务自动执行。\n"
+    "4. **处置确认（关键）**：需要写操作时调用对应的 `approve_<写操作名>` 工具（如 "
+    "`approve_training_create`）提出审批建议，严禁直接执行写操作；审批通过后系统会派发新任务自动执行。\n"
     "5. **报告结果**：以清晰、结构化的 Markdown 向用户报告结论。\n"
     "\n"
     "# 工具使用规范\n"
-    "- 工具清单与参数 schema 由系统在下发的【工具契约】中给出（每轮注入，含每个工具的 ⚠ 写标记），"
-    "工具名必须严格取自清单，args 必须符合对应参数 schema；会话/任务等系统参数由系统注入，无需填写。\n"
-    "- 需要查询时，输出工具调用 JSON（每次只调用一个工具，等结果返回后再决定下一步）。示例："
-    "```json {\"tool\":\"training_get\",\"args\":{\"jobId\":32}} ```；"
-    "信息齐备后直接输出最终回答（Markdown），不要在最终回答里再输出工具调用 JSON。\n"
+    "- 工具列表由系统通过 function calling 下发（只读工具 + plan_create/plan_update + "
+    "approve_<写操作名> 审批工具）；按需调用，参数必须符合对应 schema。\n"
     "- **复杂任务先规划**：任务包含**多个步骤**（例如\"训练并部署\"）时，先调用 `plan_create` "
     "记录执行计划（步骤清单与顺序）。\n"
-    "- **写操作审批**：需要写操作时，调用 `suggest_action` 工具提出处置建议（系统生成待审批建议，"
-    "审批通过后自动执行）。**普通查询/纯回答不需要调用**。\n"
-    "- **严禁直接调用任何写工具（is_write=true，契约中标注 ⚠ 写工具）**：写操作一律通过 "
-    "`suggest_action` 提出审批，由系统在审批通过后执行。\n"
+    "- **写操作审批**：需要写操作时，调用对应的 `approve_<写操作名>` 工具（如发起训练 → "
+    "`approve_training_create`）提出处置建议（系统生成待审批建议，审批通过后自动执行）。"
+    "**普通查询/纯回答不需要调用**。\n"
+    "- **你没有直接执行写操作的能力**：系统中不存在可直接调用的写工具，一切写操作必须经审批。\n"
     "- **plan 失败可重新规划**：若计划中某步骤执行失败导致计划无法继续（对话中会出现\"计划失败\"通知），"
     "重新调用 `plan_create` 制定新的执行方案即可。\n"
     "- **禁止重复调用**：禁止在没有新信息的情况下，为同一请求重复调用同一个工具。\n"
@@ -69,7 +66,7 @@ SYSTEM_PROMPT = (
     "# 输出格式与风格\n"
     "- **语气**：专业、客观、简洁，使用中文。\n"
     "- **格式**：状态查询结果使用 Markdown 表格呈现；诊断结论使用清晰的标题分段；"
-    "需要处置时调用 suggest_action 工具产出审批建议。\n"
+    "需要处置时调用 approve_<写操作名> 工具产出审批建议。\n"
     "- **必要字段**：报告操作结果时，必须包含「操作目标」「操作结果」「后续建议」。"
 )
 
@@ -133,7 +130,8 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
                       target_type=d.target_type, target_id=d.target_id,
                       conversation_id=d.conversation_id,
-                      suggestion_id=d.suggestion_id, grant_key=d.grant_key)
+                      suggestion_id=d.suggestion_id, grant_key=d.grant_key,
+                      reasoning_enabled=bool(d.reasoning_enabled))
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
     # execute 任务（已审批写操作）直调写工具，不过决策图
@@ -157,12 +155,12 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
             log.warning("task insert failed: %s", e)
 
     try:
-        graph = build_graph(llm=llm, http=http, registry=registry, client=client,
+        graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
                             tracker=tracker, store=store)
         final_messages = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
         content = _extract_conclusion(final_messages)
-        # 写操作建议由 suggest_action / plan_create 工具落库，收敛后不再解析 JSON 建议块
+        # 写操作建议由 approve_<写操作名> / plan_create 工具落库，收敛后不再解析 JSON 建议块
         conclusion = content.strip()
         await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
                                  reasoning=_extract_reasoning(final_messages))
@@ -244,10 +242,10 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
     # 异步写操作成功后注册对象状态轮询（训练/部署完成后推进 Plan）
     await _maybe_register_tracker(tracker, store, ctx, tool, result)
 
-    # 原始结果回喂 LLM 生成执行总结（失败则结构化兜底）
+    # 原始结果回喂 LLM 生成执行总结（失败则结构化兜底）；execute 用 fast 模式（无需思考，省 token）
     conclusion = ""
     try:
-        resp = await llm.ainvoke([
+        resp = await llm.select(False).ainvoke([
             SystemMessage(content=EXECUTE_SUMMARY_SYSTEM),
             HumanMessage(content=json.dumps(result, ensure_ascii=False)),
         ])
@@ -277,8 +275,7 @@ def _extract_conclusion(messages: list) -> str:
     """取最后一条 assistant 消息（有内容且非工具调用轮才用），否则提示未收敛。"""
     for m in reversed(messages):
         if getattr(m, "type", "") == "ai" and getattr(m, "content", None):
-            kw = getattr(m, "additional_kwargs", None) or {}
-            if kw.get("_is_tool_round"):
-                continue  # 工具调用轮的内容是 JSON，不是结论
+            if getattr(m, "tool_calls", None):
+                continue  # 工具调用轮（原生 tool_calls），内容非结论
             return m.content
     return "no conclusion produced (max tool rounds reached)"

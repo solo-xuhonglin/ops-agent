@@ -32,7 +32,8 @@ public class AgentTaskController {
     @PreAuthorize("hasAuthority('agent:write')")
     public ApiResponse<?> dispatch(@Valid @RequestBody AgentTaskRequest req) {
         AgentTask task = agentTaskService.dispatchChat(null, req.getQuery(), null,
-                req.getTargetType(), req.getTargetId(), resolveUserId());
+                req.getTargetType(), req.getTargetId(), resolveUserId(),
+                Boolean.TRUE.equals(req.getReasoning()));
         return ApiResponse.ok(Map.of("taskId", task.getTaskId(), "status", task.getStatus()));
     }
 

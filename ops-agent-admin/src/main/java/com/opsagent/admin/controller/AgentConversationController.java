@@ -72,7 +72,8 @@ public class AgentConversationController {
     public ApiResponse<?> send(@PathVariable String conversationId,
                                @Valid @RequestBody AgentMessageRequest req) {
         Map<String, Object> result = conversationService.send(conversationId, resolveUserId(),
-                req.getQuery(), req.getTaskType(), req.getTargetType(), req.getTargetId());
+                req.getQuery(), req.getTaskType(), req.getTargetType(), req.getTargetId(),
+                Boolean.TRUE.equals(req.getReasoning()));
         return ApiResponse.ok(result);
     }
 

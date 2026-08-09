@@ -105,6 +105,7 @@ message TaskDispatch {
   string action_type = 10;   // execute：写工具名（training_create 等）
   string params = 11;        // execute：动作参数 JSON（不再由 LLM 解析 query）
   string grant_key = 12;     // execute：approve 后签发（替代 AuthorizationGrant 单独推送）
+  bool reasoning_enabled = 13;  // chat：前端「深度思考」开关（false=fast 非思考模式；execute 忽略）
 }
 
 message CancelTask {

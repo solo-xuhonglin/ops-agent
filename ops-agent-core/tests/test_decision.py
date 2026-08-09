@@ -43,21 +43,30 @@ class FakeDb:
 
 
 class FakeLlm:
-    """顺序返回预置输出：先工具调用，再最终文本。"""
+    """模拟 LLMRuntime：select()/bind_tools() 返回自身；先返回工具调用（原生 tool_calls），再最终文本。"""
 
     def __init__(self, calls: list[dict], final_text: str = "决策完成"):
         self.calls = calls
         self.final_text = final_text
         self.round = 0
 
+    def select(self, reasoning):
+        return self
+
+    def bind_tools(self, tools):
+        self._tools = tools
+        return self
+
     async def ainvoke(self, messages):
         if self.round < len(self.calls):
-            content = json.dumps({"tool": self.calls[self.round]["name"],
-                                  "args": self.calls[self.round]["args"]}, ensure_ascii=False)
-        else:
-            content = self.final_text
-        self.round += 1
-        return AIMessage(content=content)
+            c = self.calls[self.round]
+            self.round += 1
+            return AIMessage(content="", tool_calls=[{
+                "id": f"call_{self.round}",
+                "name": c["name"],
+                "args": c["args"],
+            }])
+        return AIMessage(content=self.final_text)
 
 
 class FakeHttp:
@@ -136,9 +145,8 @@ async def test_decision_round_success_advances_to_next_step():
     llm = FakeLlm([
         {"name": "plan_update", "args": {"plan_id": plan_id, "step_no": 1,
                                          "step_status": "done", "note": "训练完成"}},
-        {"name": "suggest_action", "args": {"plan_id": plan_id, "step_no": 2,
-                                            "action_type": "serving_deploy",
-                                            "target_type": "model_version"}},
+        {"name": "approve_serving_deploy", "args": {"plan_id": plan_id, "step_no": 2,
+                                                    "target_type": "model_version"}},
     ])
 
     text = await run_decision_round(llm, FakeHttp(), FakeRegistry(), FakeClient(),
@@ -192,9 +200,8 @@ async def test_decision_round_failure_retry_suggestion():
     llm = FakeLlm([
         {"name": "plan_update", "args": {"plan_id": plan_id, "step_no": 1,
                                          "step_status": "failed", "note": "显存不足"}},
-        {"name": "suggest_action", "args": {"plan_id": plan_id, "step_no": 1,
-                                            "action_type": "training_create",
-                                            "retry_of": "sug_orig"}},
+        {"name": "approve_training_create", "args": {"plan_id": plan_id, "step_no": 1,
+                                                     "retry_of": "sug_orig"}},
     ])
 
     await run_decision_round(llm, FakeHttp(), FakeRegistry(), FakeClient(),

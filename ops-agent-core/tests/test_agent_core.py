@@ -1,5 +1,6 @@
 import asyncio
 import json
+import uuid
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -35,11 +36,24 @@ class FakeHttp:
 
 
 class FakeLlm:
-    """按序列返回预设 AIMessage；工具轮为 JSON 文本（契约解析），结论轮为普通文本。"""
+    """模拟 LLMRuntime：select()/bind_tools() 返回自身，按序列返回预设 AIMessage。
+
+    工具轮为带原生 tool_calls 的 AIMessage，结论轮为普通文本（与 graph bind_tools 协议一致）。
+    """
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.last_reasoning = None
+        self.last_tools = None
+
+    def select(self, reasoning):
+        self.last_reasoning = reasoning
+        return self
+
+    def bind_tools(self, tools):
+        self.last_tools = tools
+        return self
 
     async def astream(self, messages):
         self.calls.append({"messages": list(messages)})
@@ -50,15 +64,21 @@ class FakeLlm:
 
 
 def make_dispatch(query="how are you", task_id="t-1", token="tok",
-                  suggestion_id="", conversation_id="", task_type="chat"):
+                  suggestion_id="", conversation_id="", task_type="chat",
+                  reasoning_enabled=True):
     return agent_pb2.ServerMessage(task_dispatch=agent_pb2.TaskDispatch(
         task_id=task_id, query=query, task_token=token, task_type=task_type,
-        suggestion_id=suggestion_id, conversation_id=conversation_id))
+        suggestion_id=suggestion_id, conversation_id=conversation_id,
+        reasoning_enabled=reasoning_enabled))
 
 
 def json_tool_msg(name, args=None):
-    """工具调用轮：AIMessage 输出 JSON 契约文本（由 _parse_tool_calls 解析）。"""
-    return AIMessage(content=json.dumps({"tool": name, "args": args or {}}, ensure_ascii=False))
+    """工具调用轮：AIMessage 带原生 tool_calls（bind_tools 协议，content 留空）。"""
+    return AIMessage(content="", tool_calls=[{
+        "id": f"call_{uuid.uuid4().hex[:8]}",
+        "name": name,
+        "args": args or {},
+    }])
 
 
 def make_tool(name="training_list", method="GET", path="/api/training/jobs",
@@ -108,11 +128,15 @@ async def test_handle_dispatch_loops_until_converged():
     task_id, ok, conclusion, _ = client.results[0]
     assert ok is True
     assert conclusion == "系统状态正常"
-    # LLM 被调 2 次，且第二次带上了工具结果回填（普通 system 消息，非 tool 角色）
+    # LLM 被调 2 次，且第二次带上了工具结果回填（原生 ToolMessage，role=tool + tool_call_id）
     assert len(llm.calls) == 2
     types = [m.type for m in llm.calls[1]["messages"]]
-    assert "system" in types
-    assert "tool" not in types  # 不使用 tool 角色消息（reasoner 兼容）
+    assert "tool" in types  # 原生 tool 角色消息
+    tool_msg = next(m for m in llm.calls[1]["messages"] if m.type == "tool")
+    assert tool_msg.tool_call_id.startswith("call_")
+    # 思考模式透传：默认 reasoning 开启，bind_tools 注入工具列表
+    assert llm.last_reasoning is True
+    assert llm.last_tools and any(t["function"]["name"] == "training_list" for t in llm.last_tools)
 
 
 @pytest.mark.asyncio
@@ -149,6 +173,12 @@ async def test_handle_dispatch_llm_error_marks_failed():
     client = FakeClient()
 
     class BoomLlm:
+        def select(self, reasoning):
+            return self
+
+        def bind_tools(self, tools):
+            return self
+
         async def astream(self, messages):
             raise RuntimeError("llm down")
             yield  # pragma: no cover - 使 astream 成为 async generator
@@ -169,7 +199,7 @@ def test_parse_suggestions_removed():
 
 @pytest.mark.asyncio
 async def test_handle_dispatch_conclusion_preserved():
-    """收敛后结论原样保留；建议不再经 TaskResult 回传（由 suggest_action 工具落库）。"""
+    """收敛后结论原样保留；建议不再经 TaskResult 回传（由 approve_* 审批工具落库）。"""
     client = FakeClient()
     registry = ToolRegistry()
     http = FakeHttp()
@@ -181,3 +211,19 @@ async def test_handle_dispatch_conclusion_preserved():
     assert ok is True
     assert conclusion == "一切正常，无需处置。"
     assert client.suggestion_bodies == []
+
+
+@pytest.mark.asyncio
+async def test_handle_dispatch_reasoning_disabled_selects_fast():
+    """前端关掉「深度思考」：LLMRuntime.select(False)（fast 模式）+ 推理链不回传不展示。"""
+    client = FakeClient()
+    registry = ToolRegistry()
+    registry.load([make_tool()])
+    http = FakeHttp()
+    llm = FakeLlm([AIMessage(content="快速回答")])
+
+    await core.handle_dispatch(client, registry, llm, http,
+                               make_dispatch(reasoning_enabled=False))
+
+    assert llm.last_reasoning is False  # fast 模式
+    assert client.results[0][2] == "快速回答"

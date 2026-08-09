@@ -11,17 +11,31 @@ from tests.test_agent_core import FakeClient, FakeHttp, make_tool, json_tool_msg
 
 
 class LoopLlm:
-    """永远返回工具调用 JSON（用于触发 recursion 上限）。"""
+    """永远返回工具调用（原生 tool_calls，用于触发 recursion 上限）。"""
+
+    def select(self, reasoning):
+        return self
+
+    def bind_tools(self, tools):
+        self._tools = tools
+        return self
 
     async def astream(self, messages):
         yield json_tool_msg("training_list")
 
 
 class StatelessLlm:
-    """无状态 LLM：上一条是工具结果回填（system）→ 收敛结论；否则继续调工具。"""
+    """无状态 LLM：上一条是工具结果回填（tool）→ 收敛结论；否则继续调工具。"""
+
+    def select(self, reasoning):
+        return self
+
+    def bind_tools(self, tools):
+        self._tools = tools
+        return self
 
     async def astream(self, messages):
-        if messages[-1].type == "system":
+        if messages[-1].type == "tool":
             yield AIMessage(content=f"完成（工具返回 {messages[-1].content}）")
         else:
             yield json_tool_msg("training_list")
@@ -43,7 +57,7 @@ def make_env(responses):
 
 @pytest.mark.asyncio
 async def test_graph_loops_multi_round_tool_calls():
-    """多轮工具调用：3 次 tool_call → 收敛，工具被调 3 次，结果以普通消息回填。"""
+    """多轮工具调用：3 次 tool_call → 收敛，工具被调 3 次，结果以原生 ToolMessage 回填。"""
     client = FakeClient()
     http = FakeHttp(body='{"items": [1]}')
 
@@ -56,18 +70,24 @@ async def test_graph_loops_multi_round_tool_calls():
                 AIMessage(content="查询完毕，共 3 页。"),
             ]
 
+        def select(self, reasoning):
+            return self
+
+        def bind_tools(self, tools):
+            return self
+
         async def astream(self, messages):
             yield self.responses.pop(0)
 
     registry = ToolRegistry()
     registry.load([make_tool()])
-    graph = build_graph(llm=SeqLlm(), http=http, registry=registry, client=client)
+    graph = build_graph(llm_runtime=SeqLlm(), http=http, registry=registry, client=client)
 
     final = await run_graph(graph, make_ctx(), initial_messages(), max_rounds=10)
 
     assert len(http.calls) == 3  # 工具执行 3 次
-    # 4 条 system：1 条初始 SystemMessage + 3 条工具结果回填（回填走普通 system 消息，非 tool 角色）
-    assert [m.type for m in final].count("system") == 4
+    # 3 条 tool 角色回填（原生 ToolMessage，非 system hack）
+    assert [m.type for m in final].count("tool") == 3
     assert final[-1].content == "查询完毕，共 3 页。"  # 收敛结论在末尾
     # 事件流：3 个 tool_call 事件
     assert [e[1] for e in client.events].count("tool_call") == 3
@@ -79,12 +99,12 @@ async def test_graph_recursion_limit_recovers():
     client = FakeClient()
     http = FakeHttp()
     registry, llm = make_env(LoopLlm())
-    graph = build_graph(llm=llm, http=http, registry=registry, client=client)
+    graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client)
 
     final = await run_graph(graph, make_ctx(), initial_messages(), max_rounds=3)
 
-    # 已产生工具调用与回填，至少一条 system 回填消息
-    assert any(m.type == "system" for m in final)
+    # 已产生工具调用与回填，至少一条 tool 回填消息
+    assert any(m.type == "tool" for m in final)
     assert len(http.calls) >= 1
 
 
@@ -96,7 +116,7 @@ async def test_graph_concurrent_tasks_isolated():
     registry = ToolRegistry()
     registry.load([make_tool()])
     # 无状态 LLM 共享（真实场景 ChatOpenAI 亦无状态）：每个任务各跑一轮工具
-    graph = build_graph(llm=StatelessLlm(), http=http, registry=registry, client=client)
+    graph = build_graph(llm_runtime=StatelessLlm(), http=http, registry=registry, client=client)
 
     msgs_a = [SystemMessage(content="s"), HumanMessage(content="A问题")]
     msgs_b = [SystemMessage(content="s"), HumanMessage(content="B问题")]

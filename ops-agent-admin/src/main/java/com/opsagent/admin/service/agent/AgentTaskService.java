@@ -94,7 +94,8 @@ public class AgentTaskService {
      */
     @Transactional
     public AgentTask dispatchChat(String conversationId, String query, String history,
-                                  String targetType, Long targetId, Long dispatchedBy) {
+                                  String targetType, Long targetId, Long dispatchedBy,
+                                  boolean reasoningEnabled) {
         String taskId = UUID.randomUUID().toString();
         AgentTask task = buildPending(taskId, "chat", conversationId, query);
         WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);
@@ -112,7 +113,8 @@ public class AgentTaskService {
                 .setQuery(query == null ? "" : query)
                 .setTaskToken(taskToken)
                 .setTargetType(targetType == null ? "" : targetType)
-                .setTargetId(targetId == null ? 0 : targetId);
+                .setTargetId(targetId == null ? 0 : targetId)
+                .setReasoningEnabled(reasoningEnabled);
         if (conversationId != null && !conversationId.isBlank()) {
             b.setConversationId(conversationId);
         }

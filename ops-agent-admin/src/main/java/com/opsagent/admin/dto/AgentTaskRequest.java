@@ -18,4 +18,7 @@ public class AgentTaskRequest {
     private Long targetId;
 
     private String query;
+
+    /** 前端「深度思考」开关（默认 true；仅 chat 任务生效） */
+    private Boolean reasoning = true;
 }

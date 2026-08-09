@@ -93,7 +93,8 @@ public class AgentConversationService {
      */
     @Transactional
     public Map<String, Object> send(String conversationId, Long userId, String query,
-                                    String taskType, String targetType, Long targetId) {
+                                    String taskType, String targetType, Long targetId,
+                                    boolean reasoningEnabled) {
         Conversation conv = requireOwned(conversationId, userId);
         String text = (query == null || query.isBlank()) ? "" : query.trim();
         if (text.isBlank() && targetId == null) {
@@ -118,7 +119,8 @@ public class AgentConversationService {
         }
 
         AgentTask task = taskService.dispatchChat(
-                conv.getConversationId(), text, history, targetType, targetId, userId);
+                conv.getConversationId(), text, history, targetType, targetId, userId,
+                reasoningEnabled);
         streamManager.bindTask(task.getTaskId(), conv.getConversationId());
 
         if (AgentTaskService.STATUS_FAILED.equals(task.getStatus())) {

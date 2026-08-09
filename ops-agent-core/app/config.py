@@ -13,9 +13,10 @@ class Config:
     ping_interval_s: float = 30.0
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    # 固定 deepseek-reasoner：输出含推理链(reasoning_content)，且不支持 tools/temperature 参数
-    # （工具走 prompt 注入 + JSON 契约，见 graph.py）；如需更换模型改此环境变量即可
-    deepseek_model: str = "deepseek-reasoner"
+    # deepseek-v4-flash：原生支持 thinking + function calling（bind_tools）。
+    # 思考模式按任务开关（TaskDispatch.reasoning_enabled），强度取 deepseek_reasoning_effort。
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_reasoning_effort: str = "max"  # thinking 强度：high | max（fast 非思考模式忽略）
     llm_timeout_s: float = 60.0
     max_tool_rounds: int = 10
     # agent 自治写库：直连 PostgreSQL（asyncpg），DDL 归 admin JPA
@@ -39,7 +40,8 @@ class Config:
             reconnect_max_s=float(os.getenv("AGENT_RECONNECT_MAX_S", "30.0")),
             deepseek_api_key=os.getenv("DEEPSEEK_API_KEY", ""),
             deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-reasoner"),
+            deepseek_model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            deepseek_reasoning_effort=os.getenv("DEEPSEEK_REASONING_EFFORT", "max"),
             llm_timeout_s=float(os.getenv("DEEPSEEK_TIMEOUT_S", "60")),
             max_tool_rounds=int(os.getenv("AGENT_MAX_TOOL_ROUNDS", "10")),
             database_url=os.getenv("DATABASE_URL", ""),

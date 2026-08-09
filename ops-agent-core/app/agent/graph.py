@@ -2,23 +2,23 @@
 
 StateGraph: START -> agent(LLM 决策) -> tools(执行工具) -> 有工具调用回 agent / 否则 END
 消息体系为 langchain BaseMessage + add_messages reducer（checkpoint 持久化原生兼容）；
-LLM 用 langchain_openai.ChatOpenAI，**不依赖原生 function calling** —— 工具清单以
-SystemMessage 注入 prompt，模型按「输出契约」返回 JSON 工具调用（deepseek-reasoner
-等不支持 tools 参数的推理模型也可用）；工具调用放 state.pending_tools 传递，
-回填 LLM 的消息流只含普通文本（避免 tool/tool_calls 消息导致 reasoner 类模型 400）。
+LLM 用 langchain_deepseek.ChatDeepSeek（deepseek-v4-flash），**原生 function calling**：
+工具列表经 bind_tools 注入（registry 只读工具 + plan_create/plan_update + approve_<写工具>
+审批工具；写工具本体不进 tools，模型无直接执行路径）；agent 按需流式调用，
+工具调用放 state.pending_tools 传递，工具结果以原生 ToolMessage 回填，
+assistant 消息保留 reasoning_content 原样回传（V4 带 tools 轮次硬要求，缺失 400）。
 
 任务上下文（TaskContext）放在 state：同一图实例可被多任务（不同 thread_id）并发 ainvoke。
 对外契约：调用方（core.handle_dispatch）仍收 TaskEvent / TaskResult；
-agent 节点流式产出（astream）：推理链增量发 thinking、正文增量发 delta（工具 JSON 不展示，
-收尾按是否解析出工具调用分流），聚合推理链挂最终 AIMessage.additional_kwargs["reasoning_content"]。
+agent 节点流式产出（astream）：推理链增量发 thinking、正文增量发 delta（工具轮 content 不展示），
+聚合推理链挂最终 AIMessage.additional_kwargs["reasoning_content"]（落库/回传复用）。
 """
 import json
 import logging
-import re
 import uuid
 from typing import Annotated, Any, Literal, Optional, TypedDict
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
@@ -92,13 +92,10 @@ async def _maybe_register_tracker(tracker: Any, store: Any, ctx: TaskContext,
         action_type=tool.name, target_status="SUCCEEDED")
 
 
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
-
-
 class AgentState(TypedDict):
     messages: Annotated[list[Any], add_messages]
     ctx: TaskContext
-    pending_tools: Optional[list[dict]]  # 本轮的待执行工具调用（JSON 契约解析结果）
+    pending_tools: Optional[list[dict]]  # 本轮的待执行工具调用（原生 tool_calls: [{id,name,args}]）
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -119,39 +116,13 @@ def _chunk_text(chunk: Any) -> str:
 
 
 def _chunk_reasoning(chunk: Any) -> str:
-    """取 chunk 上的推理链增量（DeepSeek reasoner：additional_kwargs 或 response_metadata）。"""
+    """取 chunk 上的推理链增量（DeepSeek V4：additional_kwargs 或 response_metadata）。"""
     for src in (getattr(chunk, "additional_kwargs", None) or {},
                 getattr(chunk, "response_metadata", None) or {}):
         rc = src.get("reasoning_content") or src.get("reasoning")
         if rc:
             return rc if isinstance(rc, str) else str(rc)
     return ""
-
-
-def _looks_like_json(text: str) -> bool:
-    """判断流式累积文本是否以 JSON 起始（工具调用轮的特征开头）。"""
-    t = text.lstrip()
-    return t.startswith(("{", "[", "```"))
-
-
-def _strip_reasoning(messages: list[Any]) -> list[Any]:
-    """剥离 assistant 消息的 additional_kwargs 再传给 LLM。
-
-    DeepSeek reasoner 约定：messages 里带 reasoning_content 会直接 400（禁止把上一轮的
-    推理链回传）；我们的聚合推理链挂在 additional_kwargs["reasoning_content"]，必须移除。
-    深拷贝避免污染 checkpoint 中的消息（最终结论仍可从 additional_kwargs 提取）。
-    """
-    out: list[Any] = []
-    for m in messages:
-        kw = getattr(m, "additional_kwargs", None)
-        if kw and (kw.get("reasoning_content") or kw.get("_is_tool_round")):
-            m2 = m.model_copy(deep=True)
-            m2.additional_kwargs.pop("reasoning_content", None)
-            m2.additional_kwargs.pop("_is_tool_round", None)
-            out.append(m2)
-        else:
-            out.append(m)
-    return out
 
 
 class EventBatcher:
@@ -185,111 +156,146 @@ class EventBatcher:
             await self.client.send_event(self.task_id, k, text)
 
 
-def _parse_tool_calls(content: str) -> list[dict]:
-    """从模型输出解析工具调用（每次仅一个）：{"tool":..,"args":..}。
+def _openai_function(name: str, description: str, parameters: dict) -> dict:
+    """构造 OpenAI function calling 格式的工具条目。"""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
 
-    只认含 tool 键的 JSON（与最终回答天然区分）；
-    返回 [{name, args, id}]，供 tools_node 执行；解析失败返回空（视为最终回答）。
+
+def approve_tool_name(write_tool_name: str) -> str:
+    """写工具名 -> 审批工具名：training_create -> approve_training_create。"""
+    return f"approve_{write_tool_name}"
+
+
+def action_type_from_approve(name: str) -> str:
+    """审批工具名 -> 写工具名（action_type）：approve_training_create -> training_create。"""
+    return name[len("approve_"):] if name.startswith("approve_") else name
+
+
+# 内置工具（本地 handler 直写库）的 OpenAI function schema
+BUILTIN_TOOL_SCHEMAS: dict[str, dict] = {
+    "plan_create": _openai_function(
+        "plan_create",
+        "记录多步骤任务的执行计划（步骤清单与顺序）。只建立规划记录，不产生任何审批建议。"
+        "任务包含多个步骤（如「训练并部署」）时先调用本工具。",
+        {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string", "description": "计划摘要，如 训练并部署 LSTM 模型"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action_type": {"type": "string", "description": "写操作名，如 training_create/serving_deploy"},
+                            "target_type": {"type": "string"},
+                            "target_id": {"type": "integer", "description": "目标 ID；暂未知填 0"},
+                            "params": {"type": "object", "description": "业务参数（可选）"},
+                            "reason": {"type": "string"},
+                            "priority": {"type": "string", "enum": ["HIGH", "NORMAL", "LOW"]},
+                        },
+                        "required": ["action_type"],
+                    },
+                },
+            },
+            "required": ["summary", "steps"],
+        },
+    ),
+    "plan_update": _openai_function(
+        "plan_update",
+        "更新计划状态：可更新计划整体状态（DONE/FAILED/CANCELLED），"
+        "或计划中某一步骤的状态（done/failed/cancelled，附说明）。",
+        {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "plan_create 返回的 plan_id"},
+                "step_no": {"type": "integer", "description": "要更新的步骤号（可选）"},
+                "step_status": {"type": "string", "enum": ["done", "failed", "cancelled"],
+                                "description": "步骤状态（与 step_no 一起用）"},
+                "status": {"type": "string", "enum": ["DONE", "FAILED", "CANCELLED"],
+                           "description": "plan 整体状态（不传 step_no 时用）"},
+                "note": {"type": "string", "description": "变更说明（展示给用户）"},
+            },
+            "required": ["plan_id"],
+        },
+    ),
+}
+
+# 追加到每个 approve_<写工具> 的审批上下文参数（plan 步骤推进 / 决策轮重试）
+_APPROVE_EXTRA_PROPERTIES: dict[str, dict] = {
+    "plan_id": {"type": "string", "description": "所属计划 plan_id（可选，plan 步骤推进时填）"},
+    "step_no": {"type": "integer", "description": "计划内步骤号（可选）"},
+    "retry_of": {"type": "string", "description": "重试某条已失败建议的 suggestion_id（可选）"},
+}
+
+
+def _build_approve_schema(write_tool: agent_pb2.ToolSchema) -> dict:
+    """写工具 -> approve_<写工具> 审批工具 schema。
+
+    parameters 复用写工具本体 schema（模型填业务参数零转换），
+    追加 plan_id/step_no/retry_of 审批上下文参数；描述声明只落审批建议不直接执行。
     """
-    candidates: list[str] = []
-    for m in _JSON_BLOCK_RE.finditer(content or ""):
-        candidates.append(m.group(1))
-    stripped = (content or "").strip()
-    if not candidates and stripped.startswith(("{", "[")):
-        candidates.append(stripped)
-    for raw in candidates:
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(data, dict) or not data.get("tool"):
-            continue
-        args = data.get("args") or data.get("arguments") or {}
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-        if not isinstance(args, dict):
-            args = {}
-        return [{
-            "name": str(data["tool"]),
-            "args": args,
-            "id": f"call_{uuid.uuid4().hex[:8]}",
-        }]
-    return []
+    try:
+        params = json.loads(write_tool.parameters or "{}")
+    except json.JSONDecodeError:
+        params = {"type": "object", "properties": {}}
+    props = dict(params.get("properties") or {})
+    props.update(_APPROVE_EXTRA_PROPERTIES)
+    merged = {
+        "type": "object",
+        "properties": props,
+        "required": params.get("required") or [],
+    }
+    name = approve_tool_name(write_tool.name)
+    return _openai_function(
+        name,
+        f"提出「{write_tool.description}」的处置建议（不直接执行）："
+        f"填写操作参数后生成待审批建议，经人工确认后由系统自动执行。",
+        merged,
+    )
 
 
-def build_tool_prompt(registry: ToolRegistry) -> str:
-    """把注册表工具清单 + 内置工具 + 输出契约注入 system prompt（每轮重建，注册表更新即生效）。"""
-    lines = [
-        "你可以调用以下工具查询系统真实状态：",
-        "",
-    ]
-    for t in registry.all():  # ToolSchema proto 对象：name/description/parameters/is_write
-        lines.append(f"- {t.name}: {t.description}")
-        if t.parameters:
-            lines.append(f"  参数(JSON Schema): {t.parameters}")
+def build_openai_tools(registry: ToolRegistry) -> list[dict]:
+    """bind_tools 用的完整工具列表（每轮按注册表重建，更新即生效）。
+
+    = registry 只读工具（is_write 过滤，模型可直接调用查询真实状态）
+    + plan_create / plan_update（本地 handler）
+    + approve_<写工具>（每个写操作一个审批工具；写工具本体**不进 tools**，模型无执行路径）
+    """
+    tools: list[dict] = []
+    for t in registry.all():
         if t.is_write:
-            lines.append("  ⚠ 写工具：决策循环不可调用；写操作经 suggest_action 审批后由系统执行")
-    lines += [
-        "",
-        "- plan_create: 记录多步骤任务的执行计划（步骤清单与顺序）。只建立规划记录，不产生任何审批建议",
-        '  参数(JSON Schema): {"type":"object","properties":{"summary":{"type":"string",'
-        '"description":"计划摘要，如 训练并部署 LSTM 模型"},"steps":{"type":"array","items":{"type":"object",'
-        '"properties":{"action_type":{"type":"string","description":"写工具名，如 training_create/serving_deploy"},'
-        '"target_type":{"type":"string"},"target_id":{"type":"integer","description":"目标 ID；暂未知填 0"},'
-        '"params":{"type":"object","description":"业务参数（可选）"},"reason":{"type":"string"},'
-        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]}},'
-        '"required":["action_type"]}}},"required":["summary","steps"]}',
-        "",
-        "- plan_update: 更新计划状态：可更新计划整体状态（DONE/FAILED/CANCELLED），"
-        "或计划中某一步骤的状态（done/failed/cancelled，附说明）",
-        '  参数(JSON Schema): {"type":"object","properties":{"plan_id":{"type":"string","description":"plan_create 返回的 plan_id"},'
-        '"step_no":{"type":"integer","description":"要更新的步骤号（可选）"},"step_status":{"type":"string","enum":["done","failed","cancelled"],'
-        '"description":"步骤状态（与 step_no 一起用）"},"status":{"type":"string","enum":["DONE","FAILED","CANCELLED"],'
-        '"description":"plan 整体状态（不传 step_no 时用）"},"note":{"type":"string","description":"变更说明（展示给用户）"}},'
-        '"required":["plan_id"]}',
-        "",
-        "- suggest_action: 提出一条写操作处置建议（系统生成待审批建议，审批通过后自动执行）",
-        '  参数(JSON Schema): {"type":"object","properties":{"action_type":{"type":"string",'
-        '"description":"写工具名，如 training_create/serving_deploy/training_delete/serving_undeploy/dataset_collect"},'
-        '"target_type":{"type":"string"},"target_id":{"type":"integer"},'
-        '"params":{"type":"object","description":"业务参数（可选）"},"reason":{"type":"string"},'
-        '"priority":{"type":"string","enum":["HIGH","NORMAL","LOW"]},'
-        '"plan_id":{"type":"string","description":"所属计划（可选）"},"step_no":{"type":"integer","description":"计划内步骤号（可选）"},'
-        '"retry_of":{"type":"string","description":"重试某条已失败建议的 suggestion_id（可选）"}},'
-        '"required":["action_type"]}',
-        "",
-        "【输出契约】",
-        "1. 需要查询/执行时，只输出一个 JSON 代码块（不要包含其他内容），每次只调用一个工具。",
-        "   示例（查询训练任务详情）：",
-        "   ```json",
-        '   {"tool": "training_get", "args": {"jobId": 32}}',
-        "   ```",
-        "2. 工具名必须严格取自上面清单，args 必须符合对应参数 schema；会话/任务等系统参数无需填写。",
-        "3. 多步规划（调用 plan_create）示例：",
-        "   ```json",
-        '   {"tool": "plan_create", "args": {"summary": "训练并部署 LSTM 模型", "steps": [',
-        '     {"action_type": "training_create", "target_type": "dataset", "target_id": 96, "reason": "训练新模型", "priority": "HIGH"},',
-        '     {"action_type": "serving_deploy", "target_type": "model_version", "target_id": 0, "reason": "部署训练产出模型", "priority": "HIGH"}]}}',
-        "   ```",
-        "4. 当所需信息已获取、无需再调用工具时，直接输出最终回答（markdown），不要输出 JSON。",
-        "5. 回答中的数据必须来自工具返回结果，严禁编造。",
-    ]
-    return "\n".join(lines)
+            tools.append(_build_approve_schema(t))
+        else:
+            try:
+                params = json.loads(t.parameters or "{}")
+            except json.JSONDecodeError:
+                params = {"type": "object", "properties": {}}
+            tools.append(_openai_function(t.name, t.description, params))
+    tools.append(BUILTIN_TOOL_SCHEMAS["plan_create"])
+    tools.append(BUILTIN_TOOL_SCHEMAS["plan_update"])
+    return tools
 
 
-async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dict:
-    """suggest_action 内置工具：落一条 PENDING 写操作建议（系统参数注入）。
+async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
+                                action_type: str = "") -> dict:
+    """落一条 PENDING 写操作建议（系统参数注入）。
 
-    LLM 只填业务参数（action_type/target/params/reason/priority）；
-    conversation_id/source_task_id 由本层注入；可挂 plan_id + step_no（plan 的步骤建议）
-    与 retry_of（决策轮重试）。"""
+    LLM 只填业务参数；conversation_id/source_task_id 由本层注入；
+    可挂 plan_id + step_no（plan 的步骤建议）与 retry_of（决策轮重试）。
+    action_type 由审批工具名推导（approve_training_create -> training_create），
+    兼容旧调用从 args 读。
+    """
     if store is None or not store.enabled:
         log.warning("suggest_action unavailable: agent DB disabled")
         return {"status": 500, "body": "suggest_action unavailable (agent DB disabled)"}
-    action = str(args.get("action_type", ""))
+    action = action_type or str(args.get("action_type", ""))
     if not action:
         return {"status": 400, "body": "action_type is required"}
     try:
@@ -317,7 +323,7 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict) -> dic
 async def handle_plan_create(store: Any, ctx: TaskContext, args: dict) -> dict:
     """plan_create 内置工具：只建规划备忘录（summary + steps 清单），零建议副作用。
 
-    步骤审批由模型后续逐步用 suggest_action(plan_id, step_no) 提出；
+    步骤审批由模型后续逐步用 approve_<写操作名>(plan_id, step_no) 提出；
     conversation_id 由本层注入，steps 补 step_no/status 后存 plan.steps（模型掌舵状态）。
     """
     if store is None or not store.enabled:
@@ -345,7 +351,8 @@ async def handle_plan_create(store: Any, ctx: TaskContext, args: dict) -> dict:
     body = json.dumps({
         "plan_id": plan_id,
         "steps": len(steps),
-        "instruction": f"规划已建立（{len(steps)} 个步骤）。步骤按顺序处理：用 suggest_action(plan_id={plan_id}, step_no=N) 逐步提出审批建议，上一步完成后再提下一步。",
+        "instruction": f"规划已建立（{len(steps)} 个步骤）。步骤按顺序处理："
+                       f"用 approve_<写操作名>(plan_id={plan_id}, step_no=N) 逐步提出审批建议，上一步完成后再提下一步。",
     }, ensure_ascii=False)
     log.info("plan created: %s steps=%d", plan_id[:8], len(steps))
     return {"status": 200, "body": body}
@@ -399,30 +406,29 @@ async def handle_plan_update(store: Any, ctx: TaskContext, args: dict,
         {"plan_id": plan_id, "status": plan_status}, ensure_ascii=False)}
 
 
-def build_graph(llm: Any, http: AdminHttpClient,
+def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient,
                 tracker: Any = None, store: Any = None) -> Any:
-    """构建并编译决策图。llm/http/registry/client/tracker/store 为进程级共享实例（闭包），ctx 走 state。
-    tracker/store 不进 state（msgpack 不可序列化），写工具成功回调用 tracker 注册异步跟踪。"""
+    """构建并编译决策图。llm_runtime/http/registry/client/tracker/store 为进程级共享实例（闭包），ctx 走 state。
+    tracker/store 不进 state（msgpack 不可序列化），只读工具成功回调用 tracker 注册异步跟踪。"""
 
     # plan_update 的变更通知：tracker.notify_plan 仅做 plan_update 上报（状态已由 handler 落库）
     tracker_notify = getattr(tracker, "notify_plan", None)
 
     async def agent_node(state: AgentState) -> dict[str, Any]:
-        """决策节点：工具清单注入 prompt 后流式调用 LLM。
+        """决策节点：bind_tools 注入原生工具后流式调用 LLM。
 
-        流式策略：推理链增量实时发 thinking；正文增量先缓存，按前缀判断是否工具 JSON ——
-        JSON（工具调用轮）不展示给用户，最终解析出工具调用则走 tools；否则是最终回答，
-        把缓存正文作为 delta 补发（避免用户看到裸 JSON）。
+        流式策略：推理链增量实时发 thinking；正文增量实时发 delta（工具轮 content 通常为空，
+        出现 tool_call_chunks 即视为工具轮，不再展示正文）；收尾按 merged.tool_calls 分流。
+        assistant 消息保留 reasoning_content 原样回传（V4 带 tools 轮次硬要求，缺失 400）。
         事件经 EventBatcher 聚合（40 字符 flush）降低帧数。
         """
         ctx: TaskContext = state["ctx"]
-        # 关键：剥离上一轮挂的推理链（reasoner 禁止回传 reasoning_content，否则 400）
-        messages = [SystemMessage(content=build_tool_prompt(registry)), *_strip_reasoning(state["messages"])]
+        llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools(build_openai_tools(registry))
+        messages = list(state["messages"])
         chunks: list[Any] = []
         reasoning_parts: list[str] = []
-        pending = ""
-        json_mode: Optional[bool] = None  # None=未判定 / True=工具JSON / False=正文
+        saw_tool_chunks = False
         batcher = EventBatcher(client, ctx.task_id)
         async for chunk in llm.astream(messages):
             chunks.append(chunk)
@@ -430,20 +436,10 @@ def build_graph(llm: Any, http: AdminHttpClient,
             if rc:
                 reasoning_parts.append(rc)
                 await batcher.add("thinking", rc)
+            if getattr(chunk, "tool_call_chunks", None):
+                saw_tool_chunks = True
             text = _chunk_text(chunk)
-            if not text:
-                continue
-            if json_mode is None:
-                pending += text
-                if _looks_like_json(pending):
-                    json_mode = True
-                elif len(pending) > 8:
-                    json_mode = False
-                    await batcher.add("delta", pending)
-                    pending = ""
-            elif json_mode:
-                pending += text
-            else:
+            if text and not saw_tool_chunks:
                 await batcher.add("delta", text)
         await batcher.flush()  # 收尾：把残余增量发完
         if not chunks:
@@ -451,57 +447,61 @@ def build_graph(llm: Any, http: AdminHttpClient,
         merged = chunks[0]
         for c in chunks[1:]:
             merged = merged + c
-        # 聚合推理链全文挂到 additional_kwargs，供 TaskResult.reasoning 落库/展示
+        # 聚合推理链全文挂到 additional_kwargs，供 TaskResult.reasoning 落库/展示 + 下轮原样回传
         if reasoning_parts:
             merged.additional_kwargs["reasoning_content"] = "".join(reasoning_parts)
 
-        content = _chunk_text(merged)
-        if json_mode is not False:
-            tools = _parse_tool_calls(content)
-            if tools:
-                merged.additional_kwargs["_is_tool_round"] = True  # 结论提取时跳过工具 JSON 轮
-                return {"messages": [merged], "pending_tools": tools}
-            # 以 JSON 起始但解析不出工具调用（如给用户看的代码示例）→ 兜底当正文补发
-            if pending:
-                await client.send_event(ctx.task_id, "delta", pending)
+        tool_calls = getattr(merged, "tool_calls", None) or []
+        if tool_calls:
+            # 原生 tool_calls: [{id, name, args}] -> pending_tools（tools_node 执行）
+            pending = [{
+                "id": tc.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                "name": tc.get("name") or "",
+                "args": tc.get("args") or {},
+            } for tc in tool_calls if tc.get("name")]
+            return {"messages": [merged], "pending_tools": pending}
         return {"messages": [merged], "pending_tools": []}
 
     async def tools_node(state: AgentState) -> dict[str, Any]:
-        """工具节点：执行 pending_tools，结果以普通文本消息回填（不产生 tool 角色消息，
-        保证 reasoner 等不支持 function calling 的模型多轮兼容）。
-        内置工具（plan_create）走本地 handler（直写库），其余走 admin HTTP。"""
+        """工具节点：执行 pending_tools，结果以原生 ToolMessage 回填（role=tool, tool_call_id 关联）。
+
+        分发：plan_create/plan_update 走本地 handler；approve_<写工具> 走审批落库
+        （只生成 PENDING 建议，模型永远无法直接执行写操作）；其余只读工具走 admin HTTP。
+        """
         ctx: TaskContext = state["ctx"]
         tool_msgs: list[Any] = []
         for tc in (state.get("pending_tools") or []):
             name = tc["name"]
             args = tc.get("args") or {}
+            call_id = tc.get("id") or ""
             await client.send_event(ctx.task_id, "tool_call",
                                     json.dumps({"name": name, "args": args}, ensure_ascii=False))
-            tool = registry.get(name)
-            if name in ("plan_create", "plan_update", "suggest_action"):
-                # 内置工具：worker 本地执行（建 plan / 更新 plan / 落 PENDING 建议）
-                if store is not None and store.enabled:
-                    if name == "plan_create":
-                        result = await handle_plan_create(store, ctx, args)
-                    elif name == "plan_update":
-                        result = await handle_plan_update(store, ctx, args, notify=tracker_notify)
-                    else:
-                        result = await handle_suggest_action(store, ctx, args)
-                else:
-                    result = {"status": 500, "body": f"{name} unavailable (agent DB disabled)"}
-            elif tool is None:
-                result = {"status": 0, "body": f"unknown tool: {name}"}
+            if name == "plan_create":
+                result = await handle_plan_create(store, ctx, args) if store is not None else {
+                    "status": 500, "body": "plan_create unavailable (agent DB disabled)"}
+            elif name == "plan_update":
+                result = await handle_plan_update(store, ctx, args, notify=tracker_notify) \
+                    if store is not None else {"status": 500,
+                                               "body": "plan_update unavailable (agent DB disabled)"}
+            elif name.startswith("approve_"):
+                # 审批工具：落 PENDING 建议，action_type 由工具名推导（写工具本体绝不在本节点执行）
+                result = await handle_suggest_action(store, ctx, args,
+                                                     action_type=action_type_from_approve(name)) \
+                    if store is not None else {"status": 500,
+                                               "body": f"{name} unavailable (agent DB disabled)"}
             else:
-                result = await http.call(tool, args, ctx)
-            # 异步写操作成功后注册跟踪（训练/部署完成后按 Plan 推进下一步）
-            await _maybe_register_tracker(tracker, store, ctx, tool, result)
+                tool = registry.get(name)
+                if tool is None:
+                    result = {"status": 0, "body": f"unknown tool: {name}"}
+                else:
+                    result = await http.call(tool, args, ctx)
+                    await _maybe_register_tracker(tracker, store, ctx, tool, result)
             body = result.get("body") if isinstance(result, dict) else result
             summary = str(body)[:500] if body is not None else ""
             await client.send_event(ctx.task_id, "tool_result",
                                     json.dumps({"name": name, "summary": summary}, ensure_ascii=False))
-            tool_msgs.append(SystemMessage(
-                content=f"工具 [{name}] 返回结果（仅供你分析，无需向用户复述原始 JSON，"
-                        f"除非必要不要重复调用同一工具）：\n{json.dumps(result, ensure_ascii=False)}"))
+            tool_msgs.append(ToolMessage(
+                content=json.dumps(result, ensure_ascii=False), tool_call_id=call_id))
         return {"messages": tool_msgs, "pending_tools": []}
 
     def should_continue(state: AgentState) -> Literal["tools", "__end__"]:

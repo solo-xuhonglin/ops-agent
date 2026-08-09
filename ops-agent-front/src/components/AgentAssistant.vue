@@ -208,6 +208,17 @@
 
         <!-- 底部输入框：流式中禁用并显示停止 -->
         <div class="pa-3">
+          <div class="d-flex align-center mb-1 px-1">
+            <v-icon size="14" color="primary" class="mr-1">mdi-brain</v-icon>
+            <span class="text-body-small font-weight-medium mr-2">深度思考</span>
+            <v-switch v-model="store.reasoningEnabled" hide-details density="compact"
+                       inset color="primary"
+                       @update:model-value="persistReasoning" />
+            <v-spacer />
+            <span class="text-caption text-medium-emphasis">
+              {{ store.reasoningEnabled ? '推理链 + 工具调用' : '快速回答' }}
+            </span>
+          </div>
           <div v-if="store.pendingSuggestions.length" class="mb-2">
             <v-card v-for="s in store.pendingSuggestions.slice(0, 2)" :key="s.id"
                     class="mb-1 suggestion-card" variant="outlined">
@@ -368,6 +379,11 @@ onUnmounted(() => store.stopStream())
 
 function newChat() {
   store.createConversation()
+}
+
+// 「深度思考」开关持久化：仅影响后续发送（历史消息渲染不变）
+function persistReasoning(v) {
+  localStorage.setItem('agentReasoning', v ? 'on' : 'off')
 }
 
 function removeConversation(c) {

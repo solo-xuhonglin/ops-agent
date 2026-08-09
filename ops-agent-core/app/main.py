@@ -31,19 +31,52 @@ AGENTS = [
 active_tasks: dict[str, asyncio.Task] = {}
 
 
+class LLMRuntime:
+    """按任务开关选择 thinking/fast LLM 实例（deepseek-v4-flash）。
+
+    thinking 版：model_kwargs 注入 thinking enabled + reasoning_effort（推理链经
+    additional_kwargs 透出，供 graph 流式发 thinking 事件）；
+    fast 版：thinking disabled（无推理链，省 token，temperature 等采样参数恢复可用）。
+    懒加载双实例；改配置（model/effort）时重建并替换内部引用，进程无需重启。
+    """
+
+    def __init__(self, cfg: Config) -> None:
+        self._cfg = cfg
+        self._llms: dict[bool, Any] = {}
+
+    def select(self, reasoning: bool) -> Any:
+        """返回对应思考模式的 ChatDeepSeek 实例（懒加载）。"""
+        llm = self._llms.get(reasoning)
+        if llm is None:
+            llm = self._build(reasoning)
+            self._llms[reasoning] = llm
+            log.info("llm runtime built: model=%s reasoning=%s", self._cfg.deepseek_model, reasoning)
+        return llm
+
+    def _build(self, reasoning: bool) -> Any:
+        if reasoning:
+            model_kwargs = {
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": self._cfg.deepseek_reasoning_effort,
+            }
+        else:
+            model_kwargs = {"thinking": {"type": "disabled"}}
+        return ChatDeepSeek(
+            base_url=self._cfg.deepseek_base_url,
+            api_key=self._cfg.deepseek_api_key,
+            model=self._cfg.deepseek_model,
+            timeout=self._cfg.llm_timeout_s,
+            model_kwargs=model_kwargs,
+        )
+
+
 async def amain() -> None:
     cfg = Config.from_env()
     client = GrpcClient(cfg, AGENTS)
 
     registry = ToolRegistry()
-    # deepseek-reasoner 专用（langchain-deepseek 官方封装）：流式透出推理链
-    # reasoning_content（ChatOpenAI 不提取第三方扩展字段），不支持 temperature/tools 参数
-    llm = ChatDeepSeek(
-        base_url=cfg.deepseek_base_url,
-        api_key=cfg.deepseek_api_key,
-        model=cfg.deepseek_model,
-        timeout=cfg.llm_timeout_s,
-    )
+    # deepseek-v4-flash 原生 function calling：LLMRuntime 按任务开关选 thinking/fast 实例
+    llm = LLMRuntime(cfg)
     http = AdminHttpClient(cfg.admin_http_base, cfg.worker_id)
     if not cfg.deepseek_api_key:
         log.warning("DEEPSEEK_API_KEY not set; tool calls will fail until configured")

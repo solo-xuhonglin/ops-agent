@@ -35,7 +35,8 @@ export const useAgentStore = defineStore('agent', {
     activePlan: null,              // 活跃 plan（含 steps）
     _streamTimer: null,            // 节流定时器
     loading: false,
-    error: null
+    error: null,
+    reasoningEnabled: localStorage.getItem('agentReasoning') !== 'off'  // 「深度思考」开关（默认开，持久化）
   }),
   getters: {
     pendingSuggestions: (s) => s.suggestions.filter((x) => x.status === 'PENDING')
@@ -150,7 +151,7 @@ export const useAgentStore = defineStore('agent', {
         await this.createConversation()
       }
       const text = query.trim()
-      const payload = { query: text, taskType, targetType, targetId }
+      const payload = { query: text, taskType, targetType, targetId, reasoning: this.reasoningEnabled }
 
       // 本地先行渲染 user 消息（乐观更新）：诊断入口（无 query）显示目标描述兜底
       const localText = text || (targetType ? `诊断 ${targetType}#${targetId}` : '')

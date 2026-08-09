@@ -15,4 +15,7 @@ public class AgentMessageRequest {
     private String targetType;
 
     private Long targetId;
+
+    /** 前端「深度思考」开关（默认 true=thinking 模式；false=fast 非思考） */
+    private Boolean reasoning = true;
 }
