@@ -43,6 +43,12 @@ WRITE_TRACK_MAP: dict[str, tuple[str, str, str]] = {
 WAIT_POLL_INTERVAL_S = 4.0
 WAIT_MAX_CONSECUTIVE_FAILS = 3
 WAIT_TERMINAL_STATUSES = {"FAILED", "CANCELLED", "STOPPED"}
+# wait_until 的 query_tool → 对象 ID 参数名（admin 查询 API 的 path 模板变量）
+QUERY_TOOL_ID_ARG: dict[str, str] = {
+    "training_get": "jobId",
+    "serving_get": "endpointId",
+    "dataset_get": "datasetId",
+}
 
 
 def _extract_object_id(body: Any) -> Optional[int]:
@@ -241,9 +247,8 @@ BUILTIN_TOOL_SCHEMAS: dict[str, dict] = {
             "properties": {
                 "query_tool": {"type": "string", "enum": ["training_get", "serving_get", "dataset_get"],
                                "description": "要等待的只读查询工具名"},
-                "jobId": {"type": "integer", "description": "训练任务 ID（query_tool=training_get 时）"},
-                "endpointId": {"type": "integer", "description": "服务端点 ID（query_tool=serving_get 时）"},
-                "datasetId": {"type": "integer", "description": "数据集 ID（query_tool=dataset_get 时）"},
+                "object_id": {"type": "integer",
+                              "description": "要等待的对象 ID（训练任务 jobId / 服务端点 endpointId / 数据集 datasetId，由 query_tool 决定）"},
                 "wait_seconds": {"type": "integer", "minimum": 1, "maximum": 120, "default": 60,
                                  "description": "最多等待秒数；超时返回当前状态并标记仍在进行中"},
                 "target_status": {"type": "string", "description": "期望状态（可选），如 SUCCEEDED；不填则等任意变化"},
@@ -525,10 +530,12 @@ async def handle_wait_until(registry: Any, http: AdminHttpClient, client: GrpcCl
     tool = registry.get(query_tool) if registry is not None else None
     if tool is None:
         return {"status": 0, "body": f"unknown query_tool: {query_tool}"}
-    id_arg = next((k for k in ("jobId", "endpointId", "datasetId") if args.get(k)), None)
-    if id_arg is None:
-        return {"status": 400, "body": "one of jobId/endpointId/datasetId is required"}
-    query_args = {id_arg: int(args[id_arg])}
+    id_arg = QUERY_TOOL_ID_ARG.get(query_tool)
+    object_id = args.get("object_id")
+    if id_arg is None or object_id is None:
+        return {"status": 400,
+                "body": f"object_id is required for {query_tool} (e.g. jobId/endpointId/datasetId)"}
+    query_args = {id_arg: int(object_id)}
     raw_wait = args.get("wait_seconds")
     wait_seconds = max(0, min(int(raw_wait if raw_wait is not None else 60), 120))
     target_status = str(args.get("target_status", "")).upper()

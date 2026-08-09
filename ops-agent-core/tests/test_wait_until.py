@@ -71,7 +71,7 @@ async def test_wait_until_returns_on_target_status():
     client = FakeClient()
     reg = FakeRegistry([FakeTool("training_get")])
     result = await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "training_get", "jobId": 32, "wait_seconds": 30,
+        "query_tool": "training_get", "object_id": 32, "wait_seconds": 30,
         "target_status": "SUCCEEDED"})
     assert len(http.calls) == 1
     assert http.calls[0] == ("training_get", {"jobId": 32})
@@ -87,7 +87,7 @@ async def test_wait_until_returns_on_terminal_failure():
     client = FakeClient()
     reg = FakeRegistry([FakeTool("training_get")])
     result = await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "training_get", "jobId": 32, "wait_seconds": 30,
+        "query_tool": "training_get", "object_id": 32, "wait_seconds": 30,
         "target_status": "SUCCEEDED"})
     assert len(http.calls) == 1
     payload = json.loads(result["body"])
@@ -105,7 +105,7 @@ async def test_wait_until_returns_on_updated_at_change():
     client = FakeClient()
     reg = FakeRegistry([FakeTool("training_get")])
     result = await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "training_get", "jobId": 32, "wait_seconds": 30})
+        "query_tool": "training_get", "object_id": 32, "wait_seconds": 30})
     assert len(http.calls) == 2
     payload = json.loads(result["body"])
     assert payload["updated_at"] == "12"
@@ -119,7 +119,7 @@ async def test_wait_until_timeout_returns_still_in_progress():
     client = FakeClient()
     reg = FakeRegistry([FakeTool("training_get")])
     result = await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "training_get", "jobId": 32, "wait_seconds": 0})
+        "query_tool": "training_get", "object_id": 32, "wait_seconds": 0})
     assert len(http.calls) == 1
     payload = json.loads(result["body"])
     assert payload["status"] == "RUNNING"
@@ -136,7 +136,7 @@ async def test_wait_until_sends_progress_events():
     client = FakeClient()
     reg = FakeRegistry([FakeTool("training_get")])
     await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "training_get", "jobId": 32, "wait_seconds": 30,
+        "query_tool": "training_get", "object_id": 32, "wait_seconds": 30,
         "target_status": "SUCCEEDED"})
     progress = [e for e in client.events if e[1] == "progress"]
     assert progress
@@ -150,6 +150,6 @@ async def test_wait_until_unknown_tool():
     client = FakeClient()
     reg = FakeRegistry([])
     result = await handle_wait_until(reg, http, client, ctx(), {
-        "query_tool": "nope", "jobId": 1, "wait_seconds": 30})
+        "query_tool": "nope", "object_id": 1, "wait_seconds": 30})
     assert http.calls == []
     assert "unknown" in result["body"]
