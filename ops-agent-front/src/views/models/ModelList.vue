@@ -142,7 +142,7 @@ const canTrain = computed(() => auth.hasPerm('training:write'))
 const canAgent = computed(() => auth.hasPerm('agent:read'))
 
 function analyze(item) {
-  agentStore.dispatchDiagnose({ taskType: 'model_review', targetType: 'model_version', targetId: item.id })
+  agentStore.dispatch({ taskType: 'model_review', targetType: 'model_version', targetId: item.id })
 }
 
 const headers = [

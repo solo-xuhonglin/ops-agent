@@ -1,15 +1,98 @@
-// AI Agent 管理面 API（人用）：任务派发/查看、处置建议确认/忽略
+// AI Agent 管理面 API（人用）：多轮会话 CRUD/发消息/SSE 流式、任务查看、处置建议确认/忽略
 import api from '../plugins/axios'
 
-// 派发任务：{ taskType?, targetType?, targetId?, query? } → { taskId, status }
-export function dispatchTask(payload) {
-  return api.post('/agent/tasks', payload)
+// ==================== 多轮会话 ====================
+
+// 创建会话 → conversation
+export function createConversation() {
+  return api.post('/agent/conversations')
 }
 
-// 任务列表（分页，新→旧）
-export function listTasks(params = {}) {
-  return api.get('/agent/tasks', { params: { page: 0, size: 20, ...params } })
+// 会话列表（分页，新→旧）
+export function listConversations(params = {}) {
+  return api.get('/agent/conversations', { params: { page: 0, size: 20, ...params } })
 }
+
+// 历史恢复：完整消息流（时间升序）
+export function getConversationMessages(conversationId) {
+  return api.get(`/agent/conversations/${conversationId}/messages`)
+}
+
+// 删除会话（连带消息）
+export function deleteConversation(conversationId) {
+  return api.delete(`/agent/conversations/${conversationId}`)
+}
+
+// 发消息：{ query?, taskType?, targetType?, targetId? } → { messageId, taskId, status }
+export function sendMessage(conversationId, payload) {
+  return api.post(`/agent/conversations/${conversationId}/messages`, payload)
+}
+
+/**
+ * SSE 流式回显：POST + fetch stream（EventSource 不支持 POST 与自定义 header）。
+ * 解析 SSE 文本行（event: xxx \n data: {...}），把事件回调给 onEvent(event, data)。
+ * 返回 AbortController 供「停止」时中断连接。
+ */
+export function streamConversation(conversationId, taskId, onEvent) {
+  const controller = new AbortController()
+  const token = localStorage.getItem('token')
+  const url = `/api/agent/conversations/${conversationId}/stream${taskId ? `?taskId=${taskId}` : ''}`
+
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'text/event-stream'
+    },
+    signal: controller.signal
+  })
+    .then(async (resp) => {
+      if (!resp.ok || !resp.body) {
+        throw new Error(`stream http ${resp.status}`)
+      }
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let event = null
+      const dataLines = []
+      const flush = () => {
+        if (!event) return
+        let payload = dataLines.join('\n')
+        if (payload.startsWith('data:')) payload = payload.slice(5).trim()
+        try {
+          onEvent(event, JSON.parse(payload))
+        } catch (e) {
+          onEvent(event, payload)
+        }
+        event = null
+        dataLines.length = 0
+      }
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop()
+        for (const part of parts) {
+          for (const line of part.split('\n')) {
+            if (line.startsWith('event:')) event = line.slice(6).trim()
+            else if (line.startsWith('data:')) dataLines.push(line)
+            else if (line === '') flush()
+          }
+          flush()
+        }
+      }
+      flush()
+    })
+    .catch((e) => {
+      if (e.name !== 'AbortError') {
+        onEvent('error', { message: e.message || '流式连接失败' })
+      }
+    })
+  return controller
+}
+
+// ==================== 任务（内部载体，授权闭环查看） ====================
 
 // 任务详情（含事件流）
 export function getTask(taskId) {

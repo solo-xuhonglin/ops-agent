@@ -86,7 +86,7 @@ const canWrite = computed(() => auth.hasPerm('training:write'))
 const canAgent = computed(() => auth.hasPerm('agent:read'))
 
 function analyze(item) {
-  agentStore.dispatchDiagnose({ taskType: 'diagnose_training', targetType: 'training_job', targetId: item.id })
+  agentStore.dispatch({ taskType: 'diagnose_training', targetType: 'training_job', targetId: item.id })
 }
 
 const headers = [

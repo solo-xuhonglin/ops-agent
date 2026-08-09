@@ -5,6 +5,7 @@ import router from './plugins/router'
 import vuetify from './plugins/vuetify'
 import './plugins/axios'
 import './styles/global.css'
+import 'highlight.js/styles/github.css'
 
 const app = createApp(App)
 app.use(createPinia())

@@ -101,8 +101,7 @@ h1, h2, h3, h4, h5, h6, p {
   border-radius: 12px;
   transition: background 0.15s ease;
   cursor: default;
-}
-.history-item:hover {
+}.history-item:hover {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
 }
 .history-item--clickable {
@@ -169,4 +168,86 @@ h1, h2, h3, h4, h5, h6, p {
 }
 .history-item--compact .history-item__time {
   font-size: 11px;
+}
+
+/* ---------- Markdown 渲染（Agent 答复区等富文本展示） ---------- */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+.markdown-body > *:first-child {
+  margin-top: 0;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0;
+}
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre,
+.markdown-body table {
+  margin: 8px 0;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  font-weight: 700;
+  margin: 12px 0 6px;
+}
+.markdown-body h1 { font-size: 18px; }
+.markdown-body h2 { font-size: 16px; }
+.markdown-body h3 { font-size: 15px; }
+.markdown-body h4 { font-size: 14px; }
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 22px;
+}
+.markdown-body li {
+  margin: 2px 0;
+}
+.markdown-body code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.9em;
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.markdown-body pre {
+  background: #f6f8fa;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.markdown-body blockquote {
+  border-left: 3px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
+  padding-left: 12px;
+  color: rgba(0, 0, 0, 0.6);
+}
+.markdown-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  padding: 6px 10px;
+  text-align: left;
+}
+.markdown-body th {
+  background: rgba(0, 0, 0, 0.03);
+  font-weight: 700;
+}
+.markdown-body a {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
 }

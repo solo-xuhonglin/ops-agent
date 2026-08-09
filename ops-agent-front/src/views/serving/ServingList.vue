@@ -128,7 +128,7 @@ const canWrite = computed(() => auth.hasPerm('serving:write'))
 const canAgent = computed(() => auth.hasPerm('agent:read'))
 
 function analyze(item) {
-  agentStore.dispatchDiagnose({ taskType: 'diagnose_serving', targetType: 'serving_endpoint', targetId: item.id })
+  agentStore.dispatch({ taskType: 'diagnose_serving', targetType: 'serving_endpoint', targetId: item.id })
 }
 
 const headers = [
