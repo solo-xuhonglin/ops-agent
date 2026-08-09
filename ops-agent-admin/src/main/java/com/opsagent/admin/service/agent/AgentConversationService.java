@@ -8,7 +8,6 @@ import com.opsagent.admin.entity.Conversation;
 import com.opsagent.admin.entity.ConversationMessage;
 import com.opsagent.admin.repository.AgentSuggestionRepository;
 import com.opsagent.admin.repository.AgentTaskRepository;
-import com.opsagent.admin.repository.AgentConversationRepository;
 import com.opsagent.admin.repository.AgentPlanRepository;
 import com.opsagent.admin.repository.ConversationMessageRepository;
 import com.opsagent.admin.repository.ConversationRepository;
