@@ -96,6 +96,34 @@ h1, h2, h3, h4, h5, h6, p {
 }
 
 /* ---------- Agent 抽屉历史列表项（处置建议 / 历史任务共用） ---------- */
+.agent-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.agent-welcome__title {
+  font-size: 16px;
+  font-weight: 600;
+}
+.agent-welcome__block {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
+  border-radius: 12px;
+  padding: 12px;
+}
+.agent-welcome__block-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-primary));
+  margin-bottom: 6px;
+}
+.agent-welcome__chips {
+  display: flex;
+  flex-wrap: wrap;
+  margin: -4px;
+}
+.agent-welcome__chips .v-btn {
+  margin: 4px;
+}
 .history-item {
   padding: 10px 12px;
   border-radius: 12px;

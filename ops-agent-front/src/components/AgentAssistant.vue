@@ -131,11 +131,24 @@
             </div>
           </div>
 
-          <div v-if="!store.messages.length && !store.streaming" class="empty-hint">
-            <v-icon icon="mdi-robot-outline" size="48" class="mb-2" />
-            <div class="text-body-medium text-medium-emphasis">
-              我是 Agent 助手，可以诊断训练任务、服务、数据集与模型。<br />
-              在下方输入问题，或从列表页点击「分析」发起诊断。
+          <div v-if="!store.messages.length && !store.streaming" class="agent-welcome pa-2">
+            <div class="agent-welcome__title">你好，我是 Agent 助手</div>
+
+            <div class="agent-welcome__block">
+              <div class="agent-welcome__block-title">我能做什么</div>
+              <div class="text-body-small text-medium-emphasis">
+                诊断排查训练任务、模型服务、数据集与模型；自动采集天气数据；发起训练与部署服务。
+              </div>
+            </div>
+
+            <div class="agent-welcome__block">
+              <div class="agent-welcome__block-title">开始使用</div>
+              <div class="agent-welcome__chips">
+                <v-btn v-for="q in quickPrompts" :key="q" variant="tonal" color="primary" size="small"
+                       class="ma-1" :loading="sending" @click="sendQuick(q)">
+                  {{ q }}
+                </v-btn>
+              </div>
             </div>
           </div>
 
@@ -424,6 +437,25 @@ async function send() {
   const q = input.value.trim()
   if (!q || store.streaming) return
   input.value = ''
+  sending.value = true
+  try {
+    await store.dispatch({ query: q })
+  } catch (e) {
+    notifyError(errMsg(e, '发送失败'))
+  } finally {
+    sending.value = false
+  }
+}
+
+// 新会话空状态快捷提示（样式 B）
+const quickPrompts = [
+  '诊断训练失败原因',
+  '检查可部署模型',
+  '采集杭州近 7 天天气数据',
+  '训练并部署 LSTM 预测模型'
+]
+async function sendQuick(q) {
+  if (store.streaming) return
   sending.value = true
   try {
     await store.dispatch({ query: q })

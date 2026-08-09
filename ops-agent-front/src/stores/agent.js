@@ -89,6 +89,7 @@ export const useAgentStore = defineStore('agent', {
       this.plans = []
       this.activePlan = null
       this.error = null
+      this.activeView = 'chat'
       await this.fetchConversations()
       return conv
     },
