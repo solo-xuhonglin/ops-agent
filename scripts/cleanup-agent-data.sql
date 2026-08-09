@@ -5,7 +5,7 @@
 -- 保留：agent_tools（系统必需种子，AgentToolSeeder 自动维护；
 --       如需重置工具 schema 见文末"可选"段）。
 -- 用法：需要时手动执行一次：
---   docker exec -i ops-agent-postgres psql -U opsagent -d ops_agent < scripts/cleanup-agent-data.sql
+--   docker exec -i ops-agent-postgres psql -U opsagent -d opsagent < scripts/cleanup-agent-data.sql
 --   无需重启服务；agent 重连后正常。
 -- 幂等：可重复执行
 -- ============================================================
