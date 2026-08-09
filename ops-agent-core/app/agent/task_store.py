@@ -1,6 +1,6 @@
 """Agent 自治写库 repo：agent_tasks / agent_plans / agent_suggestions。
 
-单一写方约定（v3 设计）：
+单一写方约定：
 - worker 写业务行（task 状态/结论、plan 建改、suggestion 创建与执行结果）
 - admin 只写审批动作（suggestion APPROVED/REJECTED/EXPIRED + grant_key/confirmed_*）
 - DDL 归 admin JPA；本层只读写，不建表

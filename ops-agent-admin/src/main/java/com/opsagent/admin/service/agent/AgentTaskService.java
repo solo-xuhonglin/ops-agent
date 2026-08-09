@@ -28,7 +28,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * AI Agent 任务派发与查询（v3 瘦身：admin 只做通信）。
+ * AI Agent 任务派发与查询（admin 只做通信）。
  * - 任务行由 worker 直写 agent_tasks；admin 不再维护状态机/事件落库/超时扫描（agent 自治）
  * - 本类只负责：生成 taskId → 组装 TaskDispatch → 事务提交后沿 gRPC 流 push
  * - 无在线 worker 时返回 FAILED 状态（由调用方转 failed 消息）
@@ -124,7 +124,7 @@ public class AgentTaskService {
     }
 
     /**
-     * 派发执行（execute）任务：approve 后调用；grant_key 随 TaskDispatch 下发（v3，替代单独 AuthorizationGrant）。
+     * 派发执行（execute）任务：approve 后调用；grant_key 随 TaskDispatch 下发（替代单独 AuthorizationGrant 推送）。
      * 不落 agent_tasks（worker 收到后自写，suggestion_id 关联）。
      */
     @Transactional

@@ -17,7 +17,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
- * 处置建议闭环（v3）：suggestion 业务行（PENDING 创建、EXECUTED/FAILED 结果）由 worker 直写；
+ * 处置建议闭环：suggestion 业务行（PENDING 创建、EXECUTED/FAILED 结果）由 worker 直写；
  * admin 只写审批动作：approve → APPROVED + grantKey(Redis) + 派发 execute 任务；reject → REJECTED；
  * expireScan → EXPIRED（grantKey 过期未执行）。
  */
@@ -58,7 +58,7 @@ public class AgentSuggestionService {
         suggestion.setConfirmedAt(OffsetDateTime.now());
         suggestionRepository.save(suggestion);
 
-        // 派发 execute 任务：grant_key 随 TaskDispatch（v3）；带 suggestion_id + conversation_id
+        // 派发 execute 任务：grant_key 随 TaskDispatch 下发；带 suggestion_id + conversation_id
         AgentTask task = taskService.dispatchExecute(
                 suggestion.getConversationId(), suggestion.getSuggestionId(),
                 suggestion.getActionType(), suggestion.getTargetType(), suggestion.getTargetId(),

@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 
 /**
- * AI Agent 执行记录（v3 重构）：chat 对话轮 / execute 执行轮。
+ * AI Agent 执行记录：chat 对话轮 / execute 执行轮。
  * 业务行由 worker 直写（asyncpg）；admin 只读查询 + 供审批动作（approve 生成 execute 任务）与取消。
  * 关联：plan_id → agent_plans；suggestion_id → agent_suggestions。
  */
@@ -34,7 +34,7 @@ public class AgentTask {
     @Column(name = "plan_id", length = 64)
     private String planId;
 
-    /** execute 对应建议（v3 为 UUID 字符串） */
+    /** execute 对应建议（UUID 字符串） */
     @Column(name = "suggestion_id", length = 64)
     private String suggestionId;
 

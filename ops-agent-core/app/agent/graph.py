@@ -155,7 +155,7 @@ def _strip_reasoning(messages: list[Any]) -> list[Any]:
 
 
 class EventBatcher:
-    """thinking/delta 增量聚合：累计到阈值再发，降低 gRPC/SSE 帧数（流式优化 v3）。
+    """thinking/delta 增量聚合：累计到阈值再发，降低 gRPC/SSE 帧数（聚合降帧）。
 
     现状每 token 一次 send_event → admin 每事件一次转发/落库；聚合后帧数降一个数量级，
     前端观感仍"接近实时"（40 字符内即时可见，长段不超过一个推理片段）。

@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 
 /**
- * AI Agent 写操作建议（v3 重构）：plan 的步骤 + 审批对象。
+ * AI Agent 写操作建议：plan 的步骤 + 审批对象。
  * 业务行（PENDING 创建、EXECUTED/FAILED 执行结果）由 worker 直写；
  * admin 只写审批动作：approve→APPROVED+grantKey、reject→REJECTED、expireScan→EXPIRED。
  * 状态机：PENDING → APPROVED → EXECUTING → EXECUTED / FAILED
@@ -25,7 +25,7 @@ public class AgentSuggestion {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** v3 唯一业务标识（UUID，worker 生成；approve/执行回写用它） */
+    /** 唯一业务标识（UUID，worker 生成；approve/执行回写用它） */
     @Column(name = "suggestion_id", length = 64, nullable = false, unique = true)
     private String suggestionId;
 

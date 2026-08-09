@@ -30,7 +30,7 @@ public class GrantService {
         this.keyPrefix = keyPrefix;
     }
 
-    /** 签发 grantKey（完整 key 含前缀，agent 原样回传）。suggestionId 为 v3 UUID 业务标识。 */
+    /** 签发 grantKey（完整 key 含前缀，agent 原样回传）。suggestionId 为 UUID 业务标识。 */
     public String issue(String actionType, String targetType, Long targetId, String suggestionId) {
         String grantKey = keyPrefix + UUID.randomUUID();
         GrantMeta meta = new GrantMeta(actionType, targetType, targetId, suggestionId);

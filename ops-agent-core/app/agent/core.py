@@ -87,7 +87,7 @@ _JSON_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
 
 
 def _parse_plan(content: str) -> Optional[dict]:
-    """解析最终回答中的规划块（多步写操作的意图摘要，v3 无 steps 数组）：
+    """解析最终回答中的规划块（多步写操作的意图摘要，无 steps 数组）：
     ```json {"plan":{"summary":"训练并部署"}} ```
     返回 plan dict；无 plan 块返回 None。步骤由独立的 suggestions 表达（各带 action_type），
     系统按顺序落 step_no。兼容旧格式（plan 内带 steps 数组时仅取 summary，steps 忽略）。
@@ -103,7 +103,7 @@ def _parse_plan(content: str) -> Optional[dict]:
     if not isinstance(plan, dict):
         return None
     plan.setdefault("summary", "")
-    plan.pop("steps", None)  # v3：步骤由独立 suggestion 表达，丢弃旧 steps 字段
+    plan.pop("steps", None)  # 步骤由独立 suggestion 表达（无 steps 字段）
     return plan
 
 
@@ -169,7 +169,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                       suggestion_id=d.suggestion_id, grant_key=d.grant_key)
     await client.send_event(ctx.task_id, "progress", f"received task [{d.task_id[:8]}]")
 
-    # v3：execute 任务（已审批写操作）直调写工具，不过决策图
+    # execute 任务（已审批写操作）直调写工具，不过决策图
     if d.task_type == "execute":
         await handle_execute(client, registry, llm, http, ctx, d, store, tracker)
         return
@@ -181,7 +181,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
         HumanMessage(content=user_prompt),
     ]
 
-    # v3：task 行由 worker 直写（对话轮=chat）
+    # task 行由 worker 直写（对话轮=chat）
     if store is not None and store.enabled:
         try:
             await store.insert_task(d.task_id, "chat", d.conversation_id,
@@ -202,7 +202,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
             suggestions = _parse_suggestions(_extract_reasoning(final_messages))
         # 多步计划：解析 plan（无 steps 数组，plan 仅摘要；步骤=多条 suggestion）
         plan = _parse_plan(content) or _parse_plan(_extract_reasoning(final_messages))
-        # v3：plan/suggestion 由 worker 直写库（admin 不再 persistSuggestions）
+        # plan/suggestion 由 worker 直写库
         if store is not None and store.enabled and ctx.conversation_id:
             await _persist_outputs(store, ctx, plan, suggestions)
         conclusion = _JSON_BLOCK_RE.sub("", content).strip()  # 建议块从结论剥离
@@ -239,7 +239,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
 
 async def _persist_outputs(store: Any, ctx: TaskContext,
                            plan: Optional[dict], suggestions: list[dict]) -> None:
-    """v3：plan（若有）与 suggestion 业务行直写库。
+    """plan（若有）与 suggestion 业务行直写库。
 
     - 多步：INSERT agent_plans + N 条 PENDING suggestion（step_no 1..N，plan_id 关联）
     - 单条：INSERT 1 条 PENDING suggestion（plan_id 为空）
@@ -286,7 +286,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                          http: AdminHttpClient, ctx: TaskContext,
                          d: agent_pb2.TaskDispatch, store: Any,
                          tracker: Any = None) -> None:
-    """v3：execute 任务——直调写工具（不过决策图）→ 原始结果回喂 LLM 总结 → 回写 suggestion。
+    """execute 任务——直调写工具（不过决策图）→ 原始结果回喂 LLM 总结 → 回写 suggestion。
 
     原始结果经 tool_call/tool_result 事件展示（前端时间线），LLM 总结作为结论落对话。
     异步写操作（training_create/serving_deploy）成功后注册 Monitor 轮询，由 tracker 推进 Plan。

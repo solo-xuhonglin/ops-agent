@@ -2,7 +2,7 @@
 
 安全约定（设计第 5 节）：系统参数（taskToken / worker 标识 / taskId / grantKey）全部由本层代码注入，
 LLM 只能填业务参数 —— prompt injection 碰不到鉴权链路。
-v3：grant_key 由 admin 随 TaskDispatch 下发（ctx 携带），不再经 AuthorizationGrant 单独推送/GrantStore。
+grant_key 由 admin 随 TaskDispatch 下发（ctx 携带），写工具调用时注入。
 """
 import logging
 from typing import Any, Optional

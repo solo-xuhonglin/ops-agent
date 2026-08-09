@@ -100,7 +100,7 @@
       <!-- ============ 聊天视图 ============ -->
       <div v-else class="d-flex flex-column fill-height">
         <div class="flex-grow-1 overflow-y-auto pa-4" ref="scrollEl">
-          <!-- plan 卡片：当前规划 + 步骤进度（v3） -->
+          <!-- plan 卡片：当前规划 + 步骤进度 -->
           <div v-if="store.activePlan" class="plan-card mb-3 pa-3">
             <div class="d-flex align-center mb-1">
               <v-icon size="16" class="mr-1" color="primary">mdi-format-list-checks</v-icon>
@@ -442,7 +442,7 @@ function priorityText(p) { return PRIORITIES[p]?.text || p }
 function priorityColor(p) { return PRIORITIES[p]?.color || 'grey' }
 function targetText(x) { return `${TARGETS[x.targetType] || x.targetType}:${x.targetId}` }
 
-// ===== plan 卡片状态映射（v3） =====
+// ===== plan 卡片状态映射 =====
 const PLAN_STATUS = {
   PLANNED: { text: '规划中', color: 'info' },
   RUNNING: { text: '执行中', color: 'primary' },
@@ -599,7 +599,7 @@ function stepStatusIcon(s) { return STEP_STATUS[s]?.icon || 'mdi-circle-outline'
   border-left: 3px solid rgb(var(--v-theme-warning));
 }
 
-/* ---- plan 卡片（v3） ---- */
+/* ---- plan 卡片 ---- */
 .plan-card {
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px;

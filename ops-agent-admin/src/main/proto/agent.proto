@@ -7,7 +7,7 @@ option java_package = "com.opsagent.admin.agent.proto";
 option java_outer_classname = "AgentProto";
 
 // admin 为 gRPC server，agent 为 client 出站拨号；一条双向流承载 worker 内多 agent
-// 职责边界（v3 重构）：admin 只做通信与审批动作，流程控制与持久化完全由 agent 负责
+// 职责边界：admin 只做通信与审批动作，流程控制与持久化完全由 agent 负责
 // （agent 直连 PostgreSQL 写 agent_tasks/agent_plans/agent_suggestions，gRPC 纯透传）
 service AgentService {
   rpc Connect(stream ClientMessage) returns (stream ServerMessage);
@@ -86,7 +86,7 @@ message TaskResult {
   string task_id = 1;
   bool ok = 2;
   string conclusion = 3;
-  // deprecated: v3 起 agent 直写 agent_suggestions，此字段不再使用（保留字段号不复用）
+  // deprecated: agent 直写 agent_suggestions，此字段不再使用（保留字段号不复用）
   repeated Suggestion suggestions = 4 [deprecated = true];
   string error = 5;
   string reasoning = 6;   // 聚合后的 LLM 推理链全文（可折叠展示）
@@ -98,7 +98,7 @@ message TaskDispatch {
   string task_token = 3;     // scoped JWT（execute 用长 TTL 覆盖异步跟踪期）
   string history = 4;        // chat：多轮对话历史 JSON [{"role","content"},...]
   string conversation_id = 5; // 所属会话（对话/审批执行有；后台直派为空）
-  string suggestion_id = 6;  // execute：对应建议（v3 为 UUID 字符串）；空=普通任务
+  string suggestion_id = 6;  // execute：对应建议（UUID 字符串）；空=普通任务
   string target_type = 7;    // 诊断目标类型（可选）
   int64 target_id = 8;
   string task_type = 9;      // chat | execute

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
- * agent 双向流入口（v3 瘦身：admin 只做通信透传，不落业务库）。
+ * agent 双向流入口（admin 只做通信透传，不落业务库）。
  * - 事件：仅转发 SSE（thinking/delta/tool_call/tool_result/error/plan_update），不落 agent_events
  * - 结果：仅落对话消息 + SSE done（对话通信）；任务行/建议状态由 worker 直写库
  * - plan_update：解析 content → 落一条 assistant 消息 + SSE 通知前端刷新 plan 卡片

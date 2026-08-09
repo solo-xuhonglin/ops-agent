@@ -8,7 +8,7 @@ import lombok.Setter;
 import java.time.OffsetDateTime;
 
 /**
- * AI Agent 规划（v3 重构）：一次规划 = 一行（意图），关联 N 条 agent_suggestions（步骤）与
+ * AI Agent 规划：一次规划 = 一行（意图），关联 N 条 agent_suggestions（步骤）与
  * N 条 agent_tasks（执行）。业务行由 worker 直写（asyncpg），admin 只读查询。
  * 状态：PLANNED → RUNNING → DONE / FAILED / CANCELLED。
  */

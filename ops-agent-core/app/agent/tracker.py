@@ -1,6 +1,6 @@
 """Agent 侧任务跟踪（Plan + 异步轮询 + 自主推进，全部直写库）。
 
-v3 模型（2026-08-09 重构）：
+模型：
 - plan/suggestion/task 业务行由 worker 直写 agent_plans/agent_suggestions/agent_tasks（asyncpg）
 - 轮询：写接口返回 object_id 后注册监视，指数退避（10s 起步 ×2，5m 封顶）调业务查询
 - 推进：目标达成 → 当前 suggestion 置 EXECUTED → 检查 plan 剩余 PENDING 步骤 →

@@ -116,7 +116,7 @@ export function listSuggestions(params = {}) {
   return api.get('/agent/suggestions', { params: { page: 0, size: 50, ...params } })
 }
 
-// 确认建议：签发 grantKey 并派发 execute 任务（按 suggestionId，v3 UUID）
+// 确认建议：签发 grantKey 并派发 execute 任务（按 suggestionId UUID）
 export function approveSuggestion(suggestionId) {
   return api.post(`/agent/suggestions/${suggestionId}/approve`)
 }
@@ -126,7 +126,7 @@ export function rejectSuggestion(suggestionId) {
   return api.post(`/agent/suggestions/${suggestionId}/reject`)
 }
 
-// ==================== 规划（plan 卡片，v3） ====================
+// ==================== 规划（plan 卡片） ====================
 
 // 会话的规划列表（新→旧）
 export function listPlans(conversationId) {

@@ -1,4 +1,4 @@
-// AI Agent 多轮会话状态（v3）：会话列表⇄聊天两视图、SSE 流式（80ms 节流）、建议审批闭环、plan 卡片
+// AI Agent 多轮会话状态：会话列表⇄聊天两视图、SSE 流式（80ms 节流）、建议审批闭环、plan 卡片
 import { defineStore } from 'pinia'
 import * as agentApi from '../api/agent'
 
