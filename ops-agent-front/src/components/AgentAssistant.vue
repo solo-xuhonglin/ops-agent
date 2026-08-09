@@ -82,6 +82,12 @@
             </div>
             <div class="history-item__body text-body-small text-medium-emphasis">{{ targetText(s) }}</div>
             <div v-if="s.reason" class="history-item__body text-body-small text-medium-emphasis history-item__clamp-2" :title="s.reason">{{ s.reason }}</div>
+            <div v-if="paramsEntries(s).length" class="history-item__body suggestion-params">
+              <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
+                <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
+                <span class="text-body-small param-val">{{ p.v }}</span>
+              </div>
+            </div>
             <div v-if="s.status === 'PENDING' && canWrite" class="history-item__body">
               <v-btn size="x-small" color="primary" variant="tonal" @click="approve(s)">确认</v-btn>
               <v-btn size="x-small" variant="text" class="ml-2" @click="reject(s)">忽略</v-btn>
@@ -214,7 +220,7 @@
                     <!-- 业务参数 -->
                     <div v-if="paramsEntries(s).length" class="suggestion-params mt-2">
                       <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
-                        <span class="text-body-small text-medium-emphasis param-key">{{ p.k }}</span>
+                        <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
                         <span class="text-body-small param-val">{{ p.v }}</span>
                       </div>
                     </div>
@@ -259,12 +265,21 @@
             <v-card v-for="s in store.pendingSuggestions.slice(0, 2)" :key="s.id"
                     class="mb-1 suggestion-card" variant="outlined">
               <v-card-text class="py-2">
-                <div class="d-flex align-center">
-                  <v-chip :color="priorityColor(s.priority)" size="x-small">{{ priorityText(s.priority) }}</v-chip>
-                  <span class="text-body-small font-weight-bold ml-2">{{ actionText(s.actionType) }}</span>
+                <div class="d-flex align-center flex-wrap">
+                  <v-icon size="18" :color="priorityColor(s.priority)" class="mr-1">{{ actionIcon(s.actionType) }}</v-icon>
+                  <span class="text-body-small font-weight-bold">{{ actionText(s.actionType) }}</span>
+                  <span v-if="targetText(s)" class="text-body-small text-medium-emphasis ml-2">{{ targetText(s) }}</span>
+                  <v-chip :color="priorityColor(s.priority)" size="x-small" class="ml-2">{{ priorityText(s.priority) }}</v-chip>
                   <v-spacer />
                   <v-btn v-if="canWrite" size="x-small" color="primary" @click="approve(s)">确认</v-btn>
                   <v-btn v-if="canWrite" size="x-small" variant="text" class="ml-1" @click="reject(s)">忽略</v-btn>
+                </div>
+                <div v-if="s.reason" class="text-body-small text-medium-emphasis mt-1">{{ s.reason }}</div>
+                <div v-if="paramsEntries(s).length" class="suggestion-params mt-2">
+                  <div v-for="(p, i) in paramsEntries(s)" :key="i" class="d-flex align-start">
+                    <span class="text-body-small text-medium-emphasis param-key">{{ paramLabel(p.k) }}</span>
+                    <span class="text-body-small param-val">{{ p.v }}</span>
+                  </div>
                 </div>
               </v-card-text>
             </v-card>
@@ -586,6 +601,24 @@ const TARGETS = {
   model_version: '模型版本'
 }
 
+// 建议卡片业务参数的友好中文名（写工具 schema 中的字段）
+const PARAM_LABELS = {
+  datasetId: '数据集',
+  modelVersionId: '模型版本',
+  endpointId: '服务端点',
+  jobId: '训练任务',
+  name: '名称',
+  description: '描述',
+  regions: '地区',
+  dateStart: '开始日期',
+  dateEnd: '结束日期',
+  version: '版本',
+  algorithm: '算法',
+  hyperparameters: '超参数',
+  values: '输入序列',
+  horizon: '预测步长'
+}
+
 function actionText(t) { return ACTIONS[t]?.text || t }
 function actionIcon(t) { return ACTIONS[t]?.icon || 'mdi-tune' }
 function sugText(s) { return SUG_STATUS[s]?.text || s }
@@ -597,6 +630,10 @@ function targetText(x) {
   const tid = x.targetId
   if (tt == null || tt === '') return ''
   return tid == null || tid === '' || Number(tid) === 0 ? tt : `${tt}:${tid}`
+}
+
+function paramLabel(key) {
+  return PARAM_LABELS[key] || key
 }
 
 // 执行结果（suggestion 的 markdown result）按条目跟踪折叠/展开状态。
