@@ -351,8 +351,12 @@ def build_openai_tools(registry: ToolRegistry) -> list[dict]:
     """bind_tools 用的完整工具列表（每轮按注册表重建，更新即生效）。
 
     = registry 只读工具（is_write 过滤，模型可直接调用查询真实状态）
-    + plan_create / plan_update（本地 handler）
+    + 内置本地 handler：plan_create / plan_update / wait_until / sleep
     + approve_<写工具>（每个写操作一个审批工具；写工具本体**不进 tools**，模型无执行路径）
+
+    注意：wait_until 与 sleep 必须出现在模型可见列表里——否则模型在异步对象未到达
+    终态时无法等待（早前 build_openai_tools 漏注册，模型反复调 dataset_get 触
+    发去重检测才发现目标工具不在列表里）。
     """
     tools: list[dict] = []
     for t in registry.all():
@@ -366,6 +370,8 @@ def build_openai_tools(registry: ToolRegistry) -> list[dict]:
             tools.append(_openai_function(t.name, t.description, params))
     tools.append(BUILTIN_TOOL_SCHEMAS["plan_create"])
     tools.append(BUILTIN_TOOL_SCHEMAS["plan_update"])
+    tools.append(BUILTIN_TOOL_SCHEMAS["wait_until"])
+    tools.append(BUILTIN_TOOL_SCHEMAS["sleep"])
     return tools
 
 
