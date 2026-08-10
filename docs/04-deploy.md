@@ -52,7 +52,7 @@
 - `DB_PASSWORD` —— 强密码
 - `JWT_SECRET` —— 至少 32 位随机串，可用 `openssl rand -base64 48` 生成
 - `SERVER_IP` / `CORS_ALLOWED_ORIGINS` —— 改成你的服务器公网 IP
-- `DEEPSEEK_API_KEY` —— Agent 的 LLM key（DeepSeek，`https://api.deepseek.com`，model `deepseek-chat`）；缺失时 agent 工具调用会失败
+- `DEEPSEEK_API_KEY` —— Agent 的 LLM key（DeepSeek，`https://api.deepseek.com`，model `deepseek-v4-flash`，原生 thinking + function calling）；缺失时 agent 工具调用会失败
 
 > 演示账号由后端 `DataInitializer` 写入：`admin / admin123`（管理员，全部权限）、`user / user123`（运营人员，业务读写）。本系统为演示用途，无需修改默认密码。
 

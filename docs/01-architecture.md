@@ -47,8 +47,8 @@
 | 前端 | Vue 3 + Vuetify 4（响应式，原生组件优先） |
 | 后端 | Spring Boot 3.3（唯一后端入口）+ gRPC(grpc-server-spring-boot-starter) |
 | 安全 | Spring Security + JWT（jjwt）+ RBAC + 任务级 scoped token + 时效 grantKey |
-| Agent | Python 3.11 + **LangGraph**（决策图）+ langchain-openai(ChatOpenAI→DeepSeek) + grpcio |
-| LLM | DeepSeek（OpenAI 兼容 API，`deepseek-chat`，key 走服务器 .env） |
+| Agent | Python 3.11 + **LangGraph**（决策图）+ langchain-deepseek(ChatDeepSeek→deepseek-v4-flash) + grpcio |
+| LLM | DeepSeek（OpenAI 兼容 API，`deepseek-v4-flash`，支持原生 function calling + thinking/reasoning_effort，key 走服务器 .env） |
 | 算法 | Python + PyTorch（LSTM 时序预测，CPU 镜像 `pytorch/pytorch:2.3.1-cpu`） |
 | 存储 | PostgreSQL、MinIO（S3 兼容对象存储）、Redis（grantKey） |
 | 部署 | Docker Compose（常驻服务 + 动态 training/serving 容器） |
@@ -58,6 +58,8 @@
 - **front（Vuetify）**：管理后台（用户/角色/权限/数据集/模型/训练/serving）+ 仪表盘 + **全局 Agent 助手浮窗**（右下 FAB + 右侧抽屉，跨路由常驻：对话视图跟踪任务事件流、历史视图查看任务与处置建议、输入框上方滑出 PENDING 建议卡片、底部输入框自然语言问询）。
 - **admin（Spring Boot）**：唯一后端入口。JWT 认证；RBAC；数据集 CRUD + Open-Meteo 采集；模型注册表；训练编排（docker.sock + docker-java）；serving 编排（起/停容器 + 就绪轮询 + 代理转发）；**gRPC server（:9090 内网）**；**agent 能力执行器**（工具=现有 REST API，鉴权后执行）；**处置建议管理**（approve 签发 grantKey 推 agent + 派发执行任务）。
 - **agent（Python 常驻，零端口）**：gRPC client 出站拨号 admin；LangGraph 决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调哪些工具）；工具 schema 由 RegisterAck **动态下发**（能力=admin 现有 API，agent 零硬编码）；纯被动响应（admin 下发任务才行动）。
+  - **Plan 多步规划**：Agent 通过 `plan_create`/`plan_update` 工具自主拆解复杂任务为多步 plan，步骤以 `agent_suggestions` 记录（`plan_id` + `step_no`），每步产出写操作建议，人工审批后推进；`wait_until` 工具支持轮询等待对象状态就绪，全部步骤完成自动置 plan DONE。plan 变更经 `plan_update` 事件通知前端 SSE 刷新 plan 卡片。
+  - **消息存储**：Agent 端 MessageStore 按 LangGraph 轮次批量写入 `agent_conversation_messages` 表（ASSISTANT/TOOL_CALL/TOOL_RESULT），Java 端仅写入 USER（发消息时）和 APPROVAL（审批时），SSE 事件纯转发不落库。
 - **training（Python 动态容器，已实现）**：从 MinIO 拉数据集 CSV→预处理→训 PyTorch LSTM→评估→产物（`model.pt` / `metrics.json`）存 MinIO→退出；状态由 admin 轮询回填。
 - **serving（Python 按版本动态容器，已实现）**：加载指定模型版本→暴露 `/health` + `/predict`（单步/多步递归）→admin 代理 `/api/serving-proxy/{endpointId}/predict` 对外转发。
 
@@ -131,6 +133,8 @@ agent/redis 均为**常驻、零端口映射**（agent 唯一外呼：DeepSeek A
 | **Agent 决策层**（LangGraph 图 + DeepSeek function calling + 动态工具 schema + scoped token） | ✅ 已实现（M2） |
 | **处置建议闭环**（建议表 + approve/reject + grantKey(Redis) + 写工具执行） | ✅ 已实现（M3） |
 | **前端 Agent 助手浮窗**（FAB + 抽屉 + 建议卡片 + 历史视图 + 分析按钮） | ✅ 已实现（M4） |
+| **Agent 消息存储重构**（MessageStore 按轮次批量写入，Java 端清理流式落库） | ✅ 已实现（M5） |
+| **Plan 多步规划**（plan_create/plan_update + wait_until 轮询 + 步骤推进） | ✅ 已实现（M5） |
 | agent 任务中断恢复（checkpoint 持久化 saver）/ 多 agent | ⏳ 后续（MemorySaver 已就位，换持久化 saver 即可） |
 
 > 验证：后端 `mvn compile` 通过（IDEA）；前端 `vite build` 通过；Python pytest 25 绿；服务器 E2E：派发 question → DeepSeek 自主调 dataset_list → 结论落库 SUCCEEDED；处置建议 approve → grantKey → agent 执行写工具 → EXECUTED。
