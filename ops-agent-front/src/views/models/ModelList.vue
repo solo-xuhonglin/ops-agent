@@ -263,15 +263,8 @@ async function submitTrain() {
       }
     })
     trainDialog.value = false
-    const go = await confirmDialog({
-      title: '训练任务已提交',
-      message: '训练任务已提交，是否前往「训练任务」页查看进度？',
-      confirmText: '前往查看',
-      cancelText: '留在本页',
-      color: 'secondary',
-      icon: 'mdi-rocket-launch-outline'
-    })
-    if (go) router.push('/training/jobs')
+    // 提交后直接跳转训练任务页跟踪进度（去掉二次确认）
+    router.push('/training/jobs')
   } catch (e) {
     notifyError(errMsg(e, '提交训练失败'))
   } finally { training.value = false }

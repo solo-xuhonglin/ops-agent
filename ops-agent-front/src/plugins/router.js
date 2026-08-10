@@ -28,7 +28,7 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   const loggedIn = !!localStorage.getItem('token')
   if (!to.meta.public && !loggedIn) {
@@ -36,6 +36,16 @@ router.beforeEach((to) => {
   }
   if (to.name === 'login' && loggedIn) {
     return { name: 'dashboard' }
+  }
+  // 刷新后首次进入：用户信息未就绪时先拉取一次，
+  // 避免 roles/permissions 为空导致角色丢失、权限校验误跳转。
+  if (loggedIn && !auth.user) {
+    try {
+      await auth.fetchMe()
+    } catch (e) {
+      auth.logout()
+      return { name: 'login', query: { redirect: to.fullPath } }
+    }
   }
   // 权限校验：菜单权限
   if (to.meta.perm && !auth.hasPerm(to.meta.perm)) {

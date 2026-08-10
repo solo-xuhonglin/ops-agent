@@ -153,7 +153,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { useAuthStore } from '../../stores/auth'
@@ -235,15 +235,8 @@ async function submitTrain() {
       }
     })
     trainDialog.value = false
-    const go = await confirmDialog({
-      title: '训练任务已提交',
-      message: '训练任务已提交，是否前往「训练任务」页查看进度？',
-      confirmText: '前往查看',
-      cancelText: '留在本页',
-      color: 'secondary',
-      icon: 'mdi-rocket-launch-outline'
-    })
-    if (go) router.push('/training/jobs')
+    // 提交后直接跳转训练任务页跟踪进度（去掉二次确认）
+    router.push('/training/jobs')
   } catch (e) {
     notifyError(errMsg(e, '提交训练失败'))
   } finally {
@@ -257,14 +250,37 @@ async function load() {
     const { data } = await api.get('/datasets', { params: { page: page.value, size: pageSize.value, status: filterStatus.value || undefined } })
     items.value = data.data.content
     total.value = data.data.totalElements
+    scheduleCollectRefresh()
   } finally { loading.value = false }
 }
 function onOptions(o) { page.value = o.page - 1; pageSize.value = o.itemsPerPage; load() }
 
+// 异步采集：列表存在 COLLECTING 时轮询刷新，全部采集完成后自动停止
+let collectTimer = null
+function scheduleCollectRefresh() {
+  if (collectTimer) clearTimeout(collectTimer)
+  collectTimer = null
+  if (items.value.some((i) => i.status === 'COLLECTING')) {
+    collectTimer = setTimeout(load, 5000)
+  }
+}
+onUnmounted(() => { if (collectTimer) clearTimeout(collectTimer) })
+
 function reset() {
   editId.value = null
   editSnapshot.value = null
-  Object.assign(form, { name: '', description: '', regions: [], dateStart: null, dateEnd: null, status: 'READY' })
+  // 默认值：杭州最近 7 天，打开即可直接保存
+  const now = new Date()
+  const start = new Date(now)
+  start.setDate(now.getDate() - 7)
+  Object.assign(form, {
+    name: '',
+    description: '',
+    regions: ['杭州'],
+    dateStart: start,
+    dateEnd: now,
+    status: 'READY'
+  })
 }
 function openCreate() { reset(); dialog.value = true }
 function openEdit(item) {

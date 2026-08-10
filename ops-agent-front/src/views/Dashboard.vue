@@ -62,19 +62,28 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-const stats = ref([
-  { title: '用户', value: '-', icon: 'mdi-account-group', color: 'info' },
-  { title: '数据集', value: '-', icon: 'mdi-database', color: 'success' },
-  { title: '模型版本', value: '-', icon: 'mdi-brain', color: 'accent' },
-  { title: '我的角色', value: (auth.roles.join(' / ') || '-'), icon: 'mdi-shield-account', color: 'warning' }
+// 角色统计随 auth.roles 响应式更新：刷新后角色恢复时卡片不再停留在 "-"
+const userCount = ref('-')
+const datasetCount = ref('-')
+const modelCount = ref('-')
+
+const stats = computed(() => [
+  { title: '用户', value: userCount.value, icon: 'mdi-account-group', color: 'info' },
+  { title: '数据集', value: datasetCount.value, icon: 'mdi-database', color: 'success' },
+  { title: '模型版本', value: modelCount.value, icon: 'mdi-brain', color: 'accent' },
+  { title: '我的角色', value: auth.roles.join(' / ') || '-', icon: 'mdi-shield-account', color: 'warning' }
 ])
 
-const menus = [
-  { to: '/users', title: '用户管理', icon: 'mdi-account-group' },
-  { to: '/roles', title: '角色管理', icon: 'mdi-shield-account' },
-  { to: '/permissions', title: '权限管理', icon: 'mdi-key' },
-  { to: '/datasets', title: '数据集管理', icon: 'mdi-database' }
-]
+// 快速入口：与侧边栏一致按权限过滤
+const menus = computed(() => {
+  const all = [
+    { to: '/datasets', title: '数据集管理', icon: 'mdi-database', perm: 'dataset:read' },
+    { to: '/training/jobs', title: '训练任务', icon: 'mdi-rocket-launch', perm: 'training:read' },
+    { to: '/models', title: '模型管理', icon: 'mdi-cube-outline', perm: 'model:read' },
+    { to: '/serving', title: '模型服务', icon: 'mdi-server', perm: 'serving:read' }
+  ]
+  return all.filter((m) => !m.perm || auth.hasPerm(m.perm))
+})
 
 async function load() {
   try {
@@ -83,9 +92,9 @@ async function load() {
       api.get('/datasets?size=1'),
       api.get('/models?size=1')
     ])
-    stats.value[0].value = u.data.data.totalElements ?? '-'
-    stats.value[1].value = d.data.data.totalElements ?? '-'
-    stats.value[2].value = m.data.data.totalElements ?? '-'
+    userCount.value = u.data.data.totalElements ?? '-'
+    datasetCount.value = d.data.data.totalElements ?? '-'
+    modelCount.value = m.data.data.totalElements ?? '-'
   } catch (e) { /* 忽略 */ }
 }
 

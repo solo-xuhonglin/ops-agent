@@ -3,7 +3,7 @@
        抽屉打开时 FAB 隐藏，避免遮挡抽屉内容 -->
   <div v-if="visible && !store.drawerOpen">
     <v-badge :content="store.pendingCount" :model-value="store.pendingCount > 0" color="error">
-      <v-btn class="agent-fab" color="primary" size="large" elevation="4"
+      <v-btn class="agent-fab" color="primary" size="large" elevation="4" rounded="circle"
              icon="mdi-robot-outline"
              @click="store.toggleDrawer()" />
     </v-badge>

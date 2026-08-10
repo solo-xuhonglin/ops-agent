@@ -19,6 +19,7 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('token')
       localStorage.removeItem('refreshToken')
+      localStorage.removeItem('authProfile')
       if (location.pathname !== '/login') {
         location.href = '/login'
       }
