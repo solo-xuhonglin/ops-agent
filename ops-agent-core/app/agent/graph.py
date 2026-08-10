@@ -857,8 +857,8 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
         # 节流：每个 LLM 轮次开始前 sleep 300ms，避免连续短推理 / 重试瞬时打爆上游 API
         # 以及 SSE 事件过快堆积前端。前端到这一节点的路由无副作用，多轮 sleep 累加可忽略。
         await asyncio.sleep(_AGENT_THROTTLE_S)
-        if state.get("pending_approval"):
-            # 已提交审批建议：进入收口轮——不挂任何工具，模型只输出一段中文摘要，禁止再循环
+        if state.get("pending_approval") or ctx.feedback_only:
+            # 已提交审批建议 / 反馈轮：进入收口轮——不挂任何工具，模型只输出一段中文摘要，禁止再循环
             llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools([])
         else:
             llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools(build_openai_tools(registry))

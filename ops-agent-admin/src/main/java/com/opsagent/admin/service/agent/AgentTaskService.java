@@ -174,6 +174,59 @@ public class AgentTaskService {
         return task;
     }
 
+    /**
+     * 派发反馈（feedback）任务：审批被忽略/拒绝后调用，让模型基于历史（含 [审批] 折叠行）
+     * 输出一段中文反馈（确认收到 + 下一步打算），不挂工具、不重新提交建议。
+     * history 由调用方传入（buildHistory 已把 APPROVAL 折叠成 [审批] 行，模型才能读到"被忽略"）。
+     * 必须 bindTask(task→conversation)：否则 worker 的 TaskResult 回来时 conversationOf 为 null，
+     * 反馈消息不落库、前端看不到（与 execute 相同约束）。
+     */
+    @Transactional
+    public AgentTask dispatchFeedback(String conversationId, String suggestionId,
+                                      String actionType, String targetType, Long targetId,
+                                      Long confirmedBy, String history) {
+        String taskId = UUID.randomUUID().toString();
+        AgentTask task = buildPending(taskId, "feedback", conversationId,
+                "suggestion " + suggestionId + " (" + actionType + ") ignored");
+        task.setSuggestionId(suggestionId);
+        WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);
+        if (worker == null) {
+            task.setStatus(STATUS_FAILED);
+            task.setConclusion("no agent worker online");
+            log.warn("feedback dispatch skipped, no online worker: suggestion={}", suggestionId);
+            return task;
+        }
+        String taskToken = jwtUtil.generateScopedToken(confirmedBy,
+                resolveFullPermissions(confirmedBy), taskId, SCOPED_TOKEN_TTL_MS);
+        String query = String.format(
+                "你提出的建议 %s（%s，目标 %s:%s）被用户忽略了，请输出一段简短的中文反馈："
+                        + "确认收到该结果，并说明你的下一步打算（可结合当前计划状态）。",
+                suggestionId == null ? "" : suggestionId,
+                actionType == null ? "" : actionType,
+                targetType == null ? "" : targetType,
+                targetId == null ? 0 : targetId);
+        TaskDispatch.Builder b = TaskDispatch.newBuilder()
+                .setTaskId(taskId)
+                .setTaskType("feedback")
+                .setQuery(query)
+                .setTaskToken(taskToken)
+                .setSuggestionId(suggestionId == null ? "" : suggestionId)
+                .setActionType(actionType == null ? "" : actionType)
+                .setTargetType(targetType == null ? "" : targetType)
+                .setTargetId(targetId == null ? 0 : targetId)
+                .setReasoningEnabled(true);
+        if (conversationId != null && !conversationId.isBlank()) {
+            b.setConversationId(conversationId);
+            streamManager.bindTask(taskId, conversationId);
+        }
+        if (history != null && !history.isBlank()) {
+            b.setHistory(history);
+        }
+        pushAfterCommit(worker, taskId, ServerMessage.newBuilder().setTaskDispatch(b).build());
+        log.info("feedback dispatched: task={} suggestion={}", taskId, suggestionId);
+        return task;
+    }
+
     /** 用户/前端取消：发 CancelTask（worker 自治置 CANCELLED 并回写关联状态），admin 不落库。 */
     public void cancel(String taskId, String reason) {
         WorkerRegistry.WorkerEntry worker = workerRegistry.all().stream().findFirst().orElse(null);

@@ -21,6 +21,12 @@
         <span class="text-title-medium font-weight-bold ml-2">
           {{ viewTitle }}
         </span>
+        <!-- 通信中：chat 流（store.streaming）或 approve/ignore 后的 execute/feedback 监听流活跃时显示 -->
+        <v-chip v-if="store.streaming || store.executeController" size="x-small" color="primary"
+                variant="tonal" class="ml-2">
+          <v-progress-circular size="11" width="2" indeterminate class="mr-1" />
+          通信中
+        </v-chip>
         <v-spacer />
         <v-tooltip text="处置建议" location="bottom">
           <template #activator="{ props }">
@@ -161,6 +167,7 @@
           <!-- 时间线：按消息 kind 路由渲染（USER / ASSISTANT / TOOL_CALL / APPROVAL）。
                PENDING 审批建议被抽到下方固定区，避免后续消息把它顶上去。 -->
           <div v-for="m in timelineMessages" :key="m.messageId || m._localId" class="msg-row"
+               :data-msg-id="m.messageId || m._localId"
                :class="kindClass(m)">
             <!-- USER：右对齐气泡 -->
             <div v-if="kindOf(m) === 'USER'" class="msg-bubble msg-bubble--user">
@@ -495,8 +502,40 @@ watch(() => store.messages.map((m) => m.content + (m.reasoning || '')).join('|')
     scrollTimer = null
     await nextTick()
     if (scrollEl.value) scrollEl.value.scrollTop = scrollEl.value.scrollHeight
+    // 思考过程内部滚动：thinking-text 有 max-height+overflow 时只滚外层不够，
+    // 需把当前消息的 thinking 面板内部也定位到最新输入（长推理链跟随输出）
+    scrollActiveThinkingIntoView()
   }, 200)
 })
+
+// 把「最后一条流式中的 thinking 面板」内部滚动条定位到底部（若其内容溢出）。
+// 数据驱动：找到最近一条仍 streaming 且含 reasoning 的 ASSISTANT 消息，取其 DOM 内
+// .thinking-text 元素滚动到 scrollHeight；无流式或未溢出时静默跳过。
+function scrollActiveThinkingIntoView() {
+  const el = scrollEl.value
+  if (!el) return
+  const streamMsgs = store.messages.filter((m) => m.status === 'streaming' && m.reasoning)
+  if (!streamMsgs.length) return
+  const target = streamMsgs[streamMsgs.length - 1]
+  const key = target.messageId || target._localId
+  const rows = el.querySelectorAll('.msg-row')
+  let thinkingEl = null
+  if (key) {
+    for (const row of rows) {
+      if (row.getAttribute('data-msg-id') === key) {
+        thinkingEl = row.querySelector('.thinking-text')
+        break
+      }
+    }
+  }
+  if (!thinkingEl) {
+    // 兜底：无 key 匹配时退化为最后一行（容器已在底部，视觉一致）
+    thinkingEl = rows[rows.length - 1]?.querySelector('.thinking-text')
+  }
+  if (thinkingEl && thinkingEl.scrollHeight > thinkingEl.clientHeight) {
+    thinkingEl.scrollTop = thinkingEl.scrollHeight
+  }
+}
 
 // 抽屉打开：刷新会话列表与建议；关闭时停流
 watch(() => store.drawerOpen, async (open) => {
@@ -601,6 +640,9 @@ async function reject(input) {
   if (!ok) return
   try {
     await store.reject(suggestionId)
+    // reject 后 admin 会派发 feedback 任务：复用 execute 流监听，实时展示 agent 的反馈输出
+    store.listenExecute(store.currentConversation?.conversationId,
+      actionType ? `已忽略「${actionText(actionType)}」，agent 正在反馈…` : '已忽略该建议，agent 正在反馈…')
     store.refreshMessages()
   } catch (e) {
     notifyError(errMsg(e, '操作失败'))

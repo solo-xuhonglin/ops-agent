@@ -92,6 +92,20 @@ public class AgentSuggestionService {
         // 历史落库：APPROVAL 消息 REJECTED
         recordApproval(suggestion, "REJECTED");
 
+        // 派发反馈任务：让模型基于历史（含 [审批] 已忽略 折叠行）输出一段反馈，
+        // 而不是"点了忽略模型毫无反应"（feedback 轮不挂工具，只确认+说明下一步）
+        try {
+            String conversationId = suggestion.getConversationId();
+            String history = (conversationId == null || conversationId.isBlank())
+                    ? "" : conversationService.buildHistory(conversationId);
+            taskService.dispatchFeedback(conversationId, suggestionId,
+                    suggestion.getActionType(), suggestion.getTargetType(),
+                    suggestion.getTargetId(), confirmedBy, history);
+        } catch (Exception e) {
+            log.warn("feedback dispatch after reject failed (ignored): sug={}, err={}",
+                    suggestionId, e.getMessage());
+        }
+
         log.info("suggestion rejected: id={}", suggestionId);
         return suggestion;
     }

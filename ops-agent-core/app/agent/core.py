@@ -184,6 +184,13 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                              max_rounds=max_rounds, msg_store=msg_store)
         return
 
+    # feedback 任务（审批被忽略/拒绝后派发）：模型基于历史（含 [审批] 折叠行）输出一段中文反馈，
+    # 不挂任何工具（ctx.feedback_only → agent_node bind_tools([])），只确认收到并说明下一步。
+    if d.task_type == "feedback":
+        await handle_feedback(client, registry, llm, http, ctx, d, store,
+                              max_rounds=max_rounds, msg_store=msg_store)
+        return
+
     hint, user_prompt = _build_prompt(d)
     messages: list = [
         SystemMessage(content=SYSTEM_PROMPT + hint),
@@ -239,6 +246,70 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                 pass
         await client.send_result(ctx.task_id, ok=False,
                                  conclusion=f"task failed: {e}", error=str(e))
+
+
+FEEDBACK_SYSTEM = (
+    "# 角色\n"
+    "你刚收到一条**审批结果反馈**：你之前提出的处置建议被用户忽略（未通过）。\n"
+    "\n"
+    "# 任务\n"
+    "1. 基于会话历史（下方含该建议的提交记录与被忽略的审批结果）确认收到该反馈；\n"
+    "2. 简要说明你的下一步打算：调整计划/换一种方式/等待用户指示，视情况而定，不要编造；\n"
+    "3. 不要调用任何工具，不要重新提交审批建议，直接输出一段简短的中文反馈（1~3 句）。\n"
+)
+
+
+async def handle_feedback(client: GrpcClient, registry: ToolRegistry, llm: Any,
+                          http: AdminHttpClient, ctx: TaskContext,
+                          d: agent_pb2.TaskDispatch, store: Any,
+                          max_rounds: int = 6, msg_store: Any = None) -> None:
+    """feedback 任务——审批被忽略后的反馈轮：模型只输出确认与下一步，不调工具。
+
+    触发方：admin reject() 后派发（task_type=feedback，query 含被忽略的建议 ID）。
+    历史复用 chat 流程（buildHistory 已把 APPROVAL 折叠为 [审批] 行），模型能读到
+    "该建议已被忽略"，基于此输出反馈——修复"点了忽略模型毫无反应"。
+    """
+    ctx.feedback_only = True
+    # 注意：不经过 _build_prompt——feedback 带 suggestion_id 会命中"已审批写操作请执行"分支，
+    # 误导模型去执行写操作。直接使用派发方构造的 query（含被忽略建议的信息）。
+    user_prompt = d.query or "你提出的建议被用户忽略了，请输出一段简短的中文反馈。"
+    messages: list = [
+        SystemMessage(content=SYSTEM_PROMPT + "\n\n" + FEEDBACK_SYSTEM),
+        *_build_history(d),
+        HumanMessage(content=user_prompt),
+    ]
+    if store is not None and store.enabled:
+        try:
+            await store.insert_task(d.task_id, "feedback", d.conversation_id,
+                                    query=d.query or "")
+        except Exception as e:  # noqa: BLE001
+            log.warning("feedback task insert failed: %s", e)
+    try:
+        graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
+                            tracker=None, store=store, msg_store=msg_store)
+        final_messages, _ = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
+        conclusion = _extract_conclusion(final_messages).strip() or "已收到，我会据此调整。"
+        await client.send_result(ctx.task_id, ok=True, conclusion=conclusion,
+                                 reasoning=_extract_reasoning(final_messages))
+        if store is not None and store.enabled:
+            try:
+                await store.finish_task(ctx.task_id, "SUCCEEDED", conclusion,
+                                        _extract_reasoning(final_messages))
+            except Exception as e:  # noqa: BLE001
+                log.warning("feedback task finish persist failed: %s", e)
+        log.info("feedback done: %s", ctx.task_id[:8])
+    except (asyncio.CancelledError, NodeCancelledError):
+        log.info("feedback cancelled by admin: %s", ctx.task_id)
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.error("feedback task failed: %s", e, exc_info=True)
+        if store is not None and store.enabled:
+            try:
+                await store.finish_task(ctx.task_id, "FAILED", f"feedback failed: {e}")
+            except Exception:  # noqa: BLE001
+                pass
+        await client.send_result(ctx.task_id, ok=False,
+                                 conclusion=f"feedback failed: {e}", error=str(e))
 
 
 EXECUTE_LOOP_SYSTEM = (

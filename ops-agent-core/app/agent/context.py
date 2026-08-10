@@ -15,3 +15,5 @@ class TaskContext:
     reasoning_enabled: bool = True  # chat：前端「深度思考」开关（true=thinking 模式）
     # 延迟注册的 Monitor 清单（写工具成功后暂存，任务收敛时按对象终态决定是否兜底注册）
     pending_trackers: list = field(default_factory=list)
+    # 反馈轮（审批被忽略后派发）：不挂任何工具，模型只输出一段中文反馈
+    feedback_only: bool = False
