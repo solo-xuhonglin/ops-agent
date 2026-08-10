@@ -7,6 +7,7 @@ from langchain_deepseek import ChatDeepSeek
 from langgraph.errors import NodeCancelledError
 
 from app.agent import core
+from app.agent.message_store import MessageStore
 from app.agent.task_store import TaskStore
 from app.agent.tracker import TaskTracker
 from app.config import Config
@@ -89,6 +90,7 @@ async def amain() -> None:
                   password=cfg.pg_password, database=cfg.pg_database)
     await db.start()
     store = TaskStore(db, cfg.worker_id)
+    msg_store = MessageStore(db)
 
     # 任务跟踪器：Plan 直写库 + 异步轮询 + 决策轮（模型在观察完成后决定 plan 下一步）
     tracker = TaskTracker(store, http, client, registry, llm=llm)
@@ -97,7 +99,7 @@ async def amain() -> None:
     client.on("register_ack", lambda m: _load_tools(registry, m))
     client.on("task_dispatch",
               lambda m: _run_task(client, registry, llm, http, m, cfg.max_tool_rounds,
-                                  tracker, store))
+                                  tracker, store, msg_store))
     client.on("cancel_task", lambda m: _on_cancel(m))
 
     log.info("ops-agent-core starting: worker=%s grpc=%s llm=%s model=%s db=%s",
@@ -121,12 +123,13 @@ async def _load_tools(registry: ToolRegistry, msg: agent_pb2.ServerMessage) -> N
 
 async def _run_task(client: GrpcClient, registry: ToolRegistry, llm: Any,
                     http: AdminHttpClient, msg: agent_pb2.ServerMessage,
-                    max_rounds: int, tracker: TaskTracker, store: TaskStore) -> None:
+                    max_rounds: int, tracker: TaskTracker, store: TaskStore,
+                    msg_store: MessageStore) -> None:
     task_id = msg.task_dispatch.task_id
     active_tasks[task_id] = asyncio.current_task()  # 记录以便 CancelTask 精确取消
     try:
         await core.handle_dispatch(client, registry, llm, http, msg, max_rounds,
-                                   tracker, store)
+                                   tracker, store, msg_store)
     except NodeCancelledError:
         # admin 取消：core 已打日志，吞掉避免 asyncio "Task exception was never retrieved" 告警
         pass

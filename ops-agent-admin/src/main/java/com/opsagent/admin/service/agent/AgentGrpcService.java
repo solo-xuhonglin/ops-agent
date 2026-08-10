@@ -15,8 +15,14 @@ import java.util.stream.Collectors;
 
 /**
  * agent 双向流入口（admin 只做通信透传，不落业务库）。
- * - 事件：仅转发 SSE（thinking/delta/tool_call/tool_result/error/plan_update），不落 agent_events
- * - 结果：仅落对话消息 + SSE done（对话通信）；任务行/建议状态由 worker 直写库
+ * <p>
+ * 消息存储职责：
+ * <ul>
+ *   <li>Java 端（本类）：仅转发 SSE 事件、落 APPROVAL 行、落 plan_update 助理消息</li>
+ *   <li>Agent 端（MessageStore）：写入 ASSISTANT、TOOL_CALL、TOOL_RESULT</li>
+ * </ul>
+ * - 事件：仅转发 SSE（thinking/delta/tool_call/tool_result/error/plan_update），不落 agent 业务库
+ * - 结果：仅推 SSE done 事件（对话通信）；任务行/建议状态由 worker 直写库
  * - plan_update：解析 content → 落一条 assistant 消息 + SSE 通知前端刷新 plan 卡片
  */
 @GrpcService
@@ -79,76 +85,33 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
                 log.info("register ack sent to {}: {} read tools", register.getWorkerId(), tools.size());
             }
 
-    /** 事件只转发 SSE；plan_update 额外落一条 assistant 消息（对话通信）。
-     *  thinking/delta 按 LLM 轮次流内落库为独立的 ASSISTANT 消息行（与 TOOL_CALL 行交错，
-     *  刷新/重连后时间顺序与运行中一致）；tool_call/tool_result 同步落消息库。 */
-    private void handleEvent(TaskEvent event) {
-        touch();
-        String type = event.getEventType();
-        String taskId = event.getTaskId();
-        if ("plan_update".equals(type)) {
-            forwardStreamEvent(event);
-            handlePlanUpdate(event.getContent());
-            return;
-        }
-        if ("plan_advance".equals(type)) {
-            // worker 推进轮发起（task_id=plan_advance:{planId}）：绑定会话，后续事件/结果走现有通道
-            handlePlanAdvance(taskId, event.getContent());
-            return;
-        }
-        if ("thinking".equals(type) || "delta".equals(type)) {
-            forwardStreamEvent(event);
-            conversationService.appendAssistantChunk(taskId,
-                    "thinking".equals(type) ? "reasoning" : "content", event.getContent());
-            return;
-        }
-        if ("tool_call".equals(type) || "tool_result".equals(type)) {
-            forwardStreamEvent(event);
-            if ("tool_call".equals(type)) {
-                conversationService.flushAssistantRoundOnToolCall(taskId);
+            /**
+             * 事件只转发 SSE；ASSISTANT/TOOL_CALL/TOOL_RESULT 由 Agent 端 MessageStore 直写库，
+             * Java 端不再落库。plan_update/plan_advance 由 Java 端落一条助理消息。
+             */
+            private void handleEvent(TaskEvent event) {
+                touch();
+                String type = event.getEventType();
+                String taskId = event.getTaskId();
+                if ("plan_update".equals(type)) {
+                    forwardStreamEvent(event);
+                    handlePlanUpdate(event.getContent());
+                    return;
+                }
+                if ("plan_advance".equals(type)) {
+                    // worker 推进轮发起（task_id=plan_advance:{planId}）：绑定会话，后续事件/结果走现有通道
+                    handlePlanAdvance(taskId, event.getContent());
+                    return;
+                }
+                // thinking/delta/tool_call/tool_result/error/suggestion_created 等：仅转发 SSE
+                forwardStreamEvent(event);
             }
-            persistToolMessage(type, event);
-            return;
-        }
-        if ("error".equals(type)) {
-            forwardStreamEvent(event);
-            conversationService.finalizeAssistantOnError(taskId);
-            return;
-        }
-        forwardStreamEvent(event);
-    }
 
-    /**
-     * 落 TOOL_CALL/TOOL_RESULT 一行到消息流。
-     * - 从 streamManager 反查会话（pushByTask 用的就是 taskId↔conversationId 映射）
-     * - payload 字段映射：tool_call → {id,name,args} ；tool_result → {id,name,summary}
-     * - 失败 / 离线任务（无 conversationId）静默忽略
-     */
-    private void persistToolMessage(String type, TaskEvent event) {
-        String taskId = event.getTaskId();
-        String cid = streamManager.conversationOf(taskId);
-        if (cid == null || cid.isBlank()) return;
-        Object parsed = parseJsonOrRaw(event.getContent());
-        if (!(parsed instanceof Map<?, ?> data)) {
-            return;
-        }
-        String name = str(data.get("name"));
-        String callId = str(data.get("id"));
-        Object args = data.get("args");
-        String argsJson;
-        try {
-            argsJson = (args == null) ? "{}" : objectMapper.writeValueAsString(args);
-        } catch (Exception e) {
-            argsJson = "{}";
-        }
-        boolean isResult = "tool_result".equals(type);
-        String summary = isResult ? str(data.get("summary")) : "";
-        conversationService.upsertToolCallRow(cid, taskId, callId, name, argsJson, isResult, summary);
-    }
-
-            /** 结果只落对话消息（task/suggestion 状态由 worker 直写库）。
-             *  execute 任务完成后额外刷新 APPROVAL 行（pending → approved → executed/failed）。
-             *  无 suggestionId 的任务（chat/推进轮），refreshApproval 会因 findByTaskId 返回空而自然跳过。 */
+            /**
+             * 结果只推 SSE done 事件（task/suggestion 状态由 worker 直写库）。
+             * execute 任务完成后额外刷新 APPROVAL 行（pending → approved → executed/failed）。
+             * 无 suggestionId 的任务（chat/推进轮），refreshApproval 会因 findByTaskId 返回空而自然跳过。
+             */
             private void handleResult(TaskResult result) {
                 touch();
                 String conversationId = streamManager.conversationOf(result.getTaskId());
@@ -196,8 +159,7 @@ public class AgentGrpcService extends AgentServiceGrpc.AgentServiceImplBase {
             }
 
             /** plan_advance：worker 推进轮发起（task_id=plan_advance:{planId}）。
-             *  绑定 task→conversation（后续 thinking/tool_call/result 走现有通道落库）+ 落一条
-             *  assistant 消息 + SSE 通知前端 plan 卡片刷新。 */
+             *  绑定 task→conversation（后续事件走现有通道转发）+ 落一条 assistant 消息 + SSE 通知前端。 */
             private void handlePlanAdvance(String taskId, String content) {
                 try {
                     @SuppressWarnings("unchecked")

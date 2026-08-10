@@ -167,7 +167,8 @@ def _extract_reasoning(messages: list) -> str:
 async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
                           llm: Any, http: AdminHttpClient,
                           msg: agent_pb2.ServerMessage, max_rounds: int = 10,
-                          tracker: Any = None, store: Any = None) -> None:
+                          tracker: Any = None, store: Any = None,
+                          msg_store: Any = None) -> None:
     d = msg.task_dispatch
     ctx = TaskContext(task_id=d.task_id, task_token=d.task_token,
                       target_type=d.target_type, target_id=d.target_id,
@@ -179,7 +180,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
     # execute 任务（已审批写操作）：系统直调写工具后任务内决策图闭环推进
     if d.task_type == "execute":
         await handle_execute(client, registry, llm, http, ctx, d, store, tracker,
-                             max_rounds=max_rounds)
+                             max_rounds=max_rounds, msg_store=msg_store)
         return
 
     hint, user_prompt = _build_prompt(d)
@@ -199,7 +200,7 @@ async def handle_dispatch(client: GrpcClient, registry: ToolRegistry,
 
     try:
         graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
-                            tracker=tracker, store=store)
+                            tracker=tracker, store=store, msg_store=msg_store)
         final_messages, hit_limit = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
 
         content = _extract_conclusion(final_messages)
@@ -262,7 +263,8 @@ EXECUTE_LOOP_SYSTEM = (
 async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                          http: AdminHttpClient, ctx: TaskContext,
                          d: agent_pb2.TaskDispatch, store: Any,
-                         tracker: Any = None, max_rounds: int = 10) -> None:
+                         tracker: Any = None, max_rounds: int = 10,
+                         msg_store: Any = None) -> None:
     """execute 任务——系统直调写工具（安全边界）→ 同一任务内决策图自主推进 → 收敛。
 
     写工具结果以观察注入任务内决策图：agent 用 wait_until 轮询异步对象、plan_update 推进
@@ -330,7 +332,7 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
             HumanMessage(content=observation),
         ]
         graph = build_graph(llm_runtime=llm, http=http, registry=registry, client=client,
-                            tracker=tracker, store=store)
+                            tracker=tracker, store=store, msg_store=msg_store)
         final_messages, hit_limit = await run_graph(graph, ctx, messages, max_rounds=max_rounds)
         conclusion = _extract_conclusion(final_messages).strip()
         reasoning_text = _extract_reasoning(final_messages)
