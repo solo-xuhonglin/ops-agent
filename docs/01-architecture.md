@@ -35,10 +35,21 @@
         └─────────────────────────────────┘
 ```
 
-**核心通信模型（Agent）**：
-- agent 为 gRPC **client 出站拨号** admin 的 gRPC server（内网 `:9090`，不映射宿主）—— agent **零监听端口、物理上不暴露任何接口**。
-- 一条双向流承载：注册（Register/RegisterAck，含动态工具 schema 下发）、任务下发（TaskDispatch）、事件回推（TaskEvent）、结果（TaskResult）、grantKey 推送（AuthorizationGrant）、心跳（Ping/Pong）。
-- 断线指数退避重连（1s→30s+抖动），重连后自动重新注册；admin 侧 WorkerRegistry 心跳 90s 超时清理。
+### 核心通信模型（Agent ↔ Admin）
+
+Agent 作为 **gRPC client 出站拨号** admin 的 gRPC server（内网 `:9090`，不映射宿主），自身**零监听端口、物理上不暴露任何接口**。整条链路只有一条双向流，承载全部交互：
+
+| 消息 | 方向（Agent 视角） | 说明 |
+| --- | --- | --- |
+| `Register` | → | Agent 上线注册（携带 worker / agent 清单） |
+| `RegisterAck` | ← | 注册应答，**动态下发工具 schema**（能力 = admin 现有 API，Agent 零硬编码） |
+| `TaskDispatch` | ← | admin 下发任务 |
+| `TaskEvent` | → | Agent 回推执行事件 / 进度 |
+| `TaskResult` | → | 任务结果（结论 + 处置建议） |
+| `AuthorizationGrant` | ← | 人工确认后推送的时效 `grantKey` |
+| `Ping` / `Pong` | ↔ | 心跳保活 |
+
+> **断线重连**：指数退避（1s → 30s + 抖动）；重连成功后自动重新 `Register`，无需人工介入。admin 侧 `WorkerRegistry` 以心跳 90s 超时清理失联 Agent。
 
 ## 2. 技术栈
 
