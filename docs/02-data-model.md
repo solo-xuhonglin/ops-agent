@@ -168,8 +168,8 @@ agent_conversations ──< agent_plans
 | plan_id | VARCHAR(64) | UNIQUE NOT NULL | UUID |
 | conversation_id | VARCHAR(64) | FK→agent_conversations | 所属会话 |
 | summary | VARCHAR(255) | | 计划摘要 |
-| status | VARCHAR(16) | DEFAULT 'RUNNING' | RUNNING / DONE / FAILED / CANCELLED |
-| steps | JSONB | | 步骤数组 `[{step_no, action_type, target_type, target_id, params, status, note}]` |
+| steps | TEXT | | 步骤清单 JSON（worker 直写；模型掌舵每步状态） |
+| status | VARCHAR(16) | DEFAULT 'PLANNED' | PLANNED / RUNNING / DONE / FAILED / CANCELLED |
 | created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
 
 ### agent_memories（未建，pgvector）
@@ -200,20 +200,22 @@ agent_conversations ──< agent_plans
 | enabled | BOOLEAN | DEFAULT TRUE | |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
 
-### agent_tasks（任务记录）
+### agent_tasks（任务记录：chat 对话轮 / execute 执行轮）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
 | task_id | VARCHAR(64) | UNIQUE NOT NULL | uuid |
-| task_type | VARCHAR(32) | NOT NULL | question / diagnose_training / diagnose_serving / diagnose_dataset / model_review |
-| target_type / target_id | VARCHAR(32) / BIGINT | | 焦点对象（可空） |
-| query | TEXT | | 问询原文 / 诊断指令 |
+| task_type | VARCHAR(24) | NOT NULL | chat（对话轮）/ execute（执行已审批建议） |
+| plan_id | VARCHAR(64) | | 所属 plan（execute 有；chat 可为空） |
+| suggestion_id | VARCHAR(64) | | execute 对应建议 |
+| conversation_id | VARCHAR(64) | | 所属会话 |
+| query | TEXT | | 问询原文 |
 | status | VARCHAR(16) | DEFAULT DISPATCHED | DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED |
-| dispatched_by | BIGINT | FK→users | 触发人（Poller 自动触发可空） |
 | worker_id | VARCHAR(64) | | 执行 worker |
 | conclusion | TEXT | | TaskResult 结论 |
+| reasoning | TEXT | | LLM 推理链全文（chat 轮） |
 | started_at / finished_at | TIMESTAMPTZ | | |
-| created_at | TIMESTAMPTZ | DEFAULT now() | |
+| created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
 
 ### agent_events（任务事件流：进度可观测）（已废弃，由 SSE 流替代）
 | 字段 | 类型 | 约束 | 说明 |
@@ -225,22 +227,27 @@ agent_conversations ──< agent_plans
 | content | TEXT | | 进度文案 / 工具调用 |
 | created_at | TIMESTAMPTZ | DEFAULT now() | |
 
-### agent_suggestions（处置建议：写操作必须人工确认）
+### agent_suggestions（处置建议：写操作必须人工确认，plan 的步骤 + 审批对象）
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | id | BIGSERIAL | PK | |
-| task_id | VARCHAR(64) | | 来源任务 |
-| action_type | VARCHAR(32) | NOT NULL | 对应写工具名（serving_undeploy 等） |
-| target_type / target_id | VARCHAR(32) / BIGINT | NOT NULL | 处置目标 |
-| params | TEXT | | 业务参数（LLM 填） |
+| suggestion_id | VARCHAR(64) | UNIQUE NOT NULL | UUID（worker 生成；approve/执行回写用它） |
+| plan_id | VARCHAR(64) | | 所属 plan（多步规划；null=非规划的单条建议） |
+| step_no | INT | | plan 内步骤顺序（1..N） |
+| source_task_id | VARCHAR(64) | | 来源任务（chat 轮 / 触发决策的 execute 轮） |
+| conversation_id | VARCHAR(64) | NOT NULL | 所属会话 |
+| action_type | VARCHAR(32) | NOT NULL | 对应写工具名（training_create / serving_deploy 等） |
+| target_type / target_id | VARCHAR(32) / BIGINT | | 处置目标 |
+| params | TEXT | | 业务参数（JSON 字符串，LLM 填） |
 | reason | TEXT | | 建议理由 |
 | priority | VARCHAR(8) | DEFAULT NORMAL | HIGH / NORMAL / LOW |
-| status | VARCHAR(16) | DEFAULT PENDING | PENDING → APPROVED → EXECUTING → EXECUTED / FAILED；REJECTED；EXPIRED |
-| grant_key | VARCHAR(64) | | 确认后签发（审计留痕；Redis 是消费权威） |
+| status | VARCHAR(16) | DEFAULT PENDING | PENDING → APPROVED → EXECUTING → EXECUTED / FAILED；PENDING → REJECTED / EXPIRED / CANCELLED |
+| grant_key | VARCHAR(128) | | 确认后签发（审计留痕；Redis 是消费权威） |
 | confirmed_by / confirmed_at | BIGINT / TIMESTAMPTZ | | 确认人/时间 |
 | executed_at | TIMESTAMPTZ | | 执行时间 |
-| result | TEXT | | 执行回执（agent 报告） |
-| created_at | TIMESTAMPTZ | DEFAULT now() | |
+| result | TEXT | | 执行回执（LLM 总结，worker 直写） |
+| retry_of | VARCHAR(64) | | 重试来源建议（决策轮 retry 时挂） |
+| created_at / updated_at | TIMESTAMPTZ | DEFAULT now() | |
 
 > grantKey 生命周期（Redis）：`SET agent:grant:{key} = {action, target, suggestionId, workerId} EX 600`；写端点 `@RequireGrant` 校验 action+target 精确匹配 + `GETDEL` 原子消费（一次性）。
 

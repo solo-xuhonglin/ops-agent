@@ -58,6 +58,7 @@
 - **front（Vuetify）**：管理后台（用户/角色/权限/数据集/模型/训练/serving）+ 仪表盘 + **全局 Agent 助手浮窗**（右下 FAB + 右侧抽屉，跨路由常驻：对话视图跟踪任务事件流、历史视图查看任务与处置建议、输入框上方滑出 PENDING 建议卡片、底部输入框自然语言问询）。
 - **admin（Spring Boot）**：唯一后端入口。JWT 认证；RBAC；数据集 CRUD + Open-Meteo 采集；模型注册表；训练编排（docker.sock + docker-java）；serving 编排（起/停容器 + 就绪轮询 + 代理转发）；**gRPC server（:9090 内网）**；**agent 能力执行器**（工具=现有 REST API，鉴权后执行）；**处置建议管理**（approve 签发 grantKey 推 agent + 派发执行任务）。
 - **agent（Python 常驻，零端口）**：gRPC client 出站拨号 admin；LangGraph 决策图（agent 决策节点 ↔ tools 执行节点循环，LLM 自主决定调哪些工具）；工具 schema 由 RegisterAck **动态下发**（能力=admin 现有 API，agent 零硬编码）；纯被动响应（admin 下发任务才行动）。
+  - **Plan 多步规划**：Agent 通过 `plan_create`/`plan_update` 工具自主拆解复杂任务为多步 plan，步骤以 `agent_suggestions` 记录（`plan_id` + `step_no`），每步产出写操作建议，人工审批后推进；`wait_until` 工具支持轮询等待对象状态就绪，全部步骤完成自动置 plan DONE。plan 变更经 `plan_update` 事件通知前端 SSE 刷新 plan 卡片。
   - **消息存储**：Agent 端 MessageStore 按 LangGraph 轮次批量写入 `agent_conversation_messages` 表（ASSISTANT/TOOL_CALL/TOOL_RESULT），Java 端仅写入 USER（发消息时）和 APPROVAL（审批时），SSE 事件纯转发不落库。
 - **training（Python 动态容器，已实现）**：从 MinIO 拉数据集 CSV→预处理→训 PyTorch LSTM→评估→产物（`model.pt` / `metrics.json`）存 MinIO→退出；状态由 admin 轮询回填。
 - **serving（Python 按版本动态容器，已实现）**：加载指定模型版本→暴露 `/health` + `/predict`（单步/多步递归）→admin 代理 `/api/serving-proxy/{endpointId}/predict` 对外转发。

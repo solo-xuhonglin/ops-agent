@@ -147,6 +147,10 @@ serving 全部端点统一收敛在 `/api/serving/endpoints` 资源路径下；�
 | GET | `/api/agent/suggestions` | `agent:read` | 处置建议列表（分页） |
 | POST | `/api/agent/suggestions/{id}/approve` | `agent:write` | 确认建议：签发时效 grantKey（Redis）沿 gRPC 推 agent + 派发执行任务 → `APPROVED` |
 | POST | `/api/agent/suggestions/{id}/reject` | `agent:write` | 忽略建议 → `REJECTED` |
+| GET | `/api/agent/plans?conversationId=` | `agent:read` | 会话的规划列表（新→旧） |
+| GET | `/api/agent/plans/{planId}` | `agent:read` | 单个 plan + 步骤（suggestions 按 step_no 升序） |
+| GET | `/api/agent/tools` | `agent:read` | 工具注册表清单（名称/描述/端点/权限/启停） |
+| PUT | `/api/agent/tools/{id}/enabled` | `agent:write` | 切换工具启停（修改即生效，下次注册动态下发） |
 
 **多轮会话（对话补强 2026-08-09，旧「对话即任务」用法移除，任务仅作授权闭环内部载体）：**
 
@@ -168,6 +172,7 @@ event: delta       data: {"delta":"答复增量"}
 event: done        data: {"taskId":"...","status":"completed|failed","content":"...","reasoning":"..."}
 event: error       data: {"message":"..."}
 event: suggestion_created data: {"suggestionId":"...","actionType":"training_create",...}
+event: plan_update     data: {"planId":"...","status":"...","summary":"...","steps":[...]}
 ```
 
 **任务状态**：`DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED`。
@@ -193,10 +198,10 @@ event: suggestion_created data: {"suggestionId":"...","actionType":"training_cre
   ] }
 
 // POST /api/agent/suggestions/7/approve
-// → 200  { "id": 7, "status": "APPROVED", "grantKey": "agent:grant:215d926a-..." }
+// → 200  { "suggestionId": "7", "status": "APPROVED", "grantKey": "agent:grant:215d926a-..." }
 ```
 
-> **agent 能力接口**（工具 = admin 现有 REST API 子集）不在本文档重复：只读 11 个（`dataset_list/get/get_file_url`、`model_list/get`、`training_list/get/get_logs_url`、`serving_list/get/predict`）+ 写 4 个（`training_create/delete`、`serving_deploy/undeploy`），定义存 `agent_tools` 表，agent 注册时动态下发 schema。写工具调用需携带 `X-Grant-Key`（人工确认后签发、一次性、精确绑定 action+target）；身份头 `X-Agent-Worker`/`X-Agent-Task` 由 agent 代码注入。
+> **agent 能力接口**（工具 = admin 现有 REST API 子集 + 系统内置工具）不在本文档重复：注册表工具（定义存 `agent_tools` 表，注册时动态下发 schema）包括只读 11 个（`dataset_list/get/get_file_url`、`model_list/get`、`training_list/get/get_logs_url`、`serving_list/get/predict`）+ 写 4 个（`training_create/delete`、`serving_deploy/undeploy`）；系统内置工具（代码注入，不落库）包括 `plan_create`、`plan_update`、`wait_until`（轮询等待对象状态）、`approve_<写工具名>`（每步审批建议，对应写工具自动生成）。写工具调用需携带 `X-Grant-Key`（人工确认后签发、一次性、精确绑定 action+target）；身份头 `X-Agent-Worker`/`X-Agent-Task` 由 agent 代码注入。
 
 ## 8. 对话（SSE）Conversation —— 已实现（2026-08-09）
 
