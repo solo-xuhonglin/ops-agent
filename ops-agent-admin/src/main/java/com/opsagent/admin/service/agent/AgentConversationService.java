@@ -262,8 +262,10 @@ public class AgentConversationService {
     }
 
     /** 组装多轮历史：最近 HISTORY_LIMIT 条已完成 user/assistant/approval 消息，JSON 数组（新→旧取前 N 再反转）。
-     *  APPROVAL 行直接进历史（role 映射为 assistant，content 加 [审批] 前缀）——模型在下一轮上下文里
+     *  APPROVAL 行直接进历史（role 映射为 user，content 加 [审批] 前缀）——模型在下一轮上下文里
      *  直接看到审批结果（已授权/已拒绝/已执行/已失败/已过期），避免"提交审批后模型失忆、重复申请或误判"。
+     *  role 用 user 而非 assistant：审批结果对模型是外部客观事件（系统通知），不是模型自己的输出——
+     *  若塞成 assistant，模型会把它当成自己说过的话而倾向延续/认死，不利于客观响应。
      *  包内可见（供同包单测直接验证）。 */
     String buildHistory(String conversationId) {
         List<ConversationMessage> recent = messageRepository
@@ -289,9 +291,9 @@ public class AgentConversationService {
             }
             Map<String, String> item = new LinkedHashMap<>();
             if (isApprovalLike) {
-                // 审批决策行：role 映射为 assistant（worker 端只认 user/assistant），
+                // 审批决策行：role 映射为 user（worker 端只认 user/assistant；user 语义=外部客观事件），
                 // content 复用 buildApprovalSummary 生成的最新决策摘要，加 [审批] 前缀标明来源
-                item.put("role", "assistant");
+                item.put("role", "user");
                 item.put("content", "[审批] " + content);
             } else {
                 item.put("role", isUserLike ? "user" : "assistant");

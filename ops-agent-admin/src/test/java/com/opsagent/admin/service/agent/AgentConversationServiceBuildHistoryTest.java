@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
 /**
  * buildHistory 集成测试：审批决策行（APPROVAL）直接进模型历史上下文——
  * 不再被过滤，content 复用 buildApprovalSummary 生成的最新决策摘要，加 [审批] 前缀，
- * role 映射为 assistant（worker 端只认 user/assistant）。
+ * role 映射为 user（审批结果对模型是外部客观事件，而非模型自己的输出；worker 端只认 user/assistant）。
  * 目的：让模型在下一轮对话里能读到"该操作已授权/已拒绝/已执行/已失败/已过期"，
  * 修复"提交审批后模型失忆、重复申请或误判"。
  */
@@ -87,15 +87,15 @@ class AgentConversationServiceBuildHistoryTest {
 
         assertThat(items).hasSize(3);
         java.util.Map<?, ?> approval = (java.util.Map<?, ?>) items.get(2);
-        // role 映射为 assistant（worker 只认 user/assistant）
-        assertThat(approval.get("role")).isEqualTo("assistant");
+        // role 映射为 user（审批结果对模型是外部客观事件，而非模型自己的输出）
+        assertThat(approval.get("role")).isEqualTo("user");
         // content = 原决策摘要 + [审批] 前缀
         assertThat(approval.get("content")).isEqualTo("[审批] 已执行 · serving_deploy (model_version:15)");
     }
 
     @Test
     void buildHistoryMapsApprovedAndRejectedRoles() throws Exception {
-        // 已授权 / 已拒绝 同样进历史
+        // 已授权 / 已拒绝 同样进历史（role=user，作为外部客观事件）
         when(messageRepository.findByConversationIdAndStatusInOrderByIdDesc(
                 any(), anyList())).thenReturn(List.of(
                 approvalMsg("已拒绝 · training_create (dataset:13)", "REJECTED"),
@@ -107,8 +107,10 @@ class AgentConversationServiceBuildHistoryTest {
         List<?> items = om.readValue(historyJson, List.class);
 
         assertThat(items).hasSize(3);
+        assertThat(((java.util.Map<?, ?>) items.get(1)).get("role")).isEqualTo("user");
         assertThat(((java.util.Map<?, ?>) items.get(1)).get("content"))
                 .isEqualTo("[审批] 已授权 · serving_deploy (model_version:15)");
+        assertThat(((java.util.Map<?, ?>) items.get(2)).get("role")).isEqualTo("user");
         assertThat(((java.util.Map<?, ?>) items.get(2)).get("content"))
                 .isEqualTo("[审批] 已拒绝 · training_create (dataset:13)");
     }
