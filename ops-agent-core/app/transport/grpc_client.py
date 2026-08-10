@@ -23,6 +23,7 @@ class GrpcClient:
         self.agents = agents
         self._channel: Optional[grpc.aio.Channel] = None
         self._stream: Optional[grpc.aio.StreamStreamCall] = None
+        self._broken: bool = False
         self._callbacks: dict[str, MessageHandler] = {}
         self._seq = 0
 
@@ -42,6 +43,7 @@ class GrpcClient:
                 backoff = min(backoff * 2, self.cfg.reconnect_max_s)
 
     async def connect_once(self) -> None:
+        self._broken = False
         self._channel = grpc.aio.insecure_channel(self.cfg.admin_grpc_addr)
         stub = agent_pb2_grpc.AgentServiceStub(self._channel)
         self._stream = stub.Connect()
@@ -52,13 +54,34 @@ class GrpcClient:
                         for a, c in self.agents])))
         log.info("registered as worker=%s agents=%s", self.cfg.worker_id,
                  [a for a, _ in self.agents])
-        async for msg in self._stream:
-            self._route(msg)
+        try:
+            async for msg in self._stream:
+                self._route(msg)
+        except (asyncio.CancelledError, grpc.aio.AioRpcError) as e:
+            raise ConnectionError(f"agent stream interrupted: {e}") from e
+        finally:
+            if self._broken:
+                # 流被 _send 标记 broken 并 cancel：读循环可能正常退出（读到 EOF），
+                # 这里显式抛错让 run() 走退避重连，而不是误打 "connected" 立即空转重连
+                raise ConnectionError("agent stream marked broken")
 
     # ---- 发送 ----
 
     async def _send(self, msg: agent_pb2.ClientMessage) -> None:
-        await self._stream.write(msg)
+        try:
+            await self._stream.write(msg)
+        except (asyncio.InvalidStateError, grpc.aio.AioRpcError) as e:
+            # 流半死（服务端已关闭写方向但读方向还在，async for 不退出）：
+            # 标记 broken 并取消流，让 connect_once 退出 → run() 重连。
+            # 否则后续任务全部 write 失败静默卡死（实测 16:16:12 后 execute
+            # 连 send_event("received task") 都发不出，任务从未执行）。
+            log.warning("stream write failed (%s); triggering reconnect", e)
+            self._broken = True
+            try:
+                await self._stream.cancel()
+            except Exception:  # noqa: BLE001
+                pass
+            raise ConnectionError(f"agent stream broken: {e}") from e
 
     async def send_event(self, task_id: str, event_type: str, content: str) -> None:
         self._seq += 1

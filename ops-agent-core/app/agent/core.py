@@ -23,6 +23,7 @@ from app.agent.graph import (
     _extract_conclusion,
     _format_plan_summary,
     _maybe_register_tracker,
+    flush_pending_trackers,
 )
 from app.tools.http_client import AdminHttpClient
 from app.tools.registry import ToolRegistry
@@ -352,6 +353,12 @@ async def handle_execute(client: GrpcClient, registry: ToolRegistry, llm: Any,
                                                  "EXECUTED" if ok else "FAILED", conclusion)
         except Exception as e:  # noqa: BLE001
             log.warning("suggestion result update failed: %s", e)
+    # 收敛时统一注册 Monitor：模型自己 wait_until 等到终态的对象跳过（避免双轨重复推进），
+    # 仍在进行中的对象兜底注册（任务结束由 Monitor 后台推进 plan）
+    try:
+        await flush_pending_trackers(tracker, registry, http, ctx)
+    except Exception as e:  # noqa: BLE001 - flush 失败不阻塞 execute 收尾
+        log.warning("flush pending trackers failed: %s", e)
     if store is not None and store.enabled:
         try:
             await store.finish_task(ctx.task_id, "SUCCEEDED" if ok else "FAILED", conclusion,

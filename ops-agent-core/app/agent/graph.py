@@ -90,8 +90,15 @@ def _extract_object_id(body: Any) -> Optional[int]:
 async def _maybe_register_tracker(tracker: Any, store: Any, ctx: TaskContext,
                                   tool: Optional[agent_pb2.ToolSchema],
                                   result: dict) -> None:
-    """写工具（异步接口）成功后：注册对象状态轮询，完成时按 Plan 推进下一步。
-    tracker 走闭包注入（不进 checkpoint state，避免 msgpack 序列化不可序列化对象）。"""
+    """写工具（异步接口）成功后：**暂存** Monitor 注册信息，任务收敛时统一决定是否兜底注册。
+
+    tracker 走闭包注入（不进 checkpoint state，避免 msgpack 序列化不可序列化对象）。
+    注册信息暂存到 ctx.pending_trackers（可序列化），由收敛阶段的 flush 统一处理：
+    - 对象已到终态（模型自己 wait_until 等到了并推进 plan）→ 跳过，避免 monitor 与
+      wait_until 双轨重复推进（实测 94ac02a6：monitor 触发 advance 轮 + execute 轮模型
+      自己 wait_until 醒来后都提下一步审批 → 一条 EXECUTED、一条 REJECTED"已忽略"）；
+    - 对象未到终态（任务结束但对象还在跑）→ 注册 Monitor 兜底推进。
+    """
     if tool is None or not (tool.is_write and tracker and ctx.conversation_id):
         return
     if not result or result.get("status") not in (200, 201, 202):
@@ -116,14 +123,51 @@ async def _maybe_register_tracker(tracker: Any, store: Any, ctx: TaskContext,
                 plan_id = (plan or {}).get("plan_id") or ""
         except Exception as e:  # noqa: BLE001
             log.warning("plan lookup for monitor failed: %s", e)
-    tracker.register(
-        object_type=object_type, object_id=object_id,
-        conversation_id=ctx.conversation_id, task_id=ctx.task_id,
-        task_token=ctx.task_token, query_tool=query_tool,
-        query_args={id_param: object_id},
-        plan_id=plan_id, suggestion_id=suggestion_id,
-        action_type=tool.name,
-        target_status=TRACK_TARGET_STATUS.get(object_type, "SUCCEEDED"))
+    ctx.pending_trackers.append({
+        "object_type": object_type, "object_id": object_id,
+        "conversation_id": ctx.conversation_id, "task_id": ctx.task_id,
+        "task_token": ctx.task_token, "query_tool": query_tool,
+        "query_args": {id_param: object_id},
+        "plan_id": plan_id, "suggestion_id": suggestion_id,
+        "action_type": tool.name,
+        "target_status": TRACK_TARGET_STATUS.get(object_type, "SUCCEEDED"),
+    })
+    log.info("tracker pending: %s:%s step=%s (flush at convergence)",
+             object_type, object_id, tool.name)
+
+
+async def flush_pending_trackers(tracker: Any, registry: Any, http: Any,
+                                 ctx: TaskContext) -> None:
+    """任务收敛时统一注册 Monitor：对象已到终态则跳过，未到终态才兜底注册。
+
+    修复"wait_until 与 monitor 双轨冲突"：写工具成功后不再立即注册 monitor，
+    而是等 execute 轮模型自己 wait_until 结束（收敛）后：
+    - 若对象已到终态（模型已用 wait_until 等到并推进 plan）→ 跳过注册，避免
+      monitor 再触发一次 advance 轮导致重复提交审批；
+    - 若对象仍在进行中（模型 wait_until 超时/未等待就收敛）→ 注册 Monitor 兜底推进。
+    """
+    if tracker is None or not ctx.pending_trackers:
+        return
+    pending, ctx.pending_trackers = list(ctx.pending_trackers), []
+    for p in pending:
+        query_tool = p.get("query_tool", "")
+        target_status = p.get("target_status", "SUCCEEDED")
+        # 查询对象当前状态，已到终态则不需要 Monitor 兜底
+        try:
+            tool = registry.get(query_tool) if registry is not None else None
+            if tool is not None:
+                qctx = TaskContext(task_id=ctx.task_id, task_token=ctx.task_token)
+                cur = await http.call(tool, dict(p.get("query_args") or {}), qctx)
+                status, _ = _extract_wait_fields(cur)
+                if status and (status == target_status
+                               or status in WAIT_TERMINAL_STATUSES
+                               or status in WAIT_SUCCESS_STATUSES.get(query_tool, set())):
+                    log.info("tracker skip at convergence: %s:%s status=%s (model waited)",
+                             p.get("object_type"), p.get("object_id"), status)
+                    continue
+        except Exception as e:  # noqa: BLE001 - 查询失败兜底注册，不阻塞收敛
+            log.warning("tracker convergence check failed (register anyway): %s", e)
+        tracker.register(**p)
 
 
 class AgentState(TypedDict):
