@@ -1,6 +1,9 @@
 <template>
   <div>
     <div class="page-toolbar">
+      <v-chip v-if="hasCollecting" color="info">
+        <v-progress-circular indeterminate size="14" width="2" class="mr-1" />轮询中
+      </v-chip>
       <v-spacer />
       <v-btn v-if="canWrite" color="primary" prepend-icon="mdi-plus" @click="openCreate">新建数据集</v-btn>
       <v-select
@@ -195,6 +198,7 @@ const cityOptions = CITY_OPTIONS
 const items = ref([])
 const total = ref(0)
 const loading = ref(false)
+const hasCollecting = computed(() => items.value.some((i) => i.status === 'COLLECTING'))
 const pageSize = ref(10)
 const page = ref(0)
 const filterStatus = ref(null)
