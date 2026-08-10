@@ -43,6 +43,9 @@ WRITE_TRACK_MAP: dict[str, tuple[str, str, str]] = {
 WAIT_POLL_INTERVAL_S = 4.0
 WAIT_MAX_CONSECUTIVE_FAILS = 3
 WAIT_TERMINAL_STATUSES = {"FAILED", "CANCELLED", "STOPPED"}
+# agent_node 节流：每轮 LLM 调用前 sleep 300ms，避免连续短推理/重试瞬时打爆上游
+# 与前端 SSE 事件过快堆积；首轮 sleep 对交互延迟影响可忽略（<300ms 感知）
+_AGENT_THROTTLE_S = 0.3
 # wait_until 的 query_tool → 对象 ID 参数名（admin 查询 API 的 path 模板变量）
 QUERY_TOOL_ID_ARG: dict[str, str] = {
     "training_get": "jobId",
@@ -291,6 +294,33 @@ _APPROVE_EXTRA_PROPERTIES: dict[str, dict] = {
 _APPROVE_CONTEXT_KEYS = {"plan_id", "step_no", "retry_of", "target_type", "target_id", "reason"}
 
 
+# 命中去重时按现状分发的中文动作指引：明确告诉模型「不要重复提交 + 下一步该怎么做」
+_DEDUP_NOTE_BY_STATUS: dict[str, str] = {
+    "PENDING": (
+        "该 {action} 申请已存在（suggestion_id={sid}），正等待人工审批，"
+        "请勿重复提交。继续等待或推进下一个独立步骤。"
+    ),
+    "APPROVED": (
+        "该 {action} 申请已存在（suggestion_id={sid}），已被审批通过、"
+        "正在派发执行任务。请勿重复提交；如需跟踪执行进度，"
+        "可用只读查询工具或 wait_until 等待异步对象终态。"
+    ),
+    "EXECUTING": (
+        "该 {action} 申请已存在（suggestion_id={sid}），正在执行中。"
+        "请勿重复提交；建议用 wait_until 等待对象到达终态后再做下一步判断。"
+    ),
+}
+
+
+def _format_dedup_note(action: str, sid: str, status: str) -> str:
+    """按现状定制的中文动作指引（避免笼统的"等待审批结果"误导模型）。
+
+    仅覆盖开放态（PENDING/APPROVED/EXECUTING）；其它状态作为兜底按 PENDING 处理。
+    """
+    template = _DEDUP_NOTE_BY_STATUS.get(status, _DEDUP_NOTE_BY_STATUS["PENDING"])
+    return template.format(action=action, sid=sid)
+
+
 def _build_approve_schema(write_tool: agent_pb2.ToolSchema) -> dict:
     """写工具 -> approve_<写工具> 审批工具 schema。
 
@@ -384,6 +414,11 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     去重：insert_suggestion 幂等（自然键命中开放态同款则复用，见 TaskStore.find_open_duplicate）。
     命中时不推 suggestion_created（卡已存在），并在 tool 返回体里用自然语言提示模型收敛，
     避免它继续刷同一条申请。approve_* 只经本函数落库，所以这一处兼顾"硬兜底"与"教模型"。
+
+    命中去重时回查同款建议的实际状态（PENDING/APPROVED/EXECUTING），用对应的中文动作描述告诉
+    模型「该做什么」——而不是笼统的"请等待审批结果"。否则在并行推进场景里（比如 execute 轮与
+    plan_advance 轮同时提出同款审批，或已被审批正在派发执行任务时模型又追提一次），模型会误判为
+    "还在等审批"，对用户显示"重复提交"反而掩盖了真实进度（实际已审批/执行中）。
     """
     if store is None or not store.enabled:
         log.warning("suggest_action unavailable: agent DB disabled")
@@ -409,15 +444,22 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
         log.warning("suggest_action persist failed: %s", e)
         return {"status": 500, "body": f"suggestion create failed: {e}"}
     if not created:
-        # 去重命中：同款申请仍在等待审批/执行，卡已经在界面上——不重复推事件、不重复落库，
-        # 只把"别再提"讲清楚，让模型转去等待或推进下一步。
-        log.info("suggestion duplicate suppressed: %s action=%s", sid[:8], action)
+        # 去重命中：复用 sid 但按当前状态定制提示，让模型知道下一步该做什么
+        existing_status = "PENDING"
+        try:
+            existing = await store.get_suggestion(sid)
+            if existing and existing.get("status"):
+                existing_status = str(existing["status"]).upper()
+        except Exception as e:  # noqa: BLE001
+            log.warning("get_suggestion during dedup failed (ignored): %s", e)
+        note = _format_dedup_note(action, sid, existing_status)
+        log.info("suggestion duplicate suppressed: %s action=%s status=%s",
+                 sid[:8], action, existing_status)
         return {"status": 200, "body": json.dumps({
             "suggestion_id": sid,
             "duplicate": True,
-            "note": (f"该 {action} 申请已存在（suggestion_id={sid}），"
-                     "正在等待审批或执行中，请勿重复提交。"
-                     "请等待审批结果。"),
+            "status": existing_status,
+            "note": note,
         }, ensure_ascii=False)}
     # 推 suggestion_created：前端收到后立即 upsert APPROVAL 行（独立事件，不在 tool_result 兜底）
     if client is not None:
@@ -707,6 +749,9 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
         事件经 EventBatcher 聚合（40 字符 flush）降低帧数。
         """
         ctx: TaskContext = state["ctx"]
+        # 节流：每个 LLM 轮次开始前 sleep 300ms，避免连续短推理 / 重试瞬时打爆上游 API
+        # 以及 SSE 事件过快堆积前端。前端到这一节点的路由无副作用，多轮 sleep 累加可忽略。
+        await asyncio.sleep(_AGENT_THROTTLE_S)
         if state.get("pending_approval"):
             # 已提交审批建议：进入收口轮——不挂任何工具，模型只输出一段中文摘要，禁止再循环
             llm = llm_runtime.select(ctx.reasoning_enabled).bind_tools([])
