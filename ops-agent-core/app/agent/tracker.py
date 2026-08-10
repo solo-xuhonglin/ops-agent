@@ -256,7 +256,8 @@ class TaskTracker:
             "请决定计划下一步并更新状态。"
         )
         ctx = TaskContext(task_id=task_id, task_token=monitor.task_token,
-                          conversation_id=monitor.conversation_id)
+                          conversation_id=monitor.conversation_id,
+                          reasoning_enabled=True)  # 推进轮面向用户可见，走 thinking 模式
         conclusion = ""
         try:
             graph = build_graph(llm_runtime=self.llm, http=self.http,

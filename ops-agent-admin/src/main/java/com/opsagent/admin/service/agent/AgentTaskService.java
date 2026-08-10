@@ -157,7 +157,10 @@ public class AgentTaskService {
                 .setTargetType(targetType == null ? "" : targetType)
                 .setTargetId(targetId == null ? 0 : targetId)
                 .setParams(params == null ? "{}" : params)
-                .setGrantKey(grantKey == null ? "" : grantKey);
+                .setGrantKey(grantKey == null ? "" : grantKey)
+                // execute 任务也走 thinking 模式：审批后执行/推进轮面向用户可见，
+                // 与 chat/advance 保持一致（否则长任务里 execute 轮无思考输出，观感割裂）
+                .setReasoningEnabled(true);
         if (conversationId != null && !conversationId.isBlank()) {
             b.setConversationId(conversationId);
         }
