@@ -33,10 +33,21 @@ from app.transport.grpc_client import GrpcClient
 
 log = logging.getLogger("agent.graph")
 
-# 写工具 → (查询工具, 结果对象类型, 结果对象 ID 参数名)：训练/部署是异步接口，agent 据此轮询状态
+# 写工具 → (查询工具, 结果对象类型, 结果对象 ID 参数名)：训练/部署/数据集采集是异步接口，
+# agent 据此轮询状态。dataset_create / dataset_collect 的目标态是 READY（非 SUCCEEDED），
+# 由 _maybe_register_tracker 按对象类型映射 target_status。
 WRITE_TRACK_MAP: dict[str, tuple[str, str, str]] = {
     "training_create": ("training_get", "training_job", "jobId"),
     "serving_deploy": ("serving_get", "serving_endpoint", "endpointId"),
+    "dataset_create": ("dataset_get", "dataset", "datasetId"),
+    "dataset_collect": ("dataset_get", "dataset", "datasetId"),
+}
+
+# 各对象类型的成功终态（Monitor 达到即推进 plan）：数据集=READY，其余=SUCCEEDED
+TRACK_TARGET_STATUS: dict[str, str] = {
+    "dataset": "READY",
+    "training_job": "SUCCEEDED",
+    "serving_endpoint": "SUCCEEDED",
 }
 
 # wait_until 轮询参数
@@ -104,7 +115,8 @@ async def _maybe_register_tracker(tracker: Any, store: Any, ctx: TaskContext,
         task_token=ctx.task_token, query_tool=query_tool,
         query_args={id_param: object_id},
         plan_id=plan_id, suggestion_id=suggestion_id,
-        action_type=tool.name, target_status="SUCCEEDED")
+        action_type=tool.name,
+        target_status=TRACK_TARGET_STATUS.get(object_type, "SUCCEEDED"))
 
 
 class AgentState(TypedDict):

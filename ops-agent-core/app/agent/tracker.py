@@ -194,7 +194,7 @@ class TaskTracker:
             log.info("monitor target reached: %s/%s status=%s",
                      monitor.object_type, monitor.object_id, status)
             await self._on_done(monitor, observation=str(result.get("body", ""))[:2000])
-        elif status in ("FAILED", "CANCELLED", "STOPPED"):
+        elif status in ("FAILED", "CANCELLED", "STOPPED", "INVALID"):
             monitor.finished = True
             log.info("monitor terminal failure: %s/%s status=%s",
                      monitor.object_type, monitor.object_id, status)

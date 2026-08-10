@@ -261,8 +261,11 @@ public class AgentConversationService {
         log.info("plan update message saved: conversation={}, plan={}", conversationId, planId);
     }
 
-    /** 组装多轮历史：最近 HISTORY_LIMIT 条已完成 user/assistant 消息，JSON 数组（新→旧取前 N 再反转）。 */
-    private String buildHistory(String conversationId) {
+    /** 组装多轮历史：最近 HISTORY_LIMIT 条已完成 user/assistant/approval 消息，JSON 数组（新→旧取前 N 再反转）。
+     *  APPROVAL 行直接进历史（role 映射为 assistant，content 加 [审批] 前缀）——模型在下一轮上下文里
+     *  直接看到审批结果（已授权/已拒绝/已执行/已失败/已过期），避免"提交审批后模型失忆、重复申请或误判"。
+     *  包内可见（供同包单测直接验证）。 */
+    String buildHistory(String conversationId) {
         List<ConversationMessage> recent = messageRepository
                 .findByConversationIdAndStatusInOrderByIdDesc(conversationId,
                         List.of(STATUS_COMPLETED))
@@ -275,7 +278,9 @@ public class AgentConversationService {
             boolean isUserLike = ConversationMessage.KIND_USER.equals(m.getKind()) || "user".equals(role);
             boolean isAssistantLike = ConversationMessage.KIND_ASSISTANT.equals(m.getKind())
                     || "assistant".equals(role);
-            if (!isUserLike && !isAssistantLike) {
+            boolean isApprovalLike = ConversationMessage.KIND_APPROVAL.equals(m.getKind())
+                    || "approval".equals(role);
+            if (!isUserLike && !isAssistantLike && !isApprovalLike) {
                 continue;
             }
             String content = m.getContent();
@@ -283,8 +288,15 @@ public class AgentConversationService {
                 continue;
             }
             Map<String, String> item = new LinkedHashMap<>();
-            item.put("role", isUserLike ? "user" : "assistant");
-            item.put("content", content);
+            if (isApprovalLike) {
+                // 审批决策行：role 映射为 assistant（worker 端只认 user/assistant），
+                // content 复用 buildApprovalSummary 生成的最新决策摘要，加 [审批] 前缀标明来源
+                item.put("role", "assistant");
+                item.put("content", "[审批] " + content);
+            } else {
+                item.put("role", isUserLike ? "user" : "assistant");
+                item.put("content", content);
+            }
             history.add(item);
         }
         if (history.isEmpty()) {
