@@ -109,6 +109,7 @@ class AgentState(TypedDict):
     ctx: TaskContext
     pending_tools: Optional[list[dict]]  # 本轮的待执行工具调用（原生 tool_calls: [{id,name,args}]）
     pending_approval: bool  # 本轮已成功提交审批建议（PENDING 建议落库）→ 触发循环收口，模型只补一句摘要
+    _round: int  # 当前轮次序号（递增，用于消息 ID 生成）
 
 
 def _chunk_text(chunk: Any) -> str:
@@ -689,9 +690,10 @@ async def handle_sleep(client: GrpcClient, ctx: TaskContext, args: dict) -> dict
 
 def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 registry: ToolRegistry, client: GrpcClient,
-                tracker: Any = None, store: Any = None) -> Any:
-    """构建并编译决策图。llm_runtime/http/registry/client/tracker/store 为进程级共享实例（闭包），ctx 走 state。
-    tracker/store 不进 state（msgpack 不可序列化），只读工具成功回调用 tracker 注册异步跟踪。"""
+                tracker: Any = None, store: Any = None,
+                msg_store: Any = None) -> Any:
+    """构建并编译决策图。llm_runtime/http/registry/client/tracker/store/msg_store 为进程级共享实例（闭包），ctx 走 state。
+    tracker/store/msg_store 不进 state（msgpack 不可序列化），只读工具成功回调用 tracker 注册异步跟踪。"""
 
     # plan_update 的变更通知：tracker.notify_plan 仅做 plan_update 上报（状态已由 handler 落库）
     tracker_notify = getattr(tracker, "notify_plan", None)
@@ -745,7 +747,25 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
                 "args": tc.get("args") or {},
             } for tc in tool_calls if tc.get("name")]
             return {"messages": [merged], "pending_tools": pending}
-        return {"messages": [merged], "pending_tools": []}
+
+        # 最终轮（无工具调用）：持久化本轮 assistant 消息
+        if msg_store is not None and msg_store.enabled and ctx.conversation_id:
+            try:
+                round_index = state.get("_round", 0)
+                await msg_store.save_round(
+                    conversation_id=ctx.conversation_id,
+                    task_id=ctx.task_id,
+                    round_index=round_index,
+                    assistant=merged,
+                    tool_calls=[],
+                    tool_results=[],
+                )
+            except Exception as e:
+                log.warning("save_round (final) failed (non-blocking): %s", e)
+
+        # 递增轮次
+        current_round = state.get("_round", 0)
+        return {"messages": [merged], "pending_tools": [], "_round": current_round + 1}
 
     async def tools_node(state: AgentState) -> dict[str, Any]:
         """工具节点：执行 pending_tools，结果以原生 ToolMessage 回填（role=tool, tool_call_id 关联）。
@@ -824,6 +844,31 @@ def build_graph(llm_runtime: Any, http: AdminHttpClient,
         if submitted_approval:
             # 已提交审批建议：标记收口，下一轮 agent 仅出摘要后 END（human-in-the-loop 中断）
             update["pending_approval"] = True
+
+        # 本轮消息持久化（仅对话任务，有工具调用时）
+        if msg_store is not None and msg_store.enabled and ctx.conversation_id:
+            try:
+                assistant_msg = None
+                for m in reversed(state.get("messages") or []):
+                    if getattr(m, "type", "") == "ai":
+                        assistant_msg = m
+                        break
+                if assistant_msg is not None:
+                    round_index = state.get("_round", 0)
+                    await msg_store.save_round(
+                        conversation_id=ctx.conversation_id,
+                        task_id=ctx.task_id,
+                        round_index=round_index,
+                        assistant=assistant_msg,
+                        tool_calls=state.get("pending_tools") or [],
+                        tool_results=tool_msgs,
+                    )
+            except Exception as e:
+                log.warning("save_round failed (non-blocking): %s", e)
+
+        # 递增轮次
+        current_round = state.get("_round", 0)
+        update["_round"] = current_round + 1
         return update
 
     def should_continue(state: AgentState) -> Literal["tools", "__end__"]:
@@ -854,7 +899,8 @@ async def run_graph(graph: Any, ctx: TaskContext,
     }
     try:
         result = await graph.ainvoke(
-            {"messages": messages, "ctx": ctx, "pending_tools": [], "pending_approval": False},
+            {"messages": messages, "ctx": ctx, "pending_tools": [],
+             "pending_approval": False, "_round": 0},
             config=config)
         return result["messages"], False
     except GraphRecursionError:

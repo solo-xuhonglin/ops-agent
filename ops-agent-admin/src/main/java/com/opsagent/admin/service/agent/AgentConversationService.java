@@ -22,11 +22,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Agent 多轮会话：conversation + message 持久化、历史组装、消息发起（内部 task 派发）、SSE 收口。
- * 每轮用户提问 = 一条 user message + 一条内部 task（assistant 结果由 AgentGrpcService.complete 落库）。
+ * <p>
+ * 消息存储职责：
+ * <ul>
+ *   <li>Java 端（本类）：写入 USER、APPROVAL、plan_update 助理消息</li>
+ *   <li>Agent 端（MessageStore）：写入 ASSISTANT、TOOL_CALL、TOOL_RESULT</li>
+ * </ul>
+ * Agent 端流式产出经过 gRPC 事件上报本类时，仅转发 SSE（不做消息落库）。
  */
 @Service
 @RequiredArgsConstructor
@@ -36,7 +41,6 @@ public class AgentConversationService {
     public static final String ROLE_USER = "user";
     public static final String ROLE_ASSISTANT = "assistant";
     public static final String STATUS_COMPLETED = "completed";
-    public static final String STATUS_STREAMING = "streaming";
     public static final String STATUS_FAILED = "failed";
 
     /** 组装多轮上下文时最多携带的历史消息条数（超出按最新的截断） */
@@ -47,20 +51,6 @@ public class AgentConversationService {
     private final AgentTaskService taskService;
     private final ConversationStreamManager streamManager;
     private final ObjectMapper objectMapper;
-
-    // ===== 多轮 assistant 流内落库（与前端 openStream rotateTurn 对齐）=====
-    // 每个 task 维护"当前轮次行"的内存累积；tool_call 事件触发当前轮落库（早于工具行，
-    // 保证时间线顺序），下一轮 thinking/delta 新建行。流内只落库已完成轮（tool_call 时）
-    // 与最后一轮（done 时），落库次数 = 轮次数（少、性能好），重进顺序与运行中一致。
-    private final ConcurrentHashMap<String, AssistantRound> assistantRounds = new ConcurrentHashMap<>();
-
-    /** 单轮 assistant 消息的内存累积（按 messageId upsert 落库） */
-    private static final class AssistantRound {
-        final String messageId = UUID.randomUUID().toString();
-        final StringBuilder reasoning = new StringBuilder();
-        final StringBuilder content = new StringBuilder();
-        boolean hasData = false;
-    }
 
     // ==================== conversation CRUD ====================
 
@@ -154,10 +144,11 @@ public class AgentConversationService {
         return result;
     }
 
-    // ==================== assistant result (called from AgentGrpcService) ====================
+    // ==================== assistant result (SSE push only, called from AgentGrpcService) ====================
 
     /**
-     * 内部任务完成：落 assistant 消息（completed/failed）并推 SSE done 事件、解绑 task。
+     * 内部任务完成：推 SSE done 事件、解绑 task。
+     * ASSISTANT 消息已由 Agent 端 MessageStore 写入，Java 端仅负责 SSE 通知前端。
      * 非会话任务（execute_suggestion 等）无关联会话，直接忽略。
      */
     @Transactional
@@ -167,165 +158,20 @@ public class AgentConversationService {
             streamManager.unbindTask(taskId);
             return;
         }
-        AssistantRound round = assistantRounds.get(taskId);
-        if (round != null) {
-            // 多轮流内已落库：最后一轮用 conclusion 兜底 content，置终态，清理内存状态
-            if (conclusion != null && !conclusion.isBlank()) {
-                round.content.setLength(0);
-                round.content.append(conclusion);
-                round.hasData = true;
-            }
-            persistAssistantRound(conversationId, taskId, round, ok ? STATUS_COMPLETED : STATUS_FAILED);
-            assistantRounds.remove(taskId);
-            Map<String, Object> done = new LinkedHashMap<>();
-            done.put("messageId", round.messageId);
-            done.put("status", ok ? STATUS_COMPLETED : STATUS_FAILED);
-            done.put("content", round.content.toString());
-            done.put("reasoning", round.reasoning.toString());
-            done.put("taskId", taskId);
-            streamManager.push(conversationId, "done", done);
-            streamManager.unbindTask(taskId);
-            log.info("conversation assistant rounds finalized: conversation={}, task={}, ok={}",
-                    conversationId, taskId, ok);
-            return;
-        }
-        // 兼容：无流内事件（无 worker / 任务失败路径）→ 单条 assistant 消息（原有逻辑）
-        ConversationMessage msg = messageRepository.findFirstByTaskId(taskId).orElse(new ConversationMessage());
-        boolean isNew = msg.getId() == null;
-        if (isNew) {
-            msg.setMessageId(UUID.randomUUID().toString());
-            msg.setConversationId(conversationId);
-            msg.setKind(ConversationMessage.KIND_ASSISTANT);
-            msg.setRole(ROLE_ASSISTANT);
-        }
-        msg.setTaskId(taskId);
-        msg.setContent(conclusion == null || conclusion.isBlank()
-                ? (error == null || error.isBlank() ? "（空回复）" : error) : conclusion);
-        msg.setReasoning(reasoning);
-        msg.setStatus(ok ? STATUS_COMPLETED : STATUS_FAILED);
-        messageRepository.save(msg);
 
         Map<String, Object> done = new LinkedHashMap<>();
-        done.put("messageId", msg.getMessageId());
-        done.put("status", msg.getStatus());
-        done.put("content", msg.getContent());
-        done.put("reasoning", msg.getReasoning());
         done.put("taskId", taskId);
+        done.put("status", ok ? STATUS_COMPLETED : STATUS_FAILED);
+        done.put("content", conclusion == null || conclusion.isBlank()
+                ? (error == null || error.isBlank() ? "（空回复）" : error) : conclusion);
+        done.put("reasoning", reasoning == null ? "" : reasoning);
         streamManager.push(conversationId, "done", done);
-        // 不主动 complete：连接由前端收到 done 后主动 abort 关闭（服务端主动 complete 的
-        // 时序会让部分 HTTP 客户端把正常收尾误报为 network error）；断连/超时由
-        // SseEmitter 的 onCompletion/onError/onTimeout 及 register 顶掉旧流兜底清理。
         streamManager.unbindTask(taskId);
-        log.info("conversation assistant message saved: conversation={}, task={}, ok={}",
+        log.info("conversation assistant done: conversation={}, task={}, ok={}",
                 conversationId, taskId, ok);
     }
 
-    /**
-     * thinking/delta 增量：落到当前 assistant 轮次行；无当前轮则新建。
-     * content 为 worker 直发的纯文本 delta（非 JSON）。chunkType: "reasoning" | "content"。
-     */
-    public void appendAssistantChunk(String taskId, String chunkType, String content) {
-        if (taskId == null || taskId.isBlank() || content == null || content.isEmpty()) return;
-        String cid = streamManager.conversationOf(taskId);
-        if (cid == null || cid.isBlank()) return;
-        AssistantRound round = assistantRounds.get(taskId);
-        if (round == null) {
-            round = new AssistantRound();
-            assistantRounds.put(taskId, round);
-        }
-        if ("reasoning".equals(chunkType)) round.reasoning.append(content);
-        else round.content.append(content);
-        if (content.trim().length() > 0) round.hasData = true;
-    }
-
-    /** tool_call 事件：当前轮推理已完整，落库为 completed（早于工具行，保证时间线顺序）。 */
-    public void flushAssistantRoundOnToolCall(String taskId) {
-        if (taskId == null || taskId.isBlank()) return;
-        String cid = streamManager.conversationOf(taskId);
-        AssistantRound round = assistantRounds.get(taskId);
-        if (round != null && round.hasData && cid != null && !cid.isBlank()) {
-            persistAssistantRound(cid, taskId, round, STATUS_COMPLETED);
-        }
-        assistantRounds.remove(taskId);
-    }
-
-    /** 任务中断（error/超时）：把内存中最后一轮 flush 为 failed，避免丢失已产生的推理上下文。 */
-    public void finalizeAssistantOnError(String taskId) {
-        if (taskId == null || taskId.isBlank()) return;
-        String cid = streamManager.conversationOf(taskId);
-        AssistantRound round = assistantRounds.remove(taskId);
-        if (round != null && round.hasData && cid != null && !cid.isBlank()) {
-            persistAssistantRound(cid, taskId, round, STATUS_FAILED);
-        }
-    }
-
-    /** 落/更新一行 assistant 消息（按 messageId upsert）。 */
-    private void persistAssistantRound(String cid, String taskId, AssistantRound round, String status) {
-        try {
-            ConversationMessage msg = messageRepository.findFirstByMessageId(round.messageId)
-                    .orElseGet(() -> {
-                        ConversationMessage m = new ConversationMessage();
-                        m.setMessageId(round.messageId);
-                        m.setConversationId(cid);
-                        m.setKind(ConversationMessage.KIND_ASSISTANT);
-                        m.setRole(ROLE_ASSISTANT);
-                        return m;
-                    });
-            msg.setTaskId(taskId);
-            msg.setContent(round.content.toString());
-            msg.setReasoning(round.reasoning.toString());
-            msg.setStatus(status);
-            messageRepository.save(msg);
-        } catch (Exception e) {
-            log.warn("persist assistant round failed (ignored): task={}, err={}", taskId, e.getMessage());
-        }
-    }
-
-    // ==================== helpers ====================
-
     // ==================== event-typed messages (timeline persistence) ====================
-
-    /**
-     * 落/更新一行 TOOL_CALL 消息：以 callId 作为 messageId 的派生键（IDEMPOTENT upsert）。
-     * - 首次 tool_call 事件：插入新行（status=running）
-     * - 配对 tool_result 事件到达：原地更新 tool_summary + status=completed
-     * - 历史按 callId（一 call 一行）渲染，避免工具调用与结果分散到两条消息上不便阅读
-     */
-    @Transactional
-    public void upsertToolCallRow(String conversationId, String taskId,
-                                  String callId, String name, String argsJson,
-                                  boolean isResult, String summary) {
-        if (conversationId == null || conversationId.isBlank()) return;
-        if (callId == null || callId.isBlank()) callId = UUID.randomUUID().toString();
-        final String finalCallId = callId;
-        try {
-            ConversationMessage msg = messageRepository
-                    .findFirstByToolCallId(conversationId, callId)
-                    .orElseGet(() -> {
-                        ConversationMessage m = new ConversationMessage();
-                        m.setMessageId("tc:" + finalCallId);
-                        m.setConversationId(conversationId);
-                        m.setKind(ConversationMessage.KIND_TOOL_CALL);
-                        m.setStatus(isResult ? ConversationMessage.STATUS_COMPLETED : "running");
-                        return m;
-                    });
-            msg.setTaskId(taskId);
-            msg.setToolCallId(callId);
-            msg.setToolName(name);
-            if (isResult) {
-                msg.setToolSummary(summary == null ? "" : summary);
-                msg.setStatus(ConversationMessage.STATUS_COMPLETED);
-                msg.setContent(String.format("调用工具 %s · 已返回", name == null ? "tool" : name));
-            } else {
-                msg.setToolArgs(argsJson);
-                msg.setContent(String.format("调用工具 %s", name == null ? "tool" : name));
-            }
-            messageRepository.save(msg);
-        } catch (Exception e) {
-            log.warn("upsert tool message failed (ignored): conv={}, callId={}, err={}",
-                    conversationId, callId, e.getMessage());
-        }
-    }
 
     /**
      * 落/更新 APPROVAL 消息：以 suggestionId 作为 messageId 的派生键（IDEMPOTENT upsert）。

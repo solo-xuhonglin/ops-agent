@@ -16,12 +16,6 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     List<ConversationMessage> findByConversationIdAndStatusInOrderByIdDesc(
             String conversationId, List<String> statuses);
 
-    /** 该轮内部任务对应的 assistant 消息（落库定位；理论上每轮一条） */
-    Optional<ConversationMessage> findFirstByTaskId(String taskId);
-
-    /** 流内 assistant 轮次行的 upsert 锚点（按 messageId 定位唯一行） */
-    Optional<ConversationMessage> findFirstByMessageId(String messageId);
-
     void deleteByConversationId(String conversationId);
 
     /**
@@ -36,17 +30,4 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     Optional<ConversationMessage> findFirstByPayloadSuggestionId(
             @Param("conv") String conversationId,
             @Param("suggestionId") String suggestionId);
-
-    /**
-     * TOOL_CALL upsert 锚点：按 tool_call_id 定位唯一行（同一 LLM 原生 tool_call 共享 call_id）。
-     * 历史渲染按 callId 唯一合并，避免 call/result 拆两行难读。
-     */
-    @Query(value = "SELECT * FROM agent_conversation_messages "
-            + "WHERE conversation_id = :conv AND kind = 'TOOL_CALL' "
-            + "AND tool_call_id = :callId "
-            + "ORDER BY id DESC LIMIT 1",
-            nativeQuery = true)
-    Optional<ConversationMessage> findFirstByToolCallId(
-            @Param("conv") String conversationId,
-            @Param("callId") String toolCallId);
 }
