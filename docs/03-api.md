@@ -162,11 +162,12 @@ serving 全部端点统一收敛在 `/api/serving/endpoints` 资源路径下；�
 SSE 事件（`event:` + `data:` JSON）：
 ```
 event: thinking    data: {"delta":"推理链增量"}
-event: tool_call   data: {"name":"serving_list","args":{...}}
-event: tool_result data: {"name":"serving_list","summary":"..."}
+event: tool_call   data: {"id":"call_xxx","name":"serving_list","args":{...}}
+event: tool_result data: {"id":"call_xxx","name":"serving_list","summary":"..."}
 event: delta       data: {"delta":"答复增量"}
-event: done        data: {"messageId":"...","status":"completed|failed","content":"...","reasoning":"..."}
+event: done        data: {"taskId":"...","status":"completed|failed","content":"...","reasoning":"..."}
 event: error       data: {"message":"..."}
+event: suggestion_created data: {"suggestionId":"...","actionType":"training_create",...}
 ```
 
 **任务状态**：`DISPATCHED → RUNNING → SUCCEEDED / FAILED / CANCELLED`。

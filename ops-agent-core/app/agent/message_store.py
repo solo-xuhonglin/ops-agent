@@ -1,4 +1,4 @@
-"""Agent 对话消息持久化（增量插入 conversation_messages 表）。
+"""Agent 对话消息持久化（增量插入 agent_conversation_messages 表）。
 
 每轮 LLM 循环完成后批量写入，不做流式逐 token 落库。
 Agent 写 ASSISTANT/TOOL_CALL/TOOL_RESULT 行，
@@ -109,7 +109,7 @@ class MessageStore:
             return []
         try:
             return await self.db.fetch(
-                "SELECT * FROM conversation_messages "
+                "SELECT * FROM agent_conversation_messages "
                 "WHERE conversation_id=$1 ORDER BY id ASC",
                 conversation_id)
         except Exception as e:
@@ -122,7 +122,7 @@ class MessageStore:
             return
         try:
             await self.db.execute(
-                "DELETE FROM conversation_messages WHERE conversation_id=$1",
+                "DELETE FROM agent_conversation_messages WHERE conversation_id=$1",
                 conversation_id)
         except Exception as e:
             log.warning("delete_messages failed: %s", e)
@@ -137,7 +137,7 @@ class MessageStore:
         # 动态构建 UPDATE 部分
         updates = ", ".join(f"{k}=${i+1}" for i, k in enumerate(kwargs.keys()))
         sql = (
-            f"INSERT INTO conversation_messages ({columns}) "
+            f"INSERT INTO agent_conversation_messages ({columns}) "
             f"VALUES ({placeholders}) "
             f"ON CONFLICT (message_id) DO UPDATE SET {updates}"
         )

@@ -59,7 +59,7 @@ async def test_save_round_assistant_only():
     assert len(db.executed) == 1
     sql, args = db.executed[0]
     a = dict(zip(["message_id","conversation_id","kind","role","content","reasoning","status","task_id"], args))
-    assert "INSERT INTO conversation_messages" in sql
+    assert "INSERT INTO agent_conversation_messages" in sql
     assert "ON CONFLICT (message_id)" in sql
     assert a["message_id"] == "round_task_1_0"
     assert a["conversation_id"] == "conv_1"
@@ -181,7 +181,7 @@ async def test_delete_messages():
     await store.delete_messages("conv_1")
     assert len(db.executed) == 1
     sql, args = db.executed[0]
-    assert "DELETE FROM conversation_messages" in sql
+    assert "DELETE FROM agent_conversation_messages" in sql
     assert args[0] == "conv_1"
 
 
