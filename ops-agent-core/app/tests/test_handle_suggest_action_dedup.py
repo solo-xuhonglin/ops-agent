@@ -26,14 +26,17 @@ class FakeStore:
     """模拟 TaskStore：可控 created（去重命中）+ 已存在建议的状态。
 
     - get_fails: 控制 get_suggestion 抛异常（不影响 insert_suggestion）
+    - closed_step: 非 None 时 find_closed_step_suggestion 返回该结果（模拟同 step 已终态）
     """
 
     def __init__(self, enabled: bool = True, existing_status: str | None = None,
-                 get_fails: bool = False):
+                 get_fails: bool = False, closed_step: dict | None = None):
         self._enabled = enabled
         self._existing_status = existing_status
         self._get_fails = get_fails
+        self._closed_step = closed_step
         self._last_inserted: dict | None = None
+        self.closed_step_calls: list[dict] = []
 
     @property
     def enabled(self) -> bool:
@@ -50,6 +53,13 @@ class FakeStore:
         if self._get_fails:
             raise RuntimeError("get fake-fail")
         return {"suggestion_id": sid, "status": self._existing_status}
+
+    async def find_closed_step_suggestion(self, s: dict) -> dict | None:
+        self.closed_step_calls.append(s)
+        # 与真实 TaskStore 行为一致：无 plan/step 或显式 retry 时不拦截
+        if not s.get("plan_id") or int(s.get("step_no", 0) or 0) <= 0 or s.get("retry_of"):
+            return None
+        return self._closed_step
 
 
 def _parse(result: dict) -> dict:
@@ -134,3 +144,64 @@ async def test_dedup_returns_action_type_for_clear_text():
         store, ctx, {"target_id": 15, "params": {}}, action_type="serving_deploy")
     body = _parse(result)
     assert "serving_deploy" in body["note"]
+
+
+# ==================== closed-step 拦截 ====================
+
+async def test_closed_step_blocks_resubmit():
+    """同 plan 同 step 已有 EXECUTED 建议 → 直接拦截，不落库，提示已完成。
+
+    回归：实测会话 94ac02a6——wait_until 空转 103 秒后醒来的 execute 轮
+    不知道 step2 训练早已 EXECUTED，又提交 training_create，被系统 REJECTED
+    显示"已忽略"，用户观感混乱。修复后应在提交前就拦下并告知已完成。
+    """
+    store = FakeStore(closed_step={"suggestion_id": "sug_old", "status": "EXECUTED"})
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="c1")
+    result = await handle_suggest_action(
+        store, ctx, {"plan_id": "p1", "step_no": 2, "datasetId": 16},
+        action_type="training_create")
+    body = _parse(result)
+    assert body["duplicate"] is True
+    assert body["suggestion_id"] == "sug_old"
+    assert body["status"] == "EXECUTED"
+    assert "已完成" in body["note"], body["note"]
+    assert "无需重复提交" in body["note"], body["note"]
+    # 没有落到 insert（未创建新卡）
+    assert store._last_inserted is None
+
+
+async def test_closed_step_rejected_also_blocks():
+    """REJECTED 也是终态——同步骤被拒后不应再重复提同款（除非显式 retry）。"""
+    store = FakeStore(closed_step={"suggestion_id": "sug_r", "status": "REJECTED"})
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="c1")
+    result = await handle_suggest_action(
+        store, ctx, {"plan_id": "p1", "step_no": 1, "target_id": 9},
+        action_type="dataset_create")
+    body = _parse(result)
+    assert body["status"] == "REJECTED"
+    assert "无需重复提交" in body["note"]
+
+
+async def test_closed_step_allows_explicit_retry():
+    """retry_of 显式重试 → 放行（不拦截），落库走正常路径。"""
+    store = FakeStore(closed_step=None)  # find_closed_step_suggestion 收到 retry_of 应返回 None
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="c1")
+    result = await handle_suggest_action(
+        store, ctx, {"plan_id": "p1", "step_no": 2, "retry_of": "sug_failed",
+                     "datasetId": 16}, action_type="training_create")
+    # retry_of 非空 → 不查 closed-step 或查到 None → 落库（insert 走 created=False 去重路径）
+    assert store.closed_step_calls == [] or store.closed_step_calls[0]["retry_of"] == "sug_failed"
+    assert result["status"] == 200
+    # 未命中 closed-step 拦截（duplicate 来自 insert 去重 or 新建）
+    assert store._last_inserted is not None
+
+
+async def test_closed_step_no_plan_skips_check():
+    """无 plan/step 上下文（step_no=0）→ 不拦截，正常落库。"""
+    store = FakeStore(closed_step={"suggestion_id": "sug_x", "status": "EXECUTED"})
+    ctx = TaskContext(task_id="t1", task_token="tok", conversation_id="c1")
+    result = await handle_suggest_action(
+        store, ctx, {"target_id": 7, "params": {}}, action_type="serving_deploy")
+    # 无 plan_id/step_no → find_closed_step_suggestion 内部直接返回 None
+    assert result["status"] == 200
+    assert store._last_inserted is not None

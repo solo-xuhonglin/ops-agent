@@ -159,6 +159,32 @@ class TaskStore:
             json.dumps(s.get("params", {}), ensure_ascii=False))
         return row.get("suggestion_id") if row else None
 
+    async def find_closed_step_suggestion(self, s: dict) -> Optional[dict]:
+        """查同 plan 同 step 同 action 的"已关闭"建议（EXECUTED/REJECTED/FAILED/EXPIRED/CANCELLED）。
+
+        用途：堵住"迟到任务重复提交已完成的步骤审批"——典型场景是 wait_until 空转/超时后醒来，
+        模型上下文还是旧快照，不知道该步骤早已被另一条执行链完成（实测会话 94ac02a6：
+        sug_befc2d7f09bd 在 step2 早已 EXECUTED 后又提交，被系统 REJECTED 显示"已忽略"）。
+        - 只按 plan_id+step_no+action_type 定位（不比较 params/target），同一步骤重复审批必拦；
+        - 显式重试（retry_of 非空）放行：上次失败换参重试是正常需求；
+        - 无 plan/step 上下文（step_no=0）时返回 None，不拦截无主建议。
+        """
+        plan_id = str(s.get("plan_id", ""))
+        step_no = int(s.get("step_no", 0) or 0)
+        action_type = str(s.get("action_type", ""))
+        retry_of = str(s.get("retry_of", ""))
+        if not plan_id or step_no <= 0 or not action_type or retry_of:
+            return None
+        row = await self.db.fetchrow(
+            "SELECT suggestion_id, status FROM agent_suggestions "
+            "WHERE conversation_id=$1 AND plan_id=$2 AND step_no=$3 AND action_type=$4 "
+            "  AND status IN ('EXECUTED','REJECTED','FAILED','EXPIRED','CANCELLED') "
+            "ORDER BY id ASC LIMIT 1",
+            str(s.get("conversation_id", "")), plan_id, step_no, action_type)
+        if not row:
+            return None
+        return {"suggestion_id": row["suggestion_id"], "status": row["status"]}
+
     async def insert_suggestion(self, s: dict) -> tuple[str, bool]:
         """写一条 PENDING 建议；返回 (suggestion_id, created)。
 

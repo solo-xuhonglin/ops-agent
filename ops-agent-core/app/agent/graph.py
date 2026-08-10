@@ -63,6 +63,13 @@ QUERY_TOOL_ID_ARG: dict[str, str] = {
     "serving_get": "endpointId",
     "dataset_get": "datasetId",
 }
+# wait_until 的对象成功态集合：模型常按 schema 示例传 target_status=SUCCEEDED，
+# 但数据集/服务端的实际成功态是 READY/DEPLOYED —— 命中集合内任一状态即视为达到目标。
+WAIT_SUCCESS_STATUSES: dict[str, set[str]] = {
+    "training_get": {"SUCCEEDED"},
+    "serving_get": {"DEPLOYED", "SUCCEEDED"},
+    "dataset_get": {"READY", "SUCCEEDED"},
+}
 
 
 def _extract_object_id(body: Any) -> Optional[int]:
@@ -444,6 +451,36 @@ async def handle_suggest_action(store: Any, ctx: TaskContext, args: dict,
     action = action_type or str(args.get("action_type", ""))
     if not action:
         return {"status": 400, "body": "action_type is required"}
+    # 堵住"迟到任务重复提交已完成的步骤"：同 plan 同 step 同 action 已有终态建议
+    # （EXECUTED/REJECTED/FAILED/EXPIRED/CANCELLED）时直接提示，不再落新卡。
+    # 典型场景：wait_until 空转/超时后醒来的 execute 轮，上下文还是旧快照，
+    # 不知道该步骤早已被另一条执行链完成（实测 94ac02a6：step2 已 EXECUTED 后又
+    # 提交 training_create 被 REJECTED 显示"已忽略"）。显式重试（retry_of）放行。
+    try:
+        closed = await store.find_closed_step_suggestion({
+            "conversation_id": ctx.conversation_id,
+            "plan_id": str(args.get("plan_id", "")),
+            "step_no": int(args.get("step_no", 0) or 0),
+            "action_type": action,
+            "retry_of": str(args.get("retry_of", "")),
+        })
+    except Exception as e:  # noqa: BLE001
+        log.warning("closed step suggestion check failed (ignored): %s", e)
+        closed = None
+    if closed:
+        step_no = int(args.get("step_no", 0) or 0)
+        note = (f"该计划步骤（step{step_no}）的 {action} 操作已完成"
+                f"（suggestion_id={closed['suggestion_id']}，状态 {closed['status']}），"
+                "无需重复提交。请用只读查询（plan_get / 对应 get 工具）确认当前进度，"
+                "或直接推进下一步骤。")
+        log.info("suggestion blocked by closed step: %s action=%s status=%s",
+                 closed["suggestion_id"][:8], action, closed["status"])
+        return {"status": 200, "body": json.dumps({
+            "suggestion_id": closed["suggestion_id"],
+            "duplicate": True,
+            "status": closed["status"],
+            "note": note,
+        }, ensure_ascii=False)}
     try:
         sid, created = await store.insert_suggestion({
             "source_task_id": ctx.task_id,
@@ -653,6 +690,7 @@ async def handle_wait_until(registry: Any, http: AdminHttpClient, client: GrpcCl
     raw_wait = args.get("wait_seconds")
     wait_seconds = max(0, min(int(raw_wait if raw_wait is not None else 60), 120))
     target_status = str(args.get("target_status", "")).upper()
+    success_statuses = WAIT_SUCCESS_STATUSES.get(query_tool, set())
     loop = asyncio.get_event_loop()
     deadline = loop.time() + wait_seconds
     last_status = ""
@@ -672,13 +710,18 @@ async def handle_wait_until(registry: Any, http: AdminHttpClient, client: GrpcCl
             if ctx.task_id:
                 await client.send_event(ctx.task_id, "progress",
                                         f"等待 {query_tool} 完成，当前状态 {status}")
-            # 提前返回①：到达目标状态
-            if target_status and status == target_status:
+            # 提前返回①：到达目标状态（target_status 或对象成功态集合——后者兼容
+            # 模型传 SUCCEEDED 而对象实际成功态是 READY/DEPLOYED 的错配，如数据集）
+            if (target_status and status == target_status) or status in success_statuses:
                 return _wait_result(last_result, status, updated_at)
             # 提前返回②：进入终态（失败也要让 agent 看到，而非等到超时）
             if status in WAIT_TERMINAL_STATUSES:
                 return _wait_result(last_result, status, updated_at)
-            # 提前返回③：数据有更新（updated_at 变化，状态可能未变但细节在推进）
+            # 提前返回③：状态发生变化（如 COLLECTING -> READY，RUNNING -> SUCCEEDED）。
+            # 部分对象响应没有 updated_at（如数据集），不能只靠 updated_at 判定，状态跳变即返回。
+            if last_status and status != last_status:
+                return _wait_result(last_result, status, updated_at)
+            # 提前返回④：数据有更新（updated_at 变化，状态可能未变但细节在推进）
             if updated_at and last_updated_at and updated_at != last_updated_at:
                 return _wait_result(last_result, status, updated_at)
             last_status = status

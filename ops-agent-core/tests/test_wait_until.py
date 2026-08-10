@@ -153,3 +153,44 @@ async def test_wait_until_unknown_tool():
         "query_tool": "nope", "object_id": 1, "wait_seconds": 30})
     assert http.calls == []
     assert "unknown" in result["body"]
+
+
+@pytest.mark.asyncio
+async def test_wait_until_dataset_ready_matches_succeeded_target():
+    """数据集成功态是 READY；模型按 schema 传 SUCCEEDED 也应命中（状态错配兼容）。
+
+    回归：实测会话 94ac02a6 中 wait_until(dataset_get, target_status=SUCCEEDED)
+    空转 103 秒——READY 永远匹配不上 SUCCEEDED，且数据集响应无 updated_at，
+    只能等超时。修复后 READY 属于 WAIT_SUCCESS_STATUSES[dataset_get]，立即返回。
+    """
+    http = FakeHttp([body("READY")])  # 无 updated_at，模拟 dataset_get 响应
+    client = FakeClient()
+    reg = FakeRegistry([FakeTool("dataset_get")])
+    result = await handle_wait_until(reg, http, client, ctx(), {
+        "query_tool": "dataset_get", "object_id": 32, "wait_seconds": 120,
+        "target_status": "SUCCEEDED"})
+    assert len(http.calls) == 1
+    payload = json.loads(result["body"])
+    assert payload["status"] == "READY"
+    assert payload["_still_in_progress"] is False
+
+
+@pytest.mark.asyncio
+async def test_wait_until_status_change_returns_without_updated_at():
+    """无 updated_at 字段时，状态跳变（COLLECTING -> READY）也应提前返回。
+
+    回归：数据集响应没有 updated_at，旧逻辑只能靠 updated_at 变化或超时退出，
+    导致 COLLECTING -> READY 后继续空转到 wait_seconds 用尽。
+    """
+    http = FakeHttp([
+        body("COLLECTING"),   # 无 updated_at
+        body("READY"),        # 无 updated_at
+    ])
+    client = FakeClient()
+    reg = FakeRegistry([FakeTool("dataset_get")])
+    result = await handle_wait_until(reg, http, client, ctx(), {
+        "query_tool": "dataset_get", "object_id": 32, "wait_seconds": 120})
+    assert len(http.calls) == 2
+    payload = json.loads(result["body"])
+    assert payload["status"] == "READY"
+    assert payload["_still_in_progress"] is False
